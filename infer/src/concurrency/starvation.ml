@@ -265,7 +265,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
     | Metadata metadata ->
         do_metadata metadata astate
     | Prune (exp, _loc, _then_branch, _if_kind) ->
-        let hil_exp = hilexp_of_sil ~add_deref:false astate exp Typ.boolean in
+        let hil_exp = hilexp_of_sil ~add_deref:false astate exp StdTyp.boolean in
         do_assume hil_exp astate
     | Load {id} when Ident.is_none id ->
         astate
@@ -425,18 +425,19 @@ let analyze_procedure ({InterproceduralAnalysis.proc_desc; tenv} as interproc) =
       in
       {astate with thread}
     in
-    let filter_blocks =
-      if StarvationModels.is_annotated_nonblocking tenv procname then Domain.filter_blocking_calls
-      else Fn.id
+    let set_ignore_blocking_calls_flag astate =
+      if StarvationModels.is_annotated_nonblocking tenv procname then
+        Domain.set_ignore_blocking_calls_flag astate
+      else astate
     in
     let initial =
       Domain.initial
       (* set the attributes of instance variables set up by all constructors or the class initializer *)
       |> set_initial_attributes interproc
       |> set_lock_state_for_synchronized_proc |> set_thread_status_by_annotation
+      |> set_ignore_blocking_calls_flag
     in
     Analyzer.compute_post proc_data ~initial proc_desc
-    |> Option.map ~f:filter_blocks
     |> Option.map ~f:(Domain.summary_of_astate proc_desc)
 
 
@@ -775,11 +776,11 @@ let report_on_pair ~analyze_ondemand tenv pattrs (pair : Domain.CriticalPair.t) 
                       then, report on the parallel composition of the current pair and any pair in these
                       summaries that can indeed run in parallel *)
                    fold_reportable_summaries analyze_ondemand tenv other_class ~init:acc
-                     ~f:(fun acc (other_pname, {critical_pairs}) ->
-                       CriticalPairs.fold
+                     ~f:(fun acc (other_pname, summary) ->
+                       Domain.fold_critical_pairs_of_summary
                          (report_on_parallel_composition ~should_report_starvation tenv pattrs pair
                             lock other_pname)
-                         critical_pairs acc ) ) ) )
+                         summary acc ) ) ) )
   | _ ->
       report_map
 
@@ -787,10 +788,10 @@ let report_on_pair ~analyze_ondemand tenv pattrs (pair : Domain.CriticalPair.t) 
 let reporting {InterproceduralAnalysis.procedures; file_exe_env; analyze_file_dependency} =
   if Config.starvation_whole_program then IssueLog.empty
   else
-    let report_on_proc tenv proc_desc report_map (payload : Domain.summary) =
-      Domain.CriticalPairs.fold
+    let report_on_proc tenv proc_desc report_map payload =
+      Domain.fold_critical_pairs_of_summary
         (report_on_pair ~analyze_ondemand:analyze_file_dependency tenv proc_desc)
-        payload.critical_pairs report_map
+        payload report_map
     in
     let report_procedure report_map procname =
       analyze_file_dependency procname

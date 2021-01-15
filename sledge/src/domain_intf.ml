@@ -7,45 +7,36 @@
 
 (** Abstract Domain *)
 module type Dom = sig
-  type t [@@deriving equal, sexp_of]
+  type t [@@deriving compare, equal, sexp_of]
 
   val pp : t pp
-  val report_fmt_thunk : t -> Formatter.t -> unit
-  val init : Llair.Global.t iarray -> t
+  val report_fmt_thunk : t -> Format.formatter -> unit
+  val init : Llair.GlobalDefn.t iarray -> t
   val join : t -> t -> t option
-  val is_false : t -> bool
   val dnf : t -> t list
   val exec_assume : t -> Llair.Exp.t -> t option
-  val exec_kill : t -> Llair.Reg.t -> t
-  val exec_move : t -> (Llair.Reg.t * Llair.Exp.t) iarray -> t
-  val exec_inst : t -> Llair.inst -> t option
-
-  val exec_intrinsic :
-       skip_throw:bool
-    -> t
-    -> Llair.Reg.t option
-    -> Llair.Reg.t
-    -> Llair.Exp.t list
-    -> t option option
+  val exec_kill : Llair.Reg.t -> t -> t
+  val exec_move : (Llair.Reg.t * Llair.Exp.t) iarray -> t -> t
+  val exec_inst : Llair.inst -> t -> t option
 
   type from_call [@@deriving sexp_of]
 
   val call :
        summaries:bool
-    -> globals:Llair.Reg.Set.t
-    -> actuals:Llair.Exp.t list
+    -> globals:Llair.Global.Set.t
+    -> actuals:Llair.Exp.t iarray
     -> areturn:Llair.Reg.t option
-    -> formals:Llair.Reg.t list
+    -> formals:Llair.Reg.t iarray
     -> freturn:Llair.Reg.t option
     -> locals:Llair.Reg.Set.t
     -> t
     -> t * from_call
 
   val post : Llair.Reg.Set.t -> from_call -> t -> t
-  val retn : Llair.Reg.t list -> Llair.Reg.t option -> from_call -> t -> t
+  val retn : Llair.Reg.t iarray -> Llair.Reg.t option -> from_call -> t -> t
 
   val resolve_callee :
-    (string -> Llair.func list) -> Llair.Exp.t -> t -> Llair.func list * t
+    (string -> Llair.func option) -> Llair.Exp.t -> t -> Llair.func list
 
   val recursion_beyond_bound : [`skip | `prune]
 
@@ -54,7 +45,25 @@ module type Dom = sig
   val pp_summary : summary pp
 
   val create_summary :
-    locals:Llair.Reg.Set.t -> formals:Llair.Reg.Set.t -> t -> summary * t
+    locals:Llair.Reg.Set.t -> formals:Llair.Reg.t iarray -> t -> summary * t
 
   val apply_summary : t -> summary -> t option
+end
+
+type used_globals =
+  | Per_function of Llair.Global.Set.t Llair.Function.Map.t
+      (** per-function used-globals map *)
+  | Declared of Llair.Global.Set.t  (** program-wide set *)
+
+module type Opts = sig
+  val bound : int
+  (** Loop/recursion unrolling bound *)
+
+  val function_summaries : bool
+  (** Use function summarization *)
+
+  val entry_points : string list
+  (** C linkage names of entry points *)
+
+  val globals : used_globals
 end

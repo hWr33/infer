@@ -104,7 +104,7 @@ let check_condition_for_redundancy
        So Condition_redundant should either accept expression, or this should pass a condition.
     *)
     let condition_descr = explain_expr tenv node expr in
-    let nonnull_origin = InferredNullability.get_origin inferred_nullability in
+    let nonnull_origin = InferredNullability.get_simple_origin inferred_nullability in
     TypeErr.register_error analysis_data find_canonical_duplicate
       (TypeErr.Condition_redundant {is_always_true; loc; condition_descr; nonnull_origin})
       (Some instr_ref) ~nullsafe_mode
@@ -210,13 +210,6 @@ let get_nullability_upper_bound field_name typestate_list =
         (get_nullability_upper_bound_for_typestate proc_name field_name typestate) )
 
 
-let is_generated_field field_name =
-  (* Annotation transformers might generate hidden fields in the class.
-     We distinguish such fields by their prefix.
-  *)
-  String.is_prefix ~prefix:"$" (Fieldname.get_field_name field_name)
-
-
 (** Check field initialization for a given constructor *)
 let check_constructor_initialization
     ({IntraproceduralAnalysis.tenv; proc_desc= curr_constructor_pdesc; _} as analysis_data)
@@ -233,7 +226,9 @@ let check_constructor_initialization
       match Tenv.lookup tenv name with
       | Some {fields} ->
           let do_field (field_name, field_type, _) =
-            let annotated_field = AnnotatedField.get tenv field_name ts in
+            let annotated_field =
+              AnnotatedField.get tenv field_name ~class_typ:ts ~class_under_analysis:name
+            in
             let is_initialized_by_framework =
               match annotated_field with
               | None ->
@@ -256,7 +251,7 @@ let check_constructor_initialization
               predicate_holds_for_some_typestate
                 (Lazy.force typestates_for_curr_constructor_and_all_initializer_methods) field_name
                 ~predicate:(fun (_, nullability) ->
-                  is_initialized (InferredNullability.get_origin nullability) )
+                  is_initialized (InferredNullability.get_simple_origin nullability) )
             in
             (* TODO(T54584721) This check is completely independent of the current constuctor we check.
                This check should be moved out of this function. Until it is done,
@@ -279,7 +274,7 @@ let check_constructor_initialization
               && in_current_class
               && (not (Fieldname.is_java_outer_instance field_name))
               (* not user code, unactionable errors *)
-              && not (is_generated_field field_name)
+              && not (Fieldname.is_java_synthetic field_name)
             in
             if should_check_field_initialization then (
               (* Check if non-null field is not initialized. *)
@@ -397,7 +392,7 @@ let check_call_receiver analysis_data ~nullsafe_mode find_canonical_duplicate no
 
 
 type resolved_param =
-  { num: int
+  { param_index: int
   ; formal: AnnotatedSignature.param_signature
   ; actual: Exp.t * InferredNullability.t
   ; is_formal_propagates_nullable: bool }
@@ -406,7 +401,7 @@ type resolved_param =
 let check_call_parameters ({IntraproceduralAnalysis.tenv; _} as analysis_data) ~nullsafe_mode
     ~callee_pname ~callee_annotated_signature find_canonical_duplicate node resolved_params loc
     instr_ref : unit =
-  let check {num= param_position; formal; actual= orig_e2, nullability_actual} =
+  let check {param_index; formal; actual= orig_e2, nullability_actual} =
     let report ~nullsafe_mode assignment_violation =
       let actual_param_expression =
         match explain_expr tenv node orig_e2 with
@@ -423,7 +418,7 @@ let check_call_parameters ({IntraproceduralAnalysis.tenv; _} as analysis_data) ~
                PassingParamToFunction
                  { param_signature= formal
                  ; actual_param_expression
-                 ; param_position
+                 ; param_index
                  ; annotated_signature= callee_annotated_signature
                  ; procname= callee_pname } })
         (Some instr_ref) ~nullsafe_mode
@@ -454,7 +449,7 @@ let check_inheritance_rule_for_return analysis_data find_canonical_duplicate loc
 
 
 let check_inheritance_rule_for_param analysis_data find_canonical_duplicate loc ~nullsafe_mode
-    ~overridden_param_name ~base_proc_name ~param_position ~base_nullability ~overridden_nullability
+    ~overridden_param_name ~base_proc_name ~param_index ~base_nullability ~overridden_nullability
     ~overridden_proc_name =
   Result.iter_error
     (InheritanceRule.check InheritanceRule.Param ~base:base_nullability
@@ -464,7 +459,7 @@ let check_inheritance_rule_for_param analysis_data find_canonical_duplicate loc 
            { inheritance_violation
            ; violation_type=
                InconsistentParam
-                 {param_position; param_description= Mangled.to_string overridden_param_name}
+                 {param_index; param_description= Mangled.to_string overridden_param_name}
            ; base_proc_name
            ; loc
            ; overridden_proc_name })
@@ -478,7 +473,7 @@ let check_inheritance_rule_for_params analysis_data find_canonical_duplicate loc
   let zipped_params = List.zip base_params overridden_params in
   match zipped_params with
   | Ok base_and_overridden_params ->
-      let should_index_from_zero = is_virtual base_params in
+      let has_implicit_this_param = is_virtual base_params in
       (* Check the rule for each pair of base and overridden param *)
       List.iteri base_and_overridden_params
         ~f:(fun index
@@ -489,7 +484,11 @@ let check_inheritance_rule_for_params analysis_data find_canonical_duplicate loc
            ->
           check_inheritance_rule_for_param analysis_data find_canonical_duplicate loc ~nullsafe_mode
             ~overridden_param_name ~base_proc_name
-            ~param_position:(if should_index_from_zero then index else index + 1)
+            ~param_index:
+              ( if has_implicit_this_param then
+                (* The first param in the list is implicit (not real part of the signature) and should not be counted *)
+                index - 1
+              else index )
             ~base_nullability:(AnnotatedNullability.get_nullability annotated_nullability_base)
             ~overridden_proc_name
             ~overridden_nullability:

@@ -92,7 +92,7 @@ let get_class_name_method_call_from_clang tenv obj_c_message_expr_info =
       None
 
 
-(* Get class name from a method call accorsing to the info given by the receiver kind  *)
+(* Get class name from a method call according to the info given by the receiver kind  *)
 let get_class_name_method_call_from_receiver_kind context obj_c_message_expr_info act_params =
   match obj_c_message_expr_info.Clang_ast_t.omei_receiver_kind with
   | `Class qt ->
@@ -206,7 +206,9 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) ?(record_lambda_capt
         PredSymb.Protected
   in
   let captured_mangled =
-    List.map ~f:(fun (var, t, mode) -> (Pvar.get_name var, t, mode)) captured
+    List.map
+      ~f:(fun (var, typ, capture_mode) -> {CapturedVar.name= Pvar.get_name var; typ; capture_mode})
+      captured
   in
   (* Retrieve captured variables from procdesc created when translating captured variables in lambda expression *)
   (* We want to do this before `should_create_procdesc` is called as it can remove previous procdesc *)
@@ -233,7 +235,7 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) ?(record_lambda_capt
     (* Captured variables for blocks are treated as parameters, but not for cpp lambdas *)
     let captured_as_formals =
       if is_cpp_lambda_call_operator then []
-      else List.map ~f:(fun (var, t, _) -> (var, t)) captured_mangled
+      else List.map ~f:(fun {CapturedVar.name; typ} -> (name, typ)) captured_mangled
     in
     let formals = captured_as_formals @ formals in
     let const_formals =
@@ -311,7 +313,7 @@ let create_external_procdesc trans_unit_ctx cfg proc_name clang_method_kind type
       | Some (ret_type, arg_types) ->
           (ret_type, List.map ~f:(fun typ -> (Mangled.from_string "x", typ)) arg_types)
       | None ->
-          (Typ.void, [])
+          (StdTyp.void, [])
     in
     let proc_attributes =
       { (ProcAttributes.default trans_unit_ctx.CFrontend_config.source_file proc_name) with

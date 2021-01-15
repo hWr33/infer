@@ -32,8 +32,11 @@ module Attribute = struct
     | DynamicType of Typ.Name.t
     | EndOfCollection
     | Invalid of Invalidation.t * Trace.t
+    | ISLAbduced of Trace.t
+    | MustBeInitialized of Trace.t
     | MustBeValid of Trace.t
     | StdVectorReserve
+    | Uninitialized
     | WrittenTo of Trace.t
   [@@deriving compare, variants]
 
@@ -70,6 +73,12 @@ module Attribute = struct
 
   let end_of_collection_rank = Variants.to_rank EndOfCollection
 
+  let isl_abduced_rank = Variants.to_rank (ISLAbduced dummy_trace)
+
+  let uninitialized_rank = Variants.to_rank Uninitialized
+
+  let must_be_initialized_rank = Variants.to_rank (MustBeInitialized dummy_trace)
+
   let pp f attribute =
     let pp_string_if_debug string fmt =
       if Config.debug_level_analysis >= 3 then F.pp_print_string fmt string
@@ -94,10 +103,18 @@ module Attribute = struct
         F.fprintf f "Invalid %a"
           (Trace.pp ~pp_immediate:(fun fmt -> Invalidation.pp fmt invalidation))
           trace
+    | ISLAbduced trace ->
+        F.fprintf f "ISLAbduced %a" (Trace.pp ~pp_immediate:(pp_string_if_debug "ISLAbduced")) trace
+    | MustBeInitialized trace ->
+        F.fprintf f "MustBeInitialized %a"
+          (Trace.pp ~pp_immediate:(pp_string_if_debug "read"))
+          trace
     | MustBeValid trace ->
         F.fprintf f "MustBeValid %a" (Trace.pp ~pp_immediate:(pp_string_if_debug "access")) trace
     | StdVectorReserve ->
         F.pp_print_string f "std::vector::reserve()"
+    | Uninitialized ->
+        F.pp_print_string f "Uninitialized"
     | WrittenTo trace ->
         F.fprintf f "WrittenTo %a" (Trace.pp ~pp_immediate:(pp_string_if_debug "mutation")) trace
 end
@@ -153,11 +170,20 @@ module Attributes = struct
     || Option.is_some (Set.find_rank attrs Attribute.invalid_rank)
 
 
+  let is_uninitialized attrs = Set.find_rank attrs Attribute.uninitialized_rank |> Option.is_some
+
   let get_allocation attrs =
     Set.find_rank attrs Attribute.allocated_rank
     |> Option.map ~f:(fun attr ->
            let[@warning "-8"] (Attribute.Allocated (procname, trace)) = attr in
            (procname, trace) )
+
+
+  let get_isl_abduced attrs =
+    Set.find_rank attrs Attribute.isl_abduced_rank
+    |> Option.map ~f:(fun attr ->
+           let[@warning "-8"] (Attribute.ISLAbduced trace) = attr in
+           trace )
 
 
   let get_dynamic_type attrs =
@@ -167,22 +193,30 @@ module Attributes = struct
            typ )
 
 
+  let get_must_be_initialized attrs =
+    Set.find_rank attrs Attribute.must_be_initialized_rank
+    |> Option.map ~f:(fun attr ->
+           let[@warning "-8"] (Attribute.MustBeInitialized trace) = attr in
+           trace )
+
+
   include Set
 end
 
 include Attribute
 
 let is_suitable_for_pre = function
-  | MustBeValid _ ->
+  | MustBeValid _ | MustBeInitialized _ ->
       true
+  | Invalid _ | Allocated _ | ISLAbduced _ ->
+      Config.pulse_isl
   | AddressOfCppTemporary _
   | AddressOfStackVariable _
-  | Allocated _
   | Closure _
   | DynamicType _
   | EndOfCollection
-  | Invalid _
   | StdVectorReserve
+  | Uninitialized
   | WrittenTo _ ->
       false
 
@@ -190,16 +224,21 @@ let is_suitable_for_pre = function
 let map_trace ~f = function
   | Allocated (procname, trace) ->
       Allocated (procname, f trace)
+  | ISLAbduced trace ->
+      ISLAbduced (f trace)
   | Invalid (invalidation, trace) ->
       Invalid (invalidation, f trace)
   | MustBeValid trace ->
       MustBeValid (f trace)
   | WrittenTo trace ->
       WrittenTo (f trace)
+  | MustBeInitialized trace ->
+      MustBeInitialized (f trace)
   | ( AddressOfCppTemporary _
     | AddressOfStackVariable _
     | Closure _
     | DynamicType _
     | EndOfCollection
-    | StdVectorReserve ) as attr ->
+    | StdVectorReserve
+    | Uninitialized ) as attr ->
       attr

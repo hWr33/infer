@@ -11,11 +11,18 @@ open PulseDomainInterface
 
 type t = AbductiveDomain.t
 
-type 'a access_result = ('a, Diagnostic.t * t) result
+type 'a access_result = 'a PulseReport.access_result
 
-val ok_continue : t -> (ExecutionDomain.t list, 'a) result
+type access_mode =
+  | Read
+  | Write
+  | NoAccess
+      (** The initialized-ness of the address is not checked when it evaluates a heap address
+          without actual memory access, for example, when evaluating [&x.f] we need to check
+          initialized-ness of [x], not that of [x.f]. *)
 
-val check_addr_access : Location.t -> AbstractValue.t * ValueHistory.t -> t -> t access_result
+val check_addr_access :
+  access_mode -> Location.t -> AbstractValue.t * ValueHistory.t -> t -> t access_result
 (** Check that the [address] is not known to be invalid *)
 
 module Closures : sig
@@ -23,20 +30,34 @@ module Closures : sig
   (** assert the validity of the addresses captured by the lambda *)
 end
 
-val eval : Location.t -> Exp.t -> t -> (t * (AbstractValue.t * ValueHistory.t)) access_result
+val eval :
+  access_mode -> Location.t -> Exp.t -> t -> (t * (AbstractValue.t * ValueHistory.t)) access_result
 (** Use the stack and heap to evaluate the given expression down to an abstract address representing
     its value.
 
     Return an error state if it traverses some known invalid address or if the end destination is
     known to be invalid. *)
 
+val eval_structure_isl :
+     access_mode
+  -> Location.t
+  -> Exp.t
+  -> t
+  -> (bool * (t * (AbstractValue.t * ValueHistory.t)) list) access_result
+(** Similar to eval but apply to data structures and ISL abduction. Return a list of abduced states
+    (ISLOk and ISLErs); The boolean indicates whether it is data structures or not. *)
+
 val prune : Location.t -> condition:Exp.t -> t -> t access_result
 
 val eval_deref : Location.t -> Exp.t -> t -> (t * (AbstractValue.t * ValueHistory.t)) access_result
 (** Like [eval] but evaluates [*exp]. *)
 
+val eval_deref_isl :
+  Location.t -> Exp.t -> t -> (t * (AbstractValue.t * ValueHistory.t)) list access_result
+
 val eval_access :
-     Location.t
+     access_mode
+  -> Location.t
   -> AbstractValue.t * ValueHistory.t
   -> BaseMemory.Access.t
   -> t
@@ -54,7 +75,7 @@ val havoc_field :
   -> t
   -> t access_result
 
-val realloc_pvar : Pvar.t -> Location.t -> t -> t
+val realloc_pvar : Pvar.t -> Typ.t -> Location.t -> t -> t
 
 val write_id : Ident.t -> AbstractValue.t * ValueHistory.t -> t -> t
 
@@ -84,9 +105,22 @@ val write_deref :
   -> t access_result
 (** write the edge [ref --*--> obj] *)
 
+val write_deref_biad_isl :
+     Location.t
+  -> ref:AbstractValue.t * ValueHistory.t
+  -> AbstractValue.t HilExp.Access.t
+  -> obj:AbstractValue.t * ValueHistory.t
+  -> t
+  -> t list access_result
+
 val invalidate :
   Location.t -> Invalidation.t -> AbstractValue.t * ValueHistory.t -> t -> t access_result
 (** record that the address is invalid *)
+
+val invalidate_biad_isl :
+  Location.t -> Invalidation.t -> AbstractValue.t * ValueHistory.t -> t -> t list access_result
+(** record that the address is invalid. If the address has not been allocated, abduce ISL specs for
+    both invalid (null, free, unint) and allocated heap. *)
 
 val allocate : Procname.t -> Location.t -> AbstractValue.t * ValueHistory.t -> t -> t
 
@@ -125,6 +159,7 @@ val check_address_escape :
 
 val call :
      caller_proc_desc:Procdesc.t
+  -> Errlog.t
   -> callee_data:(Procdesc.t * PulseSummary.t) option
   -> Location.t
   -> Procname.t
@@ -146,3 +181,5 @@ val unknown_call :
   -> t
 (** performs a call to a function with no summary by optimistically havoc'ing the by-ref actuals and
     the return value as appropriate *)
+
+val conservatively_initialize_args : AbstractValue.t list -> t -> t

@@ -7,20 +7,21 @@
  (debug
   (flags
    (-w +a-4-9-18-30-40-42-44-48@50-66 -strict-formats -strict-sequence
-     -error-style short -short-paths -bin-annot -keep-locs -keep-docs -opaque))
+     -short-paths -bin-annot -keep-locs -keep-docs -g))
+  (ocamlopt_flags (-O3))
   (env-vars
    (PPX_TRACE_ENABLED 1))
   (inline_tests enabled))
  (trace
   (flags
-   (-w -a -error-style short -noassert -unboxed-types))
+   (-w -a -noassert -unboxed-types -g))
   (ocamlopt_flags (-O3))
   (env-vars
    (PPX_TRACE_ENABLED 1))
   (inline_tests disabled))
  (_ ; release, dev, default,...
   (flags
-   (-w -a -error-style short -noassert -unboxed-types))
+   (-w -a -noassert -unboxed-types))
   (ocamlopt_flags (-O3))
   (env-vars
    (PPX_TRACE_ENABLED 0))
@@ -29,8 +30,8 @@
 (library
  (name ppx_sledge)
  (kind ppx_rewriter)
- (libraries ppx_compare ppx_expect ppx_hash ppx_here ppx_inline_test ppx_let
-   ppx_sexp_conv ppx_sexp_value)
+ (libraries ppx_compare ppx_enumerate ppx_expect ppx_hash ppx_here
+   ppx_inline_test ppx_let ppx_sexp_conv ppx_sexp_value ppx_variants_conv)
  (preprocess no_preprocessing))
 
 (subdir
@@ -46,10 +47,10 @@
   (inline_tests)))
 
 (subdir
- src/ses
+ src/fol
  (library
-  (name ses)
-  (public_name sledge.ses)
+  (name fol)
+  (public_name sledge.fol)
   (libraries nonstdlib llair)
   (flags
    (:standard -open NS))
@@ -62,7 +63,7 @@
  (library
   (name sledge)
   (public_name sledge)
-  (libraries mtime mtime.clock.os nonstdlib llair ses)
+  (libraries mtime mtime.clock.os nonstdlib llair fol)
   (flags
    (:standard -open NS))
   (preprocess
@@ -75,7 +76,7 @@
   (name sledge_report)
   (public_name sledge-report)
   (package sledge)
-  (libraries sledge)
+  (libraries sledge core)
   (flags
    (:standard -open NS -open Sledge))
   (preprocess
@@ -119,8 +120,8 @@
   (name sledge_cli)
   (public_name sledge)
   (package sledge)
-  (libraries apron apron.boxMPQ ctypes ctypes.foreign dune-build-info llvm
-    llvm.irreader llvm.analysis llvm.scalar_opts llvm.target llvm.ipo
+  (libraries apron apron.boxMPQ core ctypes ctypes.foreign dune-build-info
+    llvm llvm.irreader llvm.analysis llvm.scalar_opts llvm.target llvm.ipo
     llvm.linker shexp.process yojson trace nonstdlib sledge model
     smtlib-utils)
   (flags
@@ -132,8 +133,7 @@
 
 (rule
  (targets sledge-help.txt)
- (deps cli/sledge_cli.ml cli/sledge_buck.ml tools/gen_help.sh
-   cli/sledge_cli.exe)
+ (deps tools/gen_help.sh cli/sledge_cli.exe)
  (action
   (with-stdout-to
    sledge-help.txt

@@ -34,12 +34,12 @@ let () =
         ; DifferentialTests.tests
         ; FileDiffTests.tests
         ; GradleTests.tests
+        ; HilExpTests.tests
         ; IListTests.tests
         ; JavaClassNameTests.tests
         ; JavaProfilerSamplesTest.tests
         ; LivenessTests.tests
         ; LRUHashtblTests.tests
-        ; MaximumSharingTests.tests
         ; ProcCfgTests.tests
         ; RestartSchedulerTests.tests
         ; SchedulerTests.tests

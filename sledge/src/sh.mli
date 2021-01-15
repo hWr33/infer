@@ -9,10 +9,13 @@
 
 open Fol
 
-(** Segment of memory starting at [loc] containing [seq] (a byte-array) of
-    size [siz], contained in an enclosing allocation-block starting at [bas]
-    of length [len]. *)
-type seg = {loc: Term.t; bas: Term.t; len: Term.t; siz: Term.t; seq: Term.t}
+(** Segment of memory. *)
+type seg =
+  { loc: Term.t  (** location (address) where segment starts *)
+  ; bas: Term.t  (** base address of enclosing allocation-block *)
+  ; len: Term.t  (** length of enclosing allocation-block *)
+  ; siz: Term.t  (** size of segment / length of the contents *)
+  ; cnt: Term.t  (** contents of segment, a sequence / byte array *) }
 
 type starjunction = private
   { us: Var.Set.t  (** vocabulary / variable context of formula *)
@@ -28,7 +31,7 @@ and disjunction = starjunction list
 type t = starjunction [@@deriving compare, equal, sexp]
 
 val pp_seg_norm : Context.t -> seg pp
-val pp_us : ?pre:('a, 'a) fmt -> ?vs:Var.Set.t -> unit -> Var.Set.t pp
+val pp_us : Var.Set.t pp
 val pp : t pp
 val pp_raw : t pp
 val pp_diff_eq : ?us:Var.Set.t -> ?xs:Var.Set.t -> Context.t -> t pp
@@ -110,7 +113,7 @@ val extend_us : Var.Set.t -> t -> t
 
 (** Query *)
 
-val is_false : t -> bool
+val is_unsat : t -> bool
 (** Holds only of inconsistent formulas, does not hold of all inconsistent
     formulas. *)
 

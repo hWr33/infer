@@ -13,14 +13,15 @@ module type State_domain_sig = sig
 
   val create_summary :
        locals:Llair.Reg.Set.t
-    -> formals:Llair.Reg.Set.t
+    -> formals:Llair.Reg.t iarray
     -> entry:t
     -> current:t
     -> summary * t
 end
 
 module Make (State_domain : State_domain_sig) = struct
-  type t = State_domain.t * State_domain.t [@@deriving equal, sexp_of]
+  type t = State_domain.t * State_domain.t
+  [@@deriving compare, equal, sexp_of]
 
   let embed b = (b, b)
 
@@ -39,29 +40,18 @@ module Make (State_domain : State_domain_sig) = struct
       (entry_a, next)
     else None
 
-  let is_false (_, curr) = State_domain.is_false curr
-
   let exec_assume (entry, current) cnd =
     let+ next = State_domain.exec_assume current cnd in
     (entry, next)
 
-  let exec_kill (entry, current) reg =
-    (entry, State_domain.exec_kill current reg)
+  let exec_kill reg (entry, current) =
+    (entry, State_domain.exec_kill reg current)
 
-  let exec_move (entry, current) reg_exps =
-    (entry, State_domain.exec_move current reg_exps)
+  let exec_move reg_exps (entry, current) =
+    (entry, State_domain.exec_move reg_exps current)
 
-  let exec_inst (entry, current) inst =
-    let+ next = State_domain.exec_inst current inst in
-    (entry, next)
-
-  let exec_intrinsic ~skip_throw (entry, current) areturn intrinsic actuals
-      =
-    let+ next_opt =
-      State_domain.exec_intrinsic ~skip_throw current areturn intrinsic
-        actuals
-    in
-    let+ next = next_opt in
+  let exec_inst inst (entry, current) =
+    let+ next = State_domain.exec_inst inst current in
     (entry, next)
 
   type from_call =
@@ -74,12 +64,12 @@ module Make (State_domain : State_domain_sig) = struct
       (entry, current) =
     [%Trace.call fun {pf} ->
       pf
-        "@[<v>@[actuals: (@[%a@])@ formals: (@[%a@])@]@ locals: {@[%a@]}@ \
-         globals: {@[%a@]}@ current: %a@]"
-        (List.pp ",@ " Llair.Exp.pp)
-        (List.rev actuals)
-        (List.pp ",@ " Llair.Reg.pp)
-        (List.rev formals) Llair.Reg.Set.pp locals Llair.Reg.Set.pp globals
+        "@ @[<v>@[actuals: (@[%a@])@ formals: (@[%a@])@]@ locals: \
+         {@[%a@]}@ globals: {@[%a@]}@ current: %a@]"
+        (IArray.pp ",@ " Llair.Exp.pp)
+        actuals
+        (IArray.pp ",@ " Llair.Reg.pp)
+        formals Llair.Reg.Set.pp locals Llair.Global.Set.pp globals
         State_domain.pp current]
     ;
     let caller_current, state_from_call =
@@ -92,25 +82,24 @@ module Make (State_domain : State_domain_sig) = struct
     [%Trace.retn fun {pf} (reln, _) -> pf "@,%a" pp reln]
 
   let post locals {state_from_call; caller_entry} (_, current) =
-    [%Trace.call fun {pf} -> pf "locals: %a" Llair.Reg.Set.pp locals]
+    [%Trace.call fun {pf} -> pf "@ locals: %a" Llair.Reg.Set.pp locals]
     ;
     (caller_entry, State_domain.post locals state_from_call current)
     |>
-    [%Trace.retn fun {pf} -> pf "@,%a" pp]
+    [%Trace.retn fun {pf} -> pf "%a" pp]
 
   let retn formals freturn {caller_entry; state_from_call} (_, current) =
-    [%Trace.call fun {pf} -> pf "@,%a" State_domain.pp current]
+    [%Trace.call fun {pf} -> pf "@ %a" State_domain.pp current]
     ;
     (caller_entry, State_domain.retn formals freturn state_from_call current)
     |>
-    [%Trace.retn fun {pf} -> pf "@,%a" pp]
+    [%Trace.retn fun {pf} -> pf "%a" pp]
 
   let dnf (entry, current) =
     List.map ~f:(fun c -> (entry, c)) (State_domain.dnf current)
 
-  let resolve_callee f e (entry, current) =
-    let callees, next = State_domain.resolve_callee f e current in
-    (callees, (entry, next))
+  let resolve_callee f e (_, current) =
+    State_domain.resolve_callee f e current
 
   type summary = State_domain.summary
 

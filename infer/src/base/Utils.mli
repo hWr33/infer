@@ -20,6 +20,12 @@ val string_crc_hex32 : string -> string
 val read_file : string -> (string list, string) Result.t
 (** read a source file and return a list of lines *)
 
+val normalize_path_from : root:string -> string -> string * string
+(** [normalize_path_from ~root path] removes ".." and "." parts of [root/path] when possible and
+    returns the new [root] and [path], eg if [root = "r"] and [path = "a/../../../foo/./bar"] then
+    the result is [("../foo/bar", ".")] (in particular "r/a/../../../foo/./bar" and "./../foo/bar"
+    represent the same file) *)
+
 val filename_to_absolute : root:string -> string -> string
 (** Convert a filename to an absolute one if it is relative, and normalize "." and ".." *)
 
@@ -56,17 +62,6 @@ val read_json_file : string -> (Yojson.Basic.t, string) Result.t
 val with_file_in : string -> f:(In_channel.t -> 'a) -> 'a
 
 val with_file_out : string -> f:(Out_channel.t -> 'a) -> 'a
-
-type file_lock =
-  { file: string
-  ; oc: Stdlib.out_channel
-  ; fd: Core.Unix.File_descr.t
-  ; lock: unit -> unit
-  ; unlock: unit -> unit }
-
-val create_file_lock : unit -> file_lock
-
-val with_file_lock : file_lock:file_lock -> f:(unit -> 'a) -> 'a
 
 val with_intermediate_temp_file_out : string -> f:(Out_channel.t -> 'a) -> 'a
 (** like [with_file_out] but uses a fresh intermediate temporary file and rename to avoid

@@ -43,7 +43,15 @@ module BasicCostWithReason : sig
 
   val plus : t -> t -> t
 
-  val subst : Procname.t -> Location.t -> t -> Bounds.Bound.eval_sym -> t
+  val subst :
+       Procname.t
+    -> Location.t
+    -> t
+    -> Bounds.Bound.eval_sym
+    -> FuncPtr.Set.eval_func_ptrs
+    -> (Procname.t -> t option)
+    -> default_closure_cost:Ints.NonNegativeInt.t
+    -> t
 
   val degree : t -> Polynomials.Degree.t option
 
@@ -69,6 +77,8 @@ val get_cost_kind : CostKind.t -> t -> BasicCostWithReason.t
 val get_operation_cost : t -> BasicCostWithReason.t
 
 val set_autoreleasepool_size_zero : t -> t
+
+val set_operation_cost_zero : t -> t
 
 val find_opt : CostKind.t -> t -> BasicCostWithReason.t option
 

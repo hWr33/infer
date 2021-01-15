@@ -108,14 +108,12 @@ let tests =
   let call_sink actual_str = call_sink_with_exp (Exp.Var (ident_of_str actual_str)) in
   let assign_id_to_field root_str fld_str rhs_id_str =
     let rhs_exp = Exp.Var (ident_of_str rhs_id_str) in
-    make_store ~rhs_typ:Typ.void (Exp.Var (ident_of_str root_str)) fld_str ~rhs_exp
+    make_store ~rhs_typ:StdTyp.void (Exp.Var (ident_of_str root_str)) fld_str ~rhs_exp
   in
   let read_field_to_id lhs_id_str root_str fld_str =
-    make_load_fld ~rhs_typ:Typ.void lhs_id_str fld_str (Exp.Var (ident_of_str root_str))
+    make_load_fld ~rhs_typ:StdTyp.void lhs_id_str fld_str (Exp.Var (ident_of_str root_str))
   in
   let assert_empty = invariant "{ }" in
-  let exe_env = Exe_env.mk () in
-  Ondemand.set_exe_env exe_env ;
   let test_list =
     [ ("source recorded", [assign_to_source "ret_id"; invariant "{ ret_id$0* => (SOURCE -> ?) }"])
     ; ("non-source not recorded", [assign_to_non_source "ret_id"; assert_empty])

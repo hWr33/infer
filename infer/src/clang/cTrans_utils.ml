@@ -6,6 +6,7 @@
  *)
 
 open! IStd
+module F = Format
 module Hashtbl = Caml.Hashtbl
 
 (** Utility methods to support the translation of clang ast constructs into sil instructions. *)
@@ -103,6 +104,16 @@ type continuation =
   ; return_temp: bool
         (* true if temps should not be removed in the node but returned to ancestors *) }
 
+let pp_continuation fmt ({break; continue; return_temp}[@warning "+9"]) =
+  if List.is_empty break then F.pp_print_string fmt "empty"
+  else
+    F.fprintf fmt "@[{break=[%a];@;continue=[%a];@;return_temp=%b}@]"
+      (Pp.seq ~sep:";" Procdesc.Node.pp)
+      break
+      (Pp.seq ~sep:";" Procdesc.Node.pp)
+      continue return_temp
+
+
 let is_return_temp continuation =
   match continuation with Some cont -> cont.return_temp | _ -> false
 
@@ -117,6 +128,13 @@ let mk_cond_continuation cont =
 
 type priority_node = Free | Busy of Clang_ast_t.pointer
 
+let pp_priority_node fmt = function
+  | Free ->
+      F.pp_print_string fmt "Free"
+  | Busy pointer ->
+      F.fprintf fmt "Busy(%d)" pointer
+
+
 (** A translation state. It provides the translation function with the info it needs to carry on the
     translation. *)
 type trans_state =
@@ -130,6 +148,32 @@ type trans_state =
   ; passed_as_noescape_block_to: Procname.t option
         (** Current to-be-translated instruction is being passed as argument to the given method in
             a position annotated with NS_NOESCAPE *) }
+
+let pp_trans_state fmt
+    ({ context= _
+     ; succ_nodes
+     ; continuation
+     ; priority
+     ; var_exp_typ
+     ; opaque_exp
+     ; is_fst_arg_objc_instance_method_call
+     ; passed_as_noescape_block_to }[@warning "+9"]) =
+  F.fprintf fmt
+    "{@[succ_nodes=[%a];@;\
+     continuation=%a@;\
+     priority=%a;@;\
+     var_exp_typ=%a;@;\
+     opaque_exp=%a;@;\
+     is_fst_arg_objc_instance_method_call=%b;@;\
+     passed_as_noescape_block_to=%a@]}"
+    (Pp.seq ~sep:";" Procdesc.Node.pp)
+    succ_nodes (Pp.option pp_continuation) continuation pp_priority_node priority
+    (Pp.option (Pp.pair ~fst:Exp.pp ~snd:(Typ.pp_full Pp.text_break)))
+    var_exp_typ
+    (Pp.option (Pp.pair ~fst:Exp.pp ~snd:(Typ.pp_full Pp.text_break)))
+    opaque_exp is_fst_arg_objc_instance_method_call (Pp.option Procname.pp)
+    passed_as_noescape_block_to
+
 
 let default_trans_state context =
   { context
@@ -146,7 +190,25 @@ type control =
   { root_nodes: Procdesc.Node.t list
   ; leaf_nodes: Procdesc.Node.t list
   ; instrs: Sil.instr list
-  ; initd_exps: Exp.t list }
+  ; initd_exps: Exp.t list
+  ; cxx_temporary_markers_set: Pvar.t list }
+
+let pp_control fmt {root_nodes; leaf_nodes; instrs; initd_exps; cxx_temporary_markers_set} =
+  let pp_cxx_temporary_markers_set fmt =
+    if List.is_empty cxx_temporary_markers_set then ()
+    else
+      F.fprintf fmt ";@;cxx_temporary_markers_set=[%a]"
+        (Pp.seq ~sep:";" (Pvar.pp Pp.text))
+        cxx_temporary_markers_set
+  in
+  F.fprintf fmt "@[{root_nodes=[%a];@;leaf_nodes=[%a];@;instrs=[%a];@;initd_exps=[%a]%t}@]"
+    (Pp.seq ~sep:";" Procdesc.Node.pp)
+    root_nodes
+    (Pp.seq ~sep:";" Procdesc.Node.pp)
+    leaf_nodes
+    (Pp.seq ~sep:";" (Sil.pp_instr ~print_types:false Pp.text_break))
+    instrs (Pp.seq ~sep:";" Exp.pp) initd_exps pp_cxx_temporary_markers_set
+
 
 type trans_result =
   { control: control
@@ -154,7 +216,9 @@ type trans_result =
   ; method_name: Procname.t option
   ; is_cpp_call_virtual: bool }
 
-let empty_control = {root_nodes= []; leaf_nodes= []; instrs= []; initd_exps= []}
+let empty_control =
+  {root_nodes= []; leaf_nodes= []; instrs= []; initd_exps= []; cxx_temporary_markers_set= []}
+
 
 let mk_trans_result ?method_name ?(is_cpp_call_virtual = false) return control =
   {control; return; method_name; is_cpp_call_virtual}
@@ -164,7 +228,8 @@ let undefined_expression () = Exp.Var (Ident.create_fresh Ident.knormal)
 
 (** Collect the results of translating a list of instructions, and link up the nodes created. *)
 let collect_controls pdesc l =
-  let collect_one result_rev {root_nodes; leaf_nodes; instrs; initd_exps} =
+  let collect_one result_rev {root_nodes; leaf_nodes; instrs; initd_exps; cxx_temporary_markers_set}
+      =
     if not (List.is_empty root_nodes) then
       List.iter
         ~f:(fun n -> Procdesc.node_set_succs pdesc n ~normal:root_nodes ~exn:[])
@@ -176,10 +241,12 @@ let collect_controls pdesc l =
     { root_nodes
     ; leaf_nodes
     ; instrs= List.rev_append instrs result_rev.instrs
-    ; initd_exps= List.rev_append initd_exps result_rev.initd_exps }
+    ; initd_exps= List.rev_append initd_exps result_rev.initd_exps
+    ; cxx_temporary_markers_set=
+        List.rev_append cxx_temporary_markers_set result_rev.cxx_temporary_markers_set }
   in
   let rev_result = List.fold l ~init:empty_control ~f:collect_one in
-  {rev_result with instrs= List.rev rev_result.instrs; initd_exps= List.rev rev_result.initd_exps}
+  {rev_result with instrs= List.rev rev_result.instrs}
 
 
 let collect_trans_results pdesc ~return trans_results =
@@ -193,16 +260,18 @@ module PriorityNode = struct
   let try_claim_priority_node trans_state stmt_info =
     match trans_state.priority with
     | Free ->
-        L.(debug Capture Verbose)
-          "Priority is free. Locking priority node in %d@\n@." stmt_info.Clang_ast_t.si_pointer ;
+        L.debug Capture Verbose "Priority is free. Locking priority node in %d@\n"
+          stmt_info.Clang_ast_t.si_pointer ;
         {trans_state with priority= Busy stmt_info.Clang_ast_t.si_pointer}
-    | _ ->
-        L.(debug Capture Verbose)
-          "Priority busy in %d. No claim possible@\n@." stmt_info.Clang_ast_t.si_pointer ;
+    | Busy _ ->
+        L.debug Capture Verbose "Priority is %a. No claim possible in %d@\n" pp_priority_node
+          trans_state.priority stmt_info.Clang_ast_t.si_pointer ;
         trans_state
 
 
   let force_claim_priority_node trans_state stmt_info =
+    L.debug Capture Verbose "Force-locking priority node in %d (was %a)@\n"
+      stmt_info.Clang_ast_t.si_pointer pp_priority_node trans_state.priority ;
     {trans_state with priority= Busy stmt_info.Clang_ast_t.si_pointer}
 
 
@@ -216,16 +285,18 @@ module PriorityNode = struct
   (* It connects nodes returned by translation of stmt children and *)
   (* deals with creating or not a cfg node depending of owning the *)
   (* priority_node. It returns nodes, ids, instrs that should be passed to parent *)
-  let compute_controls_to_parent trans_state loc ~node_name stmt_info res_states_children =
+  let compute_controls_to_parent trans_state loc node_name stmt_info res_states_children =
     let res_state = collect_controls trans_state.context.procdesc res_states_children in
+    L.debug Capture Verbose "collected controls: %a@\n" pp_control res_state ;
     let create_node =
       own_priority_node trans_state.priority stmt_info && not (List.is_empty res_state.instrs)
     in
     if create_node then (
       (* We need to create a node *)
       let node_kind = Procdesc.Node.Stmt_node node_name in
+      let node_instrs = res_state.instrs in
       let node =
-        Procdesc.create_node trans_state.context.CContext.procdesc loc node_kind res_state.instrs
+        Procdesc.create_node trans_state.context.CContext.procdesc loc node_kind node_instrs
       in
       Procdesc.node_set_succs trans_state.context.procdesc node ~normal:trans_state.succ_nodes
         ~exn:[] ;
@@ -237,24 +308,76 @@ module PriorityNode = struct
       let root_nodes =
         if List.is_empty res_state.root_nodes then [node] else res_state.root_nodes
       in
-      {res_state with root_nodes; leaf_nodes= [node]; instrs= []} )
-    else (* The node is created by the parent. We just pass back nodes/leafs params *)
-      res_state
+      let res_state = {res_state with root_nodes; leaf_nodes= [node]; instrs= []} in
+      L.debug Capture Verbose "Created node %a with instrs [%a], returning control %a@\n"
+        Procdesc.Node.pp node
+        (Pp.seq ~sep:";" (Sil.pp_instr ~print_types:false Pp.text_break))
+        node_instrs pp_control res_state ;
+      res_state )
+    else (
+      (* The node is created by the parent. We just pass back nodes/leafs params *)
+      L.debug Capture Verbose "Delegating node creation to parent with control %a@\n" pp_control
+        res_state ;
+      res_state )
 
 
-  let compute_results_to_parent trans_state loc ~node_name stmt_info ~return trans_results =
+  let compute_results_to_parent trans_state loc node_name stmt_info ~return trans_results =
     List.map trans_results ~f:(fun trans_result -> trans_result.control)
-    |> compute_controls_to_parent trans_state loc ~node_name stmt_info
+    |> compute_controls_to_parent trans_state loc node_name stmt_info
     |> mk_trans_result return
 
 
-  let compute_control_to_parent trans_state loc ~node_name stmt_info control =
-    compute_controls_to_parent trans_state loc ~node_name stmt_info [control]
+  let compute_control_to_parent trans_state loc node_name stmt_info control =
+    compute_controls_to_parent trans_state loc node_name stmt_info [control]
 
 
-  let compute_result_to_parent trans_state loc ~node_name stmt_info trans_result =
-    compute_control_to_parent trans_state loc ~node_name stmt_info trans_result.control
+  let compute_result_to_parent trans_state loc node_name stmt_info trans_result =
+    compute_control_to_parent trans_state loc node_name stmt_info trans_result.control
     |> mk_trans_result trans_result.return
+
+
+  let mk_sequential loc node_name trans_state stmt_info return ~first_result ~second_result =
+    (* force node creation for just the first result if needed *)
+    let first_result =
+      if
+        List.is_empty second_result.control.root_nodes
+        && List.is_empty second_result.control.leaf_nodes
+      then first_result
+      else compute_result_to_parent trans_state loc node_name stmt_info first_result
+    in
+    L.debug Capture Verbose "sequential composition :@\n@[<hv2>  %a@]@\n;@\n@[<hv2>  %a@]@\n"
+      pp_control first_result.control pp_control second_result.control ;
+    compute_results_to_parent trans_state loc node_name stmt_info ~return
+      [first_result; second_result]
+
+
+  let force_sequential loc node_name trans_state stmt_info ~mk_first_opt ~mk_second ~mk_return =
+    let trans_state = force_claim_priority_node trans_state stmt_info in
+    let second_result =
+      let stmt_info = {stmt_info with Clang_ast_t.si_pointer= CAst_utils.get_fresh_pointer ()} in
+      mk_second trans_state stmt_info
+    in
+    match mk_first_opt trans_state stmt_info with
+    | None ->
+        L.debug Capture Verbose "empty result for first instruction, skipping@\n" ;
+        second_result
+    | Some first_result ->
+        mk_sequential loc node_name trans_state stmt_info
+          (mk_return ~fst:first_result ~snd:second_result)
+          ~first_result ~second_result
+
+
+  let force_sequential_with_acc loc node_name trans_state stmt_info ~mk_first ~mk_second ~mk_return
+      =
+    let trans_state = force_claim_priority_node trans_state stmt_info in
+    let first_result, acc = mk_first {trans_state with succ_nodes= []} stmt_info in
+    let second_result =
+      let stmt_info = {stmt_info with Clang_ast_t.si_pointer= CAst_utils.get_fresh_pointer ()} in
+      mk_second acc trans_state stmt_info
+    in
+    mk_sequential loc node_name trans_state stmt_info
+      (mk_return ~fst:first_result ~snd:second_result)
+      ~first_result ~second_result
 end
 
 module Loops = struct
@@ -323,8 +446,7 @@ let alloc_trans trans_state ~alloc_builtin loc stmt_info function_type =
     create_alloc_instrs integer_type_widths ~alloc_builtin loc function_type
   in
   let control_tmp = {empty_control with instrs} in
-  PriorityNode.compute_control_to_parent trans_state loc ~node_name:(Call "alloc") stmt_info
-    control_tmp
+  PriorityNode.compute_control_to_parent trans_state loc (Call "alloc") stmt_info control_tmp
   |> mk_trans_result (exp, function_type)
 
 
@@ -349,7 +471,7 @@ let objc_new_trans trans_state ~alloc_builtin loc stmt_info cls_name function_ty
   let instrs = alloc_stmt_call @ [init_stmt_call] in
   let res_trans_tmp = {empty_control with instrs} in
   let node_name = Procdesc.Node.CallObjCNew in
-  PriorityNode.compute_control_to_parent trans_state loc ~node_name stmt_info res_trans_tmp
+  PriorityNode.compute_control_to_parent trans_state loc node_name stmt_info res_trans_tmp
   |> mk_trans_result (Exp.Var init_ret_id, alloc_ret_type)
 
 
@@ -395,7 +517,7 @@ let create_call_to_objc_bridge_transfer sil_loc exp typ =
   let pname = BuiltinDecl.__objc_bridge_transfer in
   let stmt_call =
     Sil.Call
-      ( (Ident.create_fresh Ident.knormal, Typ.void)
+      ( (Ident.create_fresh Ident.knormal, StdTyp.void)
       , Exp.Const (Const.Cfun pname)
       , [(exp, typ)]
       , sil_loc
@@ -479,9 +601,9 @@ let cast_operation ?objc_bridge_cast_kind cast_kind ((exp, typ) as exp_typ) cast
 
 let trans_assertion_failure sil_loc (context : CContext.t) =
   let assert_fail_builtin = Exp.Const (Const.Cfun BuiltinDecl.__infer_fail) in
-  let args = [(Exp.Const (Const.Cstr Config.default_failure_name), Typ.void)] in
+  let args = [(Exp.Const (Const.Cstr Config.default_failure_name), StdTyp.void)] in
   let ret_id = Ident.create_fresh Ident.knormal in
-  let ret_typ = Typ.void in
+  let ret_typ = StdTyp.void in
   let call_instr =
     Sil.Call ((ret_id, ret_typ), assert_fail_builtin, args, sil_loc, CallFlags.default)
   in
@@ -581,10 +703,6 @@ let extract_stmt_from_singleton stmt_list source_range warning_string =
 
 
 module Self = struct
-  exception
-    SelfClassException of
-      {class_name: Typ.Name.t; position: Logging.ocaml_pos; source_range: Clang_ast_t.source_range}
-
   let add_self_parameter_for_super_instance stmt_info context procname loc mei =
     if is_superinstance mei then
       let typ, self_expr, instrs =
@@ -629,12 +747,12 @@ let is_logical_negation_of_int tenv ei uoi =
       false
 
 
-let mk_fresh_void_exp_typ () = (Exp.Var (Ident.create_fresh Ident.knormal), Typ.void)
+let mk_fresh_void_exp_typ () = (Exp.Var (Ident.create_fresh Ident.knormal), StdTyp.void)
 
-let mk_fresh_void_id_typ () = (Ident.create_fresh Ident.knormal, Typ.void)
+let mk_fresh_void_id_typ () = (Ident.create_fresh Ident.knormal, StdTyp.void)
 
 let mk_fresh_void_return () =
-  let id = Ident.create_fresh Ident.knormal and void = Typ.void in
+  let id = Ident.create_fresh Ident.knormal and void = StdTyp.void in
   ((id, void), (Exp.Var id, void))
 
 
@@ -644,3 +762,33 @@ let last_or_mk_fresh_void_exp_typ exp_typs =
       last_exp_typ
   | None ->
       mk_fresh_void_exp_typ ()
+
+
+let should_remove_first_param {context= {tenv} as context; is_fst_arg_objc_instance_method_call}
+    stmt =
+  let some_class_name stmt_info = Some (CContext.get_curr_class_typename stmt_info context) in
+  match (stmt : Clang_ast_t.stmt) with
+  | ImplicitCastExpr
+      ( _
+      , [ DeclRefExpr
+            ( stmt_info
+            , _
+            , _
+            , {drti_decl_ref= Some {dr_name= Some {ni_name= name}; dr_qual_type= Some qual_type}} )
+        ]
+      , _
+      , {cei_cast_kind= `LValueToRValue} )
+    when is_fst_arg_objc_instance_method_call && String.equal name "self"
+         && CType.is_class (CType_decl.qual_type_to_sil_type tenv qual_type) ->
+      some_class_name stmt_info
+  | ObjCMessageExpr
+      ( _
+      , [ ImplicitCastExpr
+            (_, [DeclRefExpr (stmt_info, _, _, _)], _, {cei_cast_kind= `LValueToRValue}) ]
+      , _
+      , {omei_selector= selector} )
+    when is_fst_arg_objc_instance_method_call && String.equal selector CFrontend_config.class_method
+    ->
+      some_class_name stmt_info
+  | _ ->
+      None

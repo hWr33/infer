@@ -72,6 +72,10 @@ OPTIONS
            Activates: Enable cost and disable all other checkers (Conversely:
            --no-cost-only)
 
+       --no-cost-suppress-func-ptr
+           Deactivates: Suppress printing function pointers in cost reports
+           (Conversely: --cost-suppress-func-ptr)
+
        --custom-symbols json
            Specify named lists of symbols available to rules
 
@@ -196,6 +200,9 @@ OPTIONS
            Deactivates: checker liveness: Detection of dead stores and unused
            variables. (Conversely: --liveness)
 
+       --liveness-ignored-constant +string
+           List of integer constants to be ignored by liveness analysis
+
        --liveness-only
            Activates: Enable liveness and disable all other checkers
            (Conversely: --no-liveness-only)
@@ -211,6 +218,14 @@ OPTIONS
 
        --max-jobs int
            Maximum number of analysis jobs running simultaneously
+
+       --memtrace-analysis-profiling
+           Activates: Generate OCaml analysis allocation traces in
+           `infer-out/memtrace`. (Conversely:
+           --no-memtrace-analysis-profiling)
+
+       --memtrace-sampling-rate float
+           Sampling rate for Memtrace allocation profiling. Default is 1e-6.
 
        --print-active-checkers
            Activates: Print the active checkers before starting the analysis

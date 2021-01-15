@@ -23,7 +23,9 @@ module BaseStack = PulseBaseStack
 module type BaseDomainSig = sig
   (* private because the lattice is not the same for preconditions and postconditions so we don't
      want to confuse them *)
-  type t = private BaseDomain.t
+  type t = private BaseDomain.t [@@deriving yojson_of]
+
+  val yojson_of_t : t -> Yojson.Safe.t
 
   val empty : t
 
@@ -50,16 +52,24 @@ module PostDomain : BaseDomainSig
     collapse into one. * *)
 module PreDomain : BaseDomainSig
 
+module PostStatus : sig
+  type t = ISLOk | ISLError [@@deriving equal]
+end
+
 (** biabduction-style pre/post state + skipped calls *)
 type t = private
   { post: PostDomain.t  (** state at the current program point*)
   ; pre: PreDomain.t  (** inferred pre at the current program point *)
+  ; topl: PulseTopl.state  (** state at of the Topl monitor at the current program point *)
   ; skipped_calls: SkippedCalls.t  (** set of skipped calls *)
-  ; path_condition: PathCondition.t  (** arithmetic facts *) }
+  ; path_condition: PathCondition.t  (** arithmetic facts *)
+  ; isl_status: PostStatus.t  (** isl summary status *) }
 
 val leq : lhs:t -> rhs:t -> bool
 
 val pp : Format.formatter -> t -> unit
+
+val set_isl_error_status : t -> t
 
 val mk_initial : Procdesc.t -> t
 
@@ -123,6 +133,8 @@ module AddressAttributes : sig
 
   val check_valid : Trace.t -> AbstractValue.t -> t -> (t, Invalidation.t * Trace.t) result
 
+  val check_initialized : Trace.t -> AbstractValue.t -> t -> (t, unit) result
+
   val invalidate : AbstractValue.t * ValueHistory.t -> Invalidation.t -> Location.t -> t -> t
 
   val allocate : Procname.t -> AbstractValue.t * ValueHistory.t -> Location.t -> t -> t
@@ -142,6 +154,13 @@ module AddressAttributes : sig
   val std_vector_reserve : AbstractValue.t -> t -> t
 
   val find_opt : AbstractValue.t -> t -> Attributes.t option
+
+  val check_valid_isl :
+       Trace.t
+    -> AbstractValue.t
+    -> ?null_noop:bool
+    -> t
+    -> (t list, Invalidation.t * Trace.t * t) result
 end
 
 val is_local : Var.t -> t -> bool
@@ -159,9 +178,9 @@ val add_skipped_calls : SkippedCalls.t -> t -> t
 val set_path_condition : PathCondition.t -> t -> t
 
 (** private type to make sure {!summary_of_post} is always called when creating summaries *)
-type summary = private t
+type summary = private t [@@deriving yojson_of]
 
-val summary_of_post : Procdesc.t -> t -> summary
+val summary_of_post : Procdesc.t -> t -> summary SatUnsat.t
 (** trim the state down to just the procedure's interface (formals and globals), and simplify and
     normalize the state *)
 
@@ -170,3 +189,37 @@ val set_post_edges : AbstractValue.t -> BaseMemory.Edges.t -> t -> t
 
 val set_post_cell : AbstractValue.t * ValueHistory.t -> BaseDomain.cell -> Location.t -> t -> t
 (** directly set the edges and attributes for the given address, bypassing abduction altogether *)
+
+val incorporate_new_eqs : t -> PathCondition.t * PathCondition.new_eqs -> PathCondition.t
+(** Check that the new equalities discovered are compatible with the current pre and post heaps,
+    e.g. [x = 0] is not compatible with [x] being allocated, and [x = y] is not compatible with [x]
+    and [y] being allocated separately. In those cases, the resulting path condition is
+    {!PathCondition.false_}. *)
+
+val initialize : AbstractValue.t -> t -> t
+(** Remove "Uninitialized" attribute of the given address *)
+
+val set_uninitialized :
+     [ `LocalDecl of Pvar.t * AbstractValue.t option
+       (** the second optional parameter is for the address of the variable *)
+     | `Malloc of AbstractValue.t  (** the address parameter is a newly allocated address *) ]
+  -> Typ.t
+  -> Location.t
+  -> t
+  -> t
+(** Add "Uninitialized" attributes when a variable is declared or a memory is allocated by malloc. *)
+
+module Topl : sig
+  val small_step : Location.t -> PulseTopl.event -> t -> t
+
+  val large_step :
+       call_location:Location.t
+    -> callee_proc_name:Procname.t
+    -> substitution:(AbstractValue.t * ValueHistory.t) AbstractValue.Map.t
+    -> ?condition:PathCondition.t
+    -> callee_prepost:PulseTopl.state
+    -> t
+    -> t
+
+  val get : summary -> PulseTopl.state
+end

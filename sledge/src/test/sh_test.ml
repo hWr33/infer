@@ -15,35 +15,44 @@ let%test_module _ =
     let () = Trace.init ~margin:68 ()
 
     (* let () =
-     *   Trace.init ~margin:160 ~config:(Result.ok_exn (Trace.parse "+Sh")) ()
-     *
-     * [@@@warning "-32"] *)
+     *   Trace.init ~margin:160
+     *     ~config:
+     *       (Result.get_ok
+     *          (Trace.parse
+     *             "+Sh.simplify+Sh.simplify_+Sh.norm+Sh.and_subst+Context.solve_and_elim+Context.partition_valid+Context.solve_for_vars+Context.apply_and_elim+Context.apply_subst+Context.elim"))
+     *     () *)
+
+    [@@@warning "-32"]
 
     let pp = Format.printf "@\n%a@." pp
     let pp_raw = Format.printf "@\n%a@." pp_raw
     let pp_djn = Format.printf "@\n%a@." pp_djn
     let ( ~$ ) = Var.Set.of_list
     let ( ! ) i = Term.integer (Z.of_int i)
+    let ( + ) = Term.add
     let ( - ) = Term.sub
     let ( = ) = Formula.eq
-    let f = Term.splat (* any uninterpreted function *)
-
+    let f x = Term.apply (Uninterp "f") [|x|]
     let wrt = Var.Set.empty
     let a_, wrt = Var.fresh "a" ~wrt
     let b_, wrt = Var.fresh "b" ~wrt
     let c_, wrt = Var.fresh "c" ~wrt
     let d_, wrt = Var.fresh "d" ~wrt
     let e_, wrt = Var.fresh "e" ~wrt
+    let m_, wrt = Var.fresh "m" ~wrt
     let x_, wrt = Var.fresh "x" ~wrt
     let y_, wrt = Var.fresh "y" ~wrt
+    let z_, wrt = Var.fresh "z" ~wrt
     let _ = wrt
     let a = Term.var a_
     let b = Term.var b_
     let c = Term.var c_
     let d = Term.var d_
     let e = Term.var e_
+    let m = Term.var m_
     let x = Term.var x_
     let y = Term.var y_
+    let z = Term.var z_
 
     let eq_concat (siz, seq) ms =
       Formula.eq (Term.sized ~siz ~seq)
@@ -51,7 +60,15 @@ let%test_module _ =
            (Array.map ~f:(fun (siz, seq) -> Term.sized ~siz ~seq) ms))
 
     let of_eqs l =
-      List.fold ~init:emp ~f:(fun q (a, b) -> and_ (Formula.eq a b) q) l
+      List.fold ~f:(fun (a, b) q -> and_ (Formula.eq a b) q) l emp
+
+    let%expect_test _ =
+      pp
+        (star
+           (seg {loc= x; bas= x; len= !16; siz= !8; cnt= a})
+           (seg {loc= x + !8; bas= x; len= !16; siz= !8; cnt= b})) ;
+      [%expect {|
+          %x_7 -[)-> ⟨8,%a_1⟩^⟨8,%b_2⟩ |}]
 
     let%expect_test _ =
       let p = exists ~$[x_] (extend_us ~$[x_] emp) in
@@ -61,11 +78,11 @@ let%test_module _ =
       pp (star p q) ;
       [%expect
         {|
-          ∃ %x_6 .   emp
+          ∃ %x_7 .   emp
 
-            0 = %x_6 ∧ emp
+            0 = %x_7 ∧ emp
 
-            0 = %x_6 ∧ emp |}]
+            0 = %x_7 ∧ emp |}]
 
     let%expect_test _ =
       let q =
@@ -81,13 +98,11 @@ let%test_module _ =
       pp_djn (dnf q) ;
       [%expect
         {|
-          ( (  0 = %x_6 ∧ emp)
-          ∨ (  ( (  1 = _ = %y_7 ∧ emp) ∨ (  2 = _ ∧ emp) ))
-          )
+          ( (  0 = %x_7 ∧ emp) ∨ (  ( (  1 = %y_8 ∧ emp) ∨ (  emp) )) )
     
-        ( (∃ %x_6, %x_7 .   (%x_7 = 2) ∧ emp)
-        ∨ (∃ %x_6 .   ((%x_6 = 1) ∧ (%y_7 = 1)) ∧ emp)
-        ∨ (  (0 = %x_6) ∧ emp)
+        ( (∃ %x_7, %x_8 .   2 = %x_8 ∧ (2 = %x_8) ∧ emp)
+        ∨ (∃ %x_7 .   1 = %y_8 = %x_7 ∧ ((1 = %x_7) ∧ (1 = %y_8)) ∧ emp)
+        ∨ (  0 = %x_7 ∧ (0 = %x_7) ∧ emp)
         ) |}]
 
     let%expect_test _ =
@@ -106,13 +121,13 @@ let%test_module _ =
       pp_djn (dnf q) ;
       [%expect
         {|
-          ( (  0 = _ ∧ emp)
-          ∨ (  ( (  1 = _ = %y_7 ∧ emp) ∨ (  2 = _ ∧ emp) ))
-          )
+          ( (  emp) ∨ (  ( (  1 = %y_8 ∧ emp) ∨ (  emp) )) )
     
-        ( (∃ %x_6, %x_8, %x_9 .   (%x_9 = 2) ∧ emp)
-        ∨ (∃ %x_6, %x_8 .   ((%y_7 = 1) ∧ (%x_8 = 1)) ∧ emp)
-        ∨ (∃ %x_6 .   (0 = %x_6) ∧ emp)
+        ( (∃ %x_7, %x_9, %x_10 .   2 = %x_10 ∧ (2 = %x_10) ∧ emp)
+        ∨ (∃ %x_7, %x_9 .
+             1 = %x_9 = %y_8 ∧ ((1 = %y_8) ∧ (1 = %x_9))
+           ∧ emp)
+        ∨ (∃ %x_7 .   0 = %x_7 ∧ (0 = %x_7) ∧ emp)
         ) |}]
 
     let%expect_test _ =
@@ -131,11 +146,9 @@ let%test_module _ =
       pp (simplify q) ;
       [%expect
         {|
-        ( (  0 = _ ∧ emp)
-        ∨ (  ( (  1 = _ = %y_7 ∧ emp) ∨ (  2 = _ ∧ emp) ))
-        )
+        ( (  emp) ∨ (  ( (  1 = %y_8 ∧ emp) ∨ (  emp) )) )
     
-        ( (  1 = %y_7 ∧ emp) ∨ (  emp) ∨ (  emp) ) |}]
+        ( (  emp) ∨ (  1 = %y_8 ∧ emp) ∨ (  emp) ) |}]
 
     let%expect_test _ =
       let q = exists ~$[x_] (of_eqs [(f x, x); (f y, y - !1)]) in
@@ -145,11 +158,11 @@ let%test_module _ =
       pp q' ;
       [%expect
         {|
-        ∃ %x_6 .   %x_6 = %x_6^ ∧ (-1 + %y_7) = %y_7^ ∧ emp
+        ∃ %x_7 .   %x_7 = f(%x_7) ∧ (-1 + %y_8) = f(%y_8) ∧ emp
     
-          ((-1 + %y_7) = %y_7^) ∧ emp
-
-          (-1 + %y_7) = %y_7^ ∧ emp |}]
+          (-1 + %y_8) = f(%y_8) ∧ ((1 + f(%y_8)) = %y_8) ∧ emp
+    
+          (-1 + %y_8) = f(%y_8) ∧ emp |}]
 
     let%expect_test _ =
       let q =
@@ -170,13 +183,54 @@ let%test_module _ =
       [%expect
         {|
         ∃ %a_1, %c_3, %d_4, %e_5 .
-          (⟨16,%e_5⟩ = (⟨8,%a_1⟩^⟨8,%d_4⟩))
+          (⟨8,%a_1⟩^⟨8,%d_4⟩) = %e_5 ∧ (⟨16,%e_5⟩ = (⟨8,%a_1⟩^⟨8,%d_4⟩))
         ∧ emp
-        * ( (  (0 ≠ %x_6) ∧ emp)
-          ∨ (∃ %b_2 .   (⟨8,%a_1⟩ = (⟨4,%c_3⟩^⟨4,%b_2⟩)) ∧ emp)
+        * ( (  tt ∧ (0 ≠ %x_7) ∧ emp)
+          ∨ (∃ %b_2 .
+               (⟨4,%c_3⟩^⟨4,%b_2⟩) = %a_1
+             ∧ (⟨8,%a_1⟩ = (⟨4,%c_3⟩^⟨4,%b_2⟩))
+             ∧ emp)
           )
 
-          tt ∧ emp * ( (  tt ∧ emp) ∨ (  (0 ≠ %x_6) ∧ emp) )
+          tt ∧ tt
+        ∧ emp
+        * ( (  tt ∧ tt ∧ emp) ∨ (  tt ∧ (0 ≠ %x_7) ∧ emp) )
 
-          ( (  emp) ∨ (  (0 ≠ %x_6) ∧ emp) ) |}]
+          ( (  emp) ∨ (  (0 ≠ %x_7) ∧ emp) ) |}]
+
+    let%expect_test _ =
+      let q =
+        exists
+          ~$[b_; m_]
+          (star
+             (seg {loc= x; bas= b; len= m; siz= !8; cnt= !0})
+             (or_ (of_eqs [(b, y); (m, c)]) (of_eqs [(b, z); (m, c)])))
+      in
+      pp_raw q ;
+      let q' = simplify q in
+      pp_raw q' ;
+      pp q' ;
+      [%expect
+        {|
+        ∃ %b_2, %m_6 .
+          tt ∧ tt
+        ∧ %x_7 -[ %b_2, %m_6 )-> ⟨8,0⟩
+        * ( (  %b_2 = %y_8 ∧ %c_3 = %m_6
+             ∧ ((%b_2 = %y_8) ∧ (%c_3 = %m_6))
+             ∧ emp)
+          ∨ (  %b_2 = %z_9 ∧ %c_3 = %m_6
+             ∧ ((%b_2 = %z_9) ∧ (%c_3 = %m_6))
+             ∧ emp)
+          )
+    
+        ∃ %b_2 .
+          tt ∧ tt
+        ∧ %x_7 -[ %b_2, %c_3 )-> ⟨8,0⟩
+        * ( (  %b_2 = %z_9 ∧ (%b_2 = %z_9) ∧ emp)
+          ∨ (  %b_2 = %y_8 ∧ (%b_2 = %y_8) ∧ emp)
+          )
+
+        ∃ %b_2 .
+          %x_7 -[ %b_2, %c_3 )-> ⟨8,0⟩
+        * ( (  %b_2 = %z_9 ∧ emp) ∨ (  %b_2 = %y_8 ∧ emp) ) |}]
   end )

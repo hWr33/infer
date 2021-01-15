@@ -15,10 +15,8 @@ let unknown_call call =
       call
       (fun fs (call : Llair.Term.t) ->
         match call with
-        | Call {callee} -> (
-          match Llair.Reg.of_exp callee with
-          | Some reg -> Llair.Reg.pp_demangled fs reg
-          | None -> Llair.Exp.pp fs callee )
+        | Call {callee} -> Llair.Function.pp fs callee.name
+        | ICall {callee} -> Llair.Exp.pp fs callee
         | _ -> () )
       call Llair.Term.pp call]
 
@@ -42,14 +40,28 @@ let invalid_access_term fmt_thunk term =
 
 (** Functional statistics *)
 
+let solver_steps = ref 0
+let step_solver () = Int.incr solver_steps
 let steps = ref 0
-let step () = Int.incr steps
+let hit_insts = Llair.Inst.Tbl.create ()
+let hit_terms = Llair.Term.Tbl.create ()
+
+let step_inst i =
+  Llair.Inst.Tbl.incr hit_insts i ;
+  Int.incr steps
+
+let step_term t =
+  Llair.Term.Tbl.incr hit_terms t ;
+  Int.incr steps
+
+let bound = ref (-1)
+let hit_bound n = bound := n
 
 (** Status reporting *)
 
 type status =
-  | Safe of {steps: int}
-  | Unsafe of {alarms: int; steps: int}
+  | Safe of {bound: int}
+  | Unsafe of {alarms: int; bound: int}
   | Ok
   | Unsound
   | Incomplete
@@ -65,8 +77,10 @@ type status =
 let pp_status ppf stat =
   let pf fmt = Format.fprintf ppf fmt in
   match stat with
-  | Safe {steps} -> pf "Safe (%i)" steps
-  | Unsafe {alarms; steps} -> pf "Unsafe: %i (%i)" alarms steps
+  | Safe {bound= -1} -> pf "Safe"
+  | Safe {bound} -> pf "Safe (%i)" bound
+  | Unsafe {alarms; bound= -1} -> pf "Unsafe: %i" alarms
+  | Unsafe {alarms; bound} -> pf "Unsafe: %i (%i)" alarms bound
   | Ok -> pf "Ok"
   | Unsound -> pf "Unsound"
   | Incomplete -> pf "Incomplete"
@@ -79,24 +93,37 @@ let pp_status ppf stat =
   | UnknownError msg -> pf "Unknown error: %s" msg
 
 let safe_or_unsafe () =
-  if !invalid_access_count = 0 then Safe {steps= !steps}
-  else Unsafe {alarms= !invalid_access_count; steps= !steps}
+  if !invalid_access_count = 0 then Safe {bound= !bound}
+  else Unsafe {alarms= !invalid_access_count; bound= !bound}
 
 type gc_stats = {allocated: float; promoted: float; peak_size: float}
 [@@deriving sexp]
 
+type times =
+  {etime: float; utime: float; stime: float; cutime: float; cstime: float}
+[@@deriving sexp]
+
+type coverage = {steps: int; hit: int; fraction: float; solver_steps: int}
+[@@deriving compare, equal, sexp]
+
 type entry =
-  | ProcessTimes of float * Unix.process_times
+  | ProcessTimes of times
   | GcStats of gc_stats
   | Status of status
+  | Coverage of coverage
 [@@deriving sexp]
 
 let process_times () =
-  let ptimes = Unix.times () in
+  let {Unix.tms_utime; tms_stime; tms_cutime; tms_cstime} = Unix.times () in
   let etime =
     try Mtime.Span.to_s (Mtime_clock.elapsed ()) with Sys_error _ -> 0.
   in
-  ProcessTimes (etime, ptimes)
+  ProcessTimes
+    { etime
+    ; utime= tms_utime
+    ; stime= tms_stime
+    ; cutime= tms_cutime
+    ; cstime= tms_cstime }
 
 let gc_stats () =
   let words_to_MB n = n /. float (Sys.word_size / 8) /. (1024. *. 1024.) in
@@ -118,8 +145,7 @@ let name = ref ""
 
 let output entry =
   Option.iter !chan ~f:(fun chan ->
-      Out_channel.output_string chan
-        (Sexp.to_string (sexp_of_t {name= !name; entry})) ;
+      Sexp.output chan (sexp_of_t {name= !name; entry}) ;
       Out_channel.newline chan )
 
 let init ?append filename =
@@ -130,11 +156,24 @@ let init ?append filename =
      | _ -> Some (Out_channel.create ?append filename)) ;
   name :=
     Option.value
-      (Stdlib.Filename.chop_suffix_opt ~suffix:".sexp" filename)
+      (Filename.chop_suffix_opt ~suffix:".sexp" filename)
       ~default:filename ;
   at_exit (fun () ->
       output (process_times ()) ;
       output (gc_stats ()) ;
       Option.iter ~f:Out_channel.close_no_err !chan )
+
+let coverage (pgm : Llair.program) =
+  let size =
+    Llair.Function.Map.fold pgm.functions 0 ~f:(fun ~key:_ ~data:func n ->
+        Llair.Func.fold_cfg func n ~f:(fun blk n ->
+            n + IArray.length blk.cmnd + 1 ) )
+  in
+  let hit =
+    Llair.Inst.Tbl.length hit_insts + Llair.Term.Tbl.length hit_terms
+  in
+  let fraction = Float.(of_int hit /. of_int size) in
+  output
+    (Coverage {steps= !steps; hit; fraction; solver_steps= !solver_steps})
 
 let status s = output (Status s)

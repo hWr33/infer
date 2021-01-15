@@ -154,6 +154,8 @@ val do_not_report : t
 
 val empty_vector_access : t
 
+val eradicate_annotation_graph : t
+
 val eradicate_condition_redundant : t
 
 val eradicate_field_not_initialized : t
@@ -189,6 +191,8 @@ val eradicate_meta_class_needs_improvement : t
 val eradicate_meta_class_is_nullsafe : t
 
 val exposed_insecure_intent_handling : t
+
+val expensive_cost_call : kind:CostKind.t -> t
 
 val failure_exe : t
 
@@ -256,6 +260,8 @@ val missing_required_prop : t
 
 val mixed_self_weakself : t
 
+val modifies_immutable : t
+
 val multiple_weakself : t
 
 val mutable_local_variable_in_component_file : t
@@ -313,6 +319,8 @@ val topl_biabd_error : t
 val topl_pulse_error : t
 
 val uninitialized_value : t
+
+val uninitialized_value_pulse : t
 
 val unreachable_code_after : t
 

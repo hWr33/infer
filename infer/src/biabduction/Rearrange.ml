@@ -438,7 +438,7 @@ let strexp_extend_values analysis_data pname tenv orig_prop footprint_part kind 
     | Exp.Sizeof sizeof_data ->
         sizeof_data
     | _ ->
-        {Exp.typ= Typ.void; nbytes= None; dynamic_length= None; subtype= Subtype.exact}
+        {Exp.typ= StdTyp.void; nbytes= None; dynamic_length= None; subtype= Subtype.exact}
   in
   List.map
     ~f:(fun (atoms', se', typ') ->
@@ -1289,7 +1289,9 @@ let check_call_to_objc_block_error tenv pdesc prop fun_exp loc =
     | Some (_, Exp.Lvar pvar) ->
         (* pvar is the block *)
         let name = Pvar.get_name pvar in
-        List.exists ~f:(fun (cn, _, _) -> Mangled.equal name cn) (Procdesc.get_captured pdesc)
+        List.exists
+          ~f:(fun {CapturedVar.name= cn} -> Mangled.equal name cn)
+          (Procdesc.get_captured pdesc)
     | _ ->
         false
   in

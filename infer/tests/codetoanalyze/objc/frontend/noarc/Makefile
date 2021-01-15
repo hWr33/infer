@@ -11,6 +11,7 @@ SOURCES = \
   ../block/retain_cycle.m \
   ../block/static.m \
   ../block/specialized_method_with_block_params.m \
+  ../block/escaping_byref.m \
   ../boxing/Boxing.m \
   ../boxing/array.m \
   ../boxing/array_literal.c \
@@ -61,3 +62,5 @@ SOURCES = \
 
 include $(TESTS_DIR)/clang-frontend.make
 include $(TESTS_DIR)/objc.make
+
+CLEAN_EXTRA += *.o ../*/*.test.dot ../*/*/*.test.dot

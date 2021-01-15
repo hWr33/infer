@@ -45,12 +45,12 @@ let proc_name_of_uid =
 
 let analyze_target : (TaskSchedulerTypes.target, string) Tasks.doer =
   let analyze_source_file exe_env source_file =
-    if Topl.is_active () then DB.Results_dir.init (Topl.sourcefile ()) ;
+    if Topl.is_shallow_active () then DB.Results_dir.init (Topl.sourcefile ()) ;
     DB.Results_dir.init source_file ;
     L.task_progress SourceFile.pp source_file ~f:(fun () ->
         try
           Ondemand.analyze_file exe_env source_file ;
-          if Topl.is_active () && Config.debug_mode then
+          if Topl.is_shallow_active () && Config.debug_mode then
             DotCfg.emit_frontend_cfg (Topl.sourcefile ()) (Topl.cfg ()) ;
           if Config.write_html then Printer.write_all_html_files source_file ;
           None
@@ -165,12 +165,26 @@ let analyze source_files_to_analyze =
     in
     (* Prepare tasks one file at a time while executing in parallel *)
     RestartScheduler.setup () ;
+    let allocation_traces_dir = ResultsDir.get_path AllocationTraces in
+    if Config.memtrace_analysis then (
+      Utils.create_dir allocation_traces_dir ;
+      if Config.is_checker_enabled Biabduction then
+        L.user_warning
+          "Memtrace and biabduction are incompatible \
+           (https://github.com/janestreet/memtrace/issues/2)@\n" ) ;
     let runner =
       (* use a ref to pass data from prologue to epilogue without too much machinery *)
       let gc_stats_pre_fork = ref None in
       let child_prologue () =
         BackendStats.reset () ;
-        gc_stats_pre_fork := Some (GCStats.get ~since:ProgramStart)
+        gc_stats_pre_fork := Some (GCStats.get ~since:ProgramStart) ;
+        if Config.memtrace_analysis then
+          let filename =
+            allocation_traces_dir ^/ F.asprintf "memtrace.%a" Pid.pp (Unix.getpid ())
+          in
+          Memtrace.start_tracing ~context:None ~sampling_rate:Config.memtrace_sampling_rate
+            ~filename
+          |> ignore
       in
       let child_epilogue () =
         let gc_stats_in_fork =
@@ -187,7 +201,6 @@ let analyze source_files_to_analyze =
         ~tasks:build_tasks_generator
     in
     let workers_stats = Tasks.Runner.run runner in
-    RestartScheduler.clean () ;
     let collected_stats =
       Array.fold workers_stats ~init:([], [])
         ~f:(fun ((backend_stats_list, gc_stats_list) as stats_list) stats_opt ->

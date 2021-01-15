@@ -81,7 +81,7 @@ end = struct
       assert (Var.Set.equal us min.us) ;
       assert (Var.Set.equal (Var.Set.union us xs) sub.us) ;
       assert (Var.Set.disjoint us xs) ;
-      assert (Var.Set.is_subset zs ~of_:(Var.Set.union us xs))
+      assert (Var.Set.subset zs ~of_:(Var.Set.union us xs))
     with exc ->
       [%Trace.info "%a" pp g] ;
       raise exc
@@ -93,13 +93,11 @@ end = struct
       let us = Option.value us ~default:Var.Set.empty in
       let us =
         Option.fold
-          ~f:(fun us sub -> Var.Set.union (Var.Set.diff sub.Sh.us xs) us)
-          sub ~init:us
+          ~f:(fun sub -> Var.Set.union (Var.Set.diff sub.Sh.us xs))
+          sub us
       in
       let union_us q_opt us' =
-        Option.fold
-          ~f:(fun us' q -> Var.Set.union q.Sh.us us')
-          q_opt ~init:us'
+        Option.fold ~f:(fun q -> Var.Set.union q.Sh.us) q_opt us'
       in
       union_us com (union_us min us)
     in
@@ -139,12 +137,12 @@ let eq_concat (siz, seq) ms =
 
 let fresh_var name vs zs ~wrt =
   let v, wrt = Var.fresh name ~wrt in
-  let vs = Var.Set.add vs v in
-  let zs = Var.Set.add zs v in
+  let vs = Var.Set.add v vs in
+  let zs = Var.Set.add v zs in
   let v = Term.var v in
   (v, vs, zs, wrt)
 
-let difference x e f = Term.d_int (Context.normalize x (Term.sub e f))
+let difference x e f = Term.get_z (Context.normalize x (Term.sub e f))
 let excise (k : Trace.pf -> _) = [%Trace.infok k]
 let trace (k : Trace.pf -> _) = [%Trace.infok k]
 
@@ -196,8 +194,8 @@ let excise_seg_same ({com; min; sub} as goal) msg ssg =
   excise (fun {pf} ->
       pf "@[<hv 2>excise_seg_same@ %a@ \\- %a@]" (Sh.pp_seg_norm sub.ctx)
         msg (Sh.pp_seg_norm sub.ctx) ssg ) ;
-  let {Sh.bas= b; len= m; seq= a} = msg in
-  let {Sh.bas= b'; len= m'; seq= a'} = ssg in
+  let {Sh.bas= b; len= m; cnt= a} = msg in
+  let {Sh.bas= b'; len= m'; cnt= a'} = ssg in
   let com = Sh.star (Sh.seg msg) com in
   let min = Sh.rem_seg msg min in
   let sub =
@@ -225,18 +223,18 @@ let excise_seg_sub_prefix ({us; com; min; xs; sub; zs} as goal) msg ssg o_n
   excise (fun {pf} ->
       pf "@[<hv 2>excise_seg_sub_prefix@ %a@ \\- %a@]"
         (Sh.pp_seg_norm sub.ctx) msg (Sh.pp_seg_norm sub.ctx) ssg ) ;
-  let {Sh.loc= k; bas= b; len= m; siz= o; seq= a} = msg in
-  let {Sh.bas= b'; len= m'; siz= n; seq= a'} = ssg in
+  let {Sh.loc= k; bas= b; len= m; siz= o; cnt= a} = msg in
+  let {Sh.bas= b'; len= m'; siz= n; cnt= a'} = ssg in
   let o_n = Term.integer o_n in
   let a0, us, zs, wrt = fresh_var "a0" us zs ~wrt:(Var.Set.union us xs) in
   let a1, us, zs, _ = fresh_var "a1" us zs ~wrt in
   let xs = Var.Set.diff xs (Term.fv n) in
-  let com = Sh.star (Sh.seg {msg with siz= n; seq= a0}) com in
+  let com = Sh.star (Sh.seg {msg with siz= n; cnt= a0}) com in
   let min =
     Sh.and_
       (eq_concat (o, a) [|(n, a0); (o_n, a1)|])
       (Sh.star
-         (Sh.seg {loc= Term.add k n; bas= b; len= m; siz= o_n; seq= a1})
+         (Sh.seg {loc= Term.add k n; bas= b; len= m; siz= o_n; cnt= a1})
          (Sh.rem_seg msg min))
   in
   let sub =
@@ -265,8 +263,8 @@ let excise_seg_min_prefix ({us; com; min; xs; sub; zs} as goal) msg ssg n_o
   excise (fun {pf} ->
       pf "@[<hv 2>excise_seg_min_prefix@ %a@ \\- %a@]"
         (Sh.pp_seg_norm sub.ctx) msg (Sh.pp_seg_norm sub.ctx) ssg ) ;
-  let {Sh.bas= b; len= m; siz= o; seq= a} = msg in
-  let {Sh.loc= l; bas= b'; len= m'; siz= n; seq= a'} = ssg in
+  let {Sh.bas= b; len= m; siz= o; cnt= a} = msg in
+  let {Sh.loc= l; bas= b'; len= m'; siz= n; cnt= a'} = ssg in
   let n_o = Term.integer n_o in
   let com = Sh.star (Sh.seg msg) com in
   let min = Sh.rem_seg msg min in
@@ -278,7 +276,7 @@ let excise_seg_min_prefix ({us; com; min; xs; sub; zs} as goal) msg ssg n_o
             (eq_concat (n, a') [|(o, a); (n_o, a1')|])
             (Sh.star
                (Sh.seg
-                  {loc= Term.add l o; bas= b'; len= m'; siz= n_o; seq= a1'})
+                  {loc= Term.add l o; bas= b'; len= m'; siz= n_o; cnt= a1'})
                (Sh.rem_seg ssg sub))))
   in
   goal |> with_ ~com ~min ~xs ~sub ~zs
@@ -301,20 +299,20 @@ let excise_seg_sub_suffix ({us; com; min; xs; sub; zs} as goal) msg ssg l_k
   excise (fun {pf} ->
       pf "@[<hv 2>excise_seg_sub_suffix@ %a@ \\- %a@]"
         (Sh.pp_seg_norm sub.ctx) msg (Sh.pp_seg_norm sub.ctx) ssg ) ;
-  let {Sh.loc= k; bas= b; len= m; siz= o; seq= a} = msg in
-  let {Sh.loc= l; bas= b'; len= m'; siz= n; seq= a'} = ssg in
+  let {Sh.loc= k; bas= b; len= m; siz= o; cnt= a} = msg in
+  let {Sh.loc= l; bas= b'; len= m'; siz= n; cnt= a'} = ssg in
   let l_k = Term.integer l_k in
   let a0, us, zs, wrt = fresh_var "a0" us zs ~wrt:(Var.Set.union us xs) in
   let a1, us, zs, _ = fresh_var "a1" us zs ~wrt in
   let xs = Var.Set.diff xs (Term.fv n) in
   let com =
-    Sh.star (Sh.seg {loc= l; bas= b; len= m; siz= n; seq= a1}) com
+    Sh.star (Sh.seg {loc= l; bas= b; len= m; siz= n; cnt= a1}) com
   in
   let min =
     Sh.and_
       (eq_concat (o, a) [|(l_k, a0); (n, a1)|])
       (Sh.star
-         (Sh.seg {loc= k; bas= b; len= m; siz= l_k; seq= a0})
+         (Sh.seg {loc= k; bas= b; len= m; siz= l_k; cnt= a0})
          (Sh.rem_seg msg min))
   in
   let sub =
@@ -343,8 +341,8 @@ let excise_seg_sub_infix ({us; com; min; xs; sub; zs} as goal) msg ssg l_k
   excise (fun {pf} ->
       pf "@[<hv 2>excise_seg_sub_infix@ %a@ \\- %a@]"
         (Sh.pp_seg_norm sub.ctx) msg (Sh.pp_seg_norm sub.ctx) ssg ) ;
-  let {Sh.loc= k; bas= b; len= m; siz= o; seq= a} = msg in
-  let {Sh.loc= l; bas= b'; len= m'; siz= n; seq= a'} = ssg in
+  let {Sh.loc= k; bas= b; len= m; siz= o; cnt= a} = msg in
+  let {Sh.loc= l; bas= b'; len= m'; siz= n; cnt= a'} = ssg in
   let l_k = Term.integer l_k in
   let ko_ln = Term.integer ko_ln in
   let ln = Term.add l n in
@@ -353,15 +351,15 @@ let excise_seg_sub_infix ({us; com; min; xs; sub; zs} as goal) msg ssg l_k
   let a2, us, zs, _ = fresh_var "a2" us zs ~wrt in
   let xs = Var.Set.diff xs (Var.Set.union (Term.fv l) (Term.fv n)) in
   let com =
-    Sh.star (Sh.seg {loc= l; bas= b; len= m; siz= n; seq= a1}) com
+    Sh.star (Sh.seg {loc= l; bas= b; len= m; siz= n; cnt= a1}) com
   in
   let min =
     Sh.and_
       (eq_concat (o, a) [|(l_k, a0); (n, a1); (ko_ln, a2)|])
       (Sh.star
-         (Sh.seg {loc= k; bas= b; len= m; siz= l_k; seq= a0})
+         (Sh.seg {loc= k; bas= b; len= m; siz= l_k; cnt= a0})
          (Sh.star
-            (Sh.seg {loc= ln; bas= b; len= m; siz= ko_ln; seq= a2})
+            (Sh.seg {loc= ln; bas= b; len= m; siz= ko_ln; cnt= a2})
             (Sh.rem_seg msg min)))
   in
   let sub =
@@ -390,8 +388,8 @@ let excise_seg_min_skew ({us; com; min; xs; sub; zs} as goal) msg ssg l_k
   excise (fun {pf} ->
       pf "@[<hv 2>excise_seg_min_skew@ %a@ \\- %a@]"
         (Sh.pp_seg_norm sub.ctx) msg (Sh.pp_seg_norm sub.ctx) ssg ) ;
-  let {Sh.loc= k; bas= b; len= m; siz= o; seq= a} = msg in
-  let {Sh.loc= l; bas= b'; len= m'; siz= n; seq= a'} = ssg in
+  let {Sh.loc= k; bas= b; len= m; siz= o; cnt= a} = msg in
+  let {Sh.loc= l; bas= b'; len= m'; siz= n; cnt= a'} = ssg in
   let l_k = Term.integer l_k in
   let ko_l = Term.integer ko_l in
   let ln_ko = Term.integer ln_ko in
@@ -401,13 +399,13 @@ let excise_seg_min_skew ({us; com; min; xs; sub; zs} as goal) msg ssg l_k
   let a2', xs, zs, _ = fresh_var "a2" xs zs ~wrt in
   let xs = Var.Set.diff xs (Term.fv l) in
   let com =
-    Sh.star (Sh.seg {loc= l; bas= b; len= m; siz= ko_l; seq= a1}) com
+    Sh.star (Sh.seg {loc= l; bas= b; len= m; siz= ko_l; cnt= a1}) com
   in
   let min =
     Sh.and_
       (eq_concat (o, a) [|(l_k, a0); (ko_l, a1)|])
       (Sh.star
-         (Sh.seg {loc= k; bas= b; len= m; siz= l_k; seq= a0})
+         (Sh.seg {loc= k; bas= b; len= m; siz= l_k; cnt= a0})
          (Sh.rem_seg msg min))
   in
   let sub =
@@ -416,7 +414,7 @@ let excise_seg_min_skew ({us; com; min; xs; sub; zs} as goal) msg ssg l_k
          (Sh.and_
             (eq_concat (n, a') [|(ko_l, a1); (ln_ko, a2')|])
             (Sh.star
-               (Sh.seg {loc= ko; bas= b'; len= m'; siz= ln_ko; seq= a2'})
+               (Sh.seg {loc= ko; bas= b'; len= m'; siz= ln_ko; cnt= a2'})
                (Sh.rem_seg ssg sub))))
   in
   goal |> with_ ~us ~com ~min ~xs ~sub ~zs
@@ -440,8 +438,8 @@ let excise_seg_min_suffix ({us; com; min; xs; sub; zs} as goal) msg ssg k_l
   excise (fun {pf} ->
       pf "@[<hv 2>excise_seg_min_suffix@ %a@ \\- %a@]"
         (Sh.pp_seg_norm sub.ctx) msg (Sh.pp_seg_norm sub.ctx) ssg ) ;
-  let {Sh.bas= b; len= m; siz= o; seq= a} = msg in
-  let {Sh.loc= l; bas= b'; len= m'; siz= n; seq= a'} = ssg in
+  let {Sh.bas= b; len= m; siz= o; cnt= a} = msg in
+  let {Sh.loc= l; bas= b'; len= m'; siz= n; cnt= a'} = ssg in
   let k_l = Term.integer k_l in
   let a0', xs, zs, _ = fresh_var "a0" xs zs ~wrt:(Var.Set.union us xs) in
   let com = Sh.star (Sh.seg msg) com in
@@ -452,7 +450,7 @@ let excise_seg_min_suffix ({us; com; min; xs; sub; zs} as goal) msg ssg k_l
          (Sh.and_
             (eq_concat (n, a') [|(k_l, a0'); (o, a)|])
             (Sh.star
-               (Sh.seg {loc= l; bas= b'; len= m'; siz= k_l; seq= a0'})
+               (Sh.seg {loc= l; bas= b'; len= m'; siz= k_l; cnt= a0'})
                (Sh.rem_seg ssg sub))))
   in
   goal |> with_ ~com ~min ~xs ~sub ~zs
@@ -477,8 +475,8 @@ let excise_seg_min_infix ({us; com; min; xs; sub; zs} as goal) msg ssg k_l
   excise (fun {pf} ->
       pf "@[<hv 2>excise_seg_min_infix@ %a@ \\- %a@]"
         (Sh.pp_seg_norm sub.ctx) msg (Sh.pp_seg_norm sub.ctx) ssg ) ;
-  let {Sh.loc= k; bas= b; len= m; siz= o; seq= a} = msg in
-  let {Sh.loc= l; bas= b'; len= m'; siz= n; seq= a'} = ssg in
+  let {Sh.loc= k; bas= b; len= m; siz= o; cnt= a} = msg in
+  let {Sh.loc= l; bas= b'; len= m'; siz= n; cnt= a'} = ssg in
   let k_l = Term.integer k_l in
   let ln_ko = Term.integer ln_ko in
   let ko = Term.add k o in
@@ -492,9 +490,9 @@ let excise_seg_min_infix ({us; com; min; xs; sub; zs} as goal) msg ssg k_l
          (Sh.and_
             (eq_concat (n, a') [|(k_l, a0'); (o, a); (ln_ko, a2')|])
             (Sh.star
-               (Sh.seg {loc= l; bas= b'; len= m'; siz= k_l; seq= a0'})
+               (Sh.seg {loc= l; bas= b'; len= m'; siz= k_l; cnt= a0'})
                (Sh.star
-                  (Sh.seg {loc= ko; bas= b'; len= m'; siz= ln_ko; seq= a2'})
+                  (Sh.seg {loc= ko; bas= b'; len= m'; siz= ln_ko; cnt= a2'})
                   (Sh.rem_seg ssg sub)))))
   in
   goal |> with_ ~com ~min ~xs ~sub ~zs
@@ -518,8 +516,8 @@ let excise_seg_sub_skew ({us; com; min; xs; sub; zs} as goal) msg ssg k_l
   excise (fun {pf} ->
       pf "@[<hv 2>excise_seg_sub_skew@ %a@ \\- %a@]"
         (Sh.pp_seg_norm sub.ctx) msg (Sh.pp_seg_norm sub.ctx) ssg ) ;
-  let {Sh.loc= k; bas= b; len= m; siz= o; seq= a} = msg in
-  let {Sh.loc= l; bas= b'; len= m'; siz= n; seq= a'} = ssg in
+  let {Sh.loc= k; bas= b; len= m; siz= o; cnt= a} = msg in
+  let {Sh.loc= l; bas= b'; len= m'; siz= n; cnt= a'} = ssg in
   let k_l = Term.integer k_l in
   let ln_k = Term.integer ln_k in
   let ko_ln = Term.integer ko_ln in
@@ -528,13 +526,13 @@ let excise_seg_sub_skew ({us; com; min; xs; sub; zs} as goal) msg ssg k_l
   let a1, us, zs, wrt = fresh_var "a1" us zs ~wrt in
   let a2, us, zs, _ = fresh_var "a2" us zs ~wrt in
   let com =
-    Sh.star (Sh.seg {loc= k; bas= b; len= m; siz= ln_k; seq= a1}) com
+    Sh.star (Sh.seg {loc= k; bas= b; len= m; siz= ln_k; cnt= a1}) com
   in
   let min =
     Sh.and_
       (eq_concat (o, a) [|(ln_k, a1); (ko_ln, a2)|])
       (Sh.star
-         (Sh.seg {loc= ln; bas= b; len= m; siz= ko_ln; seq= a2})
+         (Sh.seg {loc= ln; bas= b; len= m; siz= ko_ln; cnt= a2})
          (Sh.rem_seg msg min))
   in
   let sub =
@@ -543,7 +541,7 @@ let excise_seg_sub_skew ({us; com; min; xs; sub; zs} as goal) msg ssg k_l
          (Sh.and_
             (eq_concat (n, a') [|(k_l, a0'); (ln_k, a1)|])
             (Sh.star
-               (Sh.seg {loc= l; bas= b'; len= m'; siz= k_l; seq= a0'})
+               (Sh.seg {loc= l; bas= b'; len= m'; siz= k_l; cnt= a0'})
                (Sh.rem_seg ssg sub))))
   in
   goal |> with_ ~us ~com ~min ~xs ~sub ~zs
@@ -641,10 +639,11 @@ let pure_entails x q = Sh.is_empty q && Context.implies x (Sh.pure_approx q)
 
 let rec excise ({min; xs; sub; zs; pgs} as goal) =
   [%Trace.info "@[<2>excise@ %a@]" pp goal] ;
-  if Sh.is_false min then Some (Sh.false_ (Var.Set.diff sub.us zs))
+  Report.step_solver () ;
+  if Sh.is_unsat min then Some (Sh.false_ (Var.Set.diff sub.us zs))
   else if pure_entails min.ctx sub then
     Some (Sh.exists zs (Sh.extend_us xs min))
-  else if Sh.is_false sub then None
+  else if Sh.is_unsat sub then None
   else if pgs then
     goal |> with_ ~pgs:false |> excise_exists |> excise_heap >>= excise
   else None $> fun _ -> [%Trace.info "@[<2>excise fail@ %a@]" pp goal]
@@ -653,11 +652,12 @@ let excise_dnf : Sh.t -> Var.Set.t -> Sh.t -> Sh.t option =
  fun minuend xs subtrahend ->
   let dnf_minuend = Sh.dnf minuend in
   let dnf_subtrahend = Sh.dnf subtrahend in
-  List.fold_option dnf_minuend
-    ~init:(Sh.false_ (Var.Set.union minuend.us xs))
-    ~f:(fun remainders minuend ->
+  Iter.fold_opt
+    (Iter.of_list dnf_minuend)
+    (Sh.false_ (Var.Set.union minuend.us xs))
+    ~f:(fun minuend remainders ->
       [%trace]
-        ~call:(fun {pf} -> pf "@[<2>minuend@ %a@]" Sh.pp minuend)
+        ~call:(fun {pf} -> pf "@ @[<2>minuend@ %a@]" Sh.pp minuend)
         ~retn:(fun {pf} -> pf "%a" (Option.pp "%a" Sh.pp))
       @@ fun () ->
       let zs, min = Sh.bind_exists minuend ~wrt:xs in
@@ -666,7 +666,7 @@ let excise_dnf : Sh.t -> Var.Set.t -> Sh.t -> Sh.t option =
       let+ remainder =
         List.find_map dnf_subtrahend ~f:(fun sub ->
             [%trace]
-              ~call:(fun {pf} -> pf "@[<2>subtrahend@ %a@]" Sh.pp sub)
+              ~call:(fun {pf} -> pf "@ @[<2>subtrahend@ %a@]" Sh.pp sub)
               ~retn:(fun {pf} -> pf "%a" (Option.pp "%a" Sh.pp))
             @@ fun () ->
             let sub = Sh.and_ctx min.ctx (Sh.extend_us us sub) in
@@ -674,12 +674,14 @@ let excise_dnf : Sh.t -> Var.Set.t -> Sh.t -> Sh.t option =
       in
       Sh.or_ remainders remainder )
 
+let query_count = ref (-1)
+
 let infer_frame : Sh.t -> Var.Set.t -> Sh.t -> Sh.t option =
  fun minuend xs subtrahend ->
   [%trace]
     ~call:(fun {pf} ->
-      pf "@[<hv>%a@ \\- %a%a@]" Sh.pp minuend Var.Set.pp_xs xs Sh.pp
-        subtrahend )
+      pf " %i@ @[<hv>%a@ \\- %a%a@]" !query_count Sh.pp minuend
+        Var.Set.pp_xs xs Sh.pp subtrahend )
     ~retn:(fun {pf} r ->
       pf "%a" (Option.pp "%a" Sh.pp) r ;
       Option.iter r ~f:(fun frame ->
@@ -692,6 +694,27 @@ let infer_frame : Sh.t -> Var.Set.t -> Sh.t -> Sh.t option =
       )
   @@ fun () ->
   assert (Var.Set.disjoint minuend.us xs) ;
-  assert (Var.Set.is_subset xs ~of_:subtrahend.us) ;
-  assert (Var.Set.is_subset (Var.Set.diff subtrahend.us xs) ~of_:minuend.us) ;
+  assert (Var.Set.subset xs ~of_:subtrahend.us) ;
+  assert (Var.Set.subset (Var.Set.diff subtrahend.us xs) ~of_:minuend.us) ;
   excise_dnf minuend xs subtrahend
+
+(*
+ * Replay debugging
+ *)
+
+type call = Infer_frame of Sh.t * Var.Set.t * Sh.t [@@deriving sexp]
+
+let replay c =
+  match call_of_sexp (Sexp.of_string c) with
+  | Infer_frame (minuend, xs, subtrahend) ->
+      infer_frame minuend xs subtrahend |> ignore
+
+let dump_query = ref (-1)
+
+let infer_frame minuend xs subtrahend =
+  Int.incr query_count ;
+  if !query_count = !dump_query then
+    fail "%a" Sexp.pp_hum
+      (sexp_of_call (Infer_frame (minuend, xs, subtrahend)))
+      ()
+  else infer_frame minuend xs subtrahend

@@ -13,30 +13,49 @@ module Loc = Loc
 module Typ = Typ
 module Reg = Reg
 module Exp = Exp
+module Function = Function
 module Global = Global
+module GlobalDefn = GlobalDefn
+
+module Intrinsic = struct
+  include Intrinsics
+  module Intrinsic_to_String = Bijection.Make (Intrinsics) (String)
+
+  let t_to_name =
+    Iter.of_list all
+    |> Iter.map ~f:(fun i -> (i, Variants.to_name i))
+    |> Intrinsic_to_String.of_iter
+
+  let to_string i = Intrinsic_to_String.find_left i t_to_name
+
+  let of_name s =
+    try Some (Intrinsic_to_String.find_right s t_to_name)
+    with Not_found -> None
+
+  let pp ppf i = Format.pp_print_string ppf (to_string i)
+end
 
 type inst =
   | Move of {reg_exps: (Reg.t * Exp.t) iarray; loc: Loc.t}
   | Load of {reg: Reg.t; ptr: Exp.t; len: Exp.t; loc: Loc.t}
   | Store of {ptr: Exp.t; exp: Exp.t; len: Exp.t; loc: Loc.t}
-  | Memset of {dst: Exp.t; byt: Exp.t; len: Exp.t; loc: Loc.t}
-  | Memcpy of {dst: Exp.t; src: Exp.t; len: Exp.t; loc: Loc.t}
-  | Memmov of {dst: Exp.t; src: Exp.t; len: Exp.t; loc: Loc.t}
   | Alloc of {reg: Reg.t; num: Exp.t; len: int; loc: Loc.t}
   | Free of {ptr: Exp.t; loc: Loc.t}
   | Nondet of {reg: Reg.t option; msg: string; loc: Loc.t}
   | Abort of {loc: Loc.t}
-[@@deriving sexp]
+  | Intrinsic of
+      {reg: Reg.t option; name: Intrinsic.t; args: Exp.t iarray; loc: Loc.t}
+[@@deriving compare, equal, hash, sexp]
 
-type cmnd = inst iarray [@@deriving sexp]
-type label = string [@@deriving sexp]
+type cmnd = inst iarray [@@deriving compare, equal, hash, sexp]
+type label = string [@@deriving compare, equal, hash, sexp]
 
 type jump = {mutable dst: block; mutable retreating: bool}
 
 and 'a call =
-  { callee: 'a
+  { mutable callee: 'a
   ; typ: Typ.t
-  ; actuals: Exp.t list
+  ; actuals: Exp.t iarray
   ; areturn: Reg.t option
   ; return: jump
   ; throw: jump option
@@ -46,7 +65,8 @@ and 'a call =
 and term =
   | Switch of {key: Exp.t; tbl: (Exp.t * jump) iarray; els: jump; loc: Loc.t}
   | Iswitch of {ptr: Exp.t; tbl: jump iarray; loc: Loc.t}
-  | Call of Exp.t call
+  | Call of func call
+  | ICall of Exp.t call
   | Return of {exp: Exp.t option; loc: Loc.t}
   | Throw of {exc: Exp.t; loc: Loc.t}
   | Unreachable
@@ -59,12 +79,124 @@ and block =
   ; mutable sort_index: int }
 
 and func =
-  { name: Global.t
-  ; formals: Reg.t list
+  { name: Function.t
+  ; formals: Reg.t iarray
   ; freturn: Reg.t option
   ; fthrow: Reg.t
   ; locals: Reg.Set.t
-  ; entry: block }
+  ; entry: block
+  ; loc: Loc.t }
+
+(* compare *)
+
+(* functions are uniquely identified by [name] *)
+let compare_func x y = if x == y then 0 else Function.compare x.name y.name
+let equal_func x y = x == y || Function.equal x.name y.name
+let hash_fold_func s x = Function.hash_fold_t s x.name
+
+(* blocks in a [t] are uniquely identified by [sort_index] *)
+let compare_block x y =
+  if x == y then 0 else Int.compare x.sort_index y.sort_index
+
+let equal_block x y = x == y || Int.equal x.sort_index y.sort_index
+let hash_fold_block s x = Int.hash_fold_t s x.sort_index
+
+module Compare : sig
+  type nonrec jump = jump [@@deriving compare, equal]
+  type nonrec 'a call = 'a call [@@deriving compare, equal]
+  type nonrec term = term [@@deriving compare, equal]
+end
+with type jump := jump
+ and type 'a call := 'a call
+ and type term := term = struct
+  type nonrec jump = jump = {mutable dst: block; mutable retreating: bool}
+  [@@deriving compare, equal]
+
+  type nonrec 'a call = 'a call =
+    { mutable callee: 'a
+    ; typ: Typ.t
+    ; actuals: Exp.t iarray
+    ; areturn: Reg.t option
+    ; return: jump
+    ; throw: jump option
+    ; mutable recursive: bool
+    ; loc: Loc.t }
+  [@@deriving compare, equal]
+
+  type nonrec term = term =
+    | Switch of
+        {key: Exp.t; tbl: (Exp.t * jump) iarray; els: jump; loc: Loc.t}
+    | Iswitch of {ptr: Exp.t; tbl: jump iarray; loc: Loc.t}
+    | Call of func call
+    | ICall of Exp.t call
+    | Return of {exp: Exp.t option; loc: Loc.t}
+    | Throw of {exc: Exp.t; loc: Loc.t}
+    | Unreachable
+  [@@deriving compare, equal]
+end
+
+include Compare
+
+(* hash *)
+
+let hash_fold_jump s {dst; retreating} =
+  let s = [%hash_fold: block] s dst in
+  let s = [%hash_fold: bool] s retreating in
+  s
+
+let hash_fold_call (type callee) hash_fold_callee s
+    {callee: callee; typ; actuals; areturn; return; throw; recursive; loc} =
+  let s = [%hash_fold: int] s 3 in
+  let s = [%hash_fold: callee] s callee in
+  let s = [%hash_fold: Typ.t] s typ in
+  let s = [%hash_fold: Exp.t iarray] s actuals in
+  let s = [%hash_fold: Reg.t option] s areturn in
+  let s = [%hash_fold: jump] s return in
+  let s = [%hash_fold: jump option] s throw in
+  let s = [%hash_fold: bool] s recursive in
+  let s = [%hash_fold: Loc.t] s loc in
+  s
+
+let hash_fold_term s = function
+  | Switch {key; tbl; els; loc} ->
+      let s = [%hash_fold: int] s 1 in
+      let s = [%hash_fold: Exp.t] s key in
+      let s = [%hash_fold: (Exp.t * jump) iarray] s tbl in
+      let s = [%hash_fold: jump] s els in
+      let s = [%hash_fold: Loc.t] s loc in
+      s
+  | Iswitch {ptr; tbl; loc} ->
+      let s = [%hash_fold: int] s 2 in
+      let s = [%hash_fold: Exp.t] s ptr in
+      let s = [%hash_fold: jump iarray] s tbl in
+      let s = [%hash_fold: Loc.t] s loc in
+      s
+  | Call call ->
+      let s = [%hash_fold: int] s 3 in
+      let s = hash_fold_call hash_fold_func s call in
+      s
+  | ICall call ->
+      let s = [%hash_fold: int] s 4 in
+      let s = hash_fold_call Exp.hash_fold_t s call in
+      s
+  | Return {exp; loc} ->
+      let s = [%hash_fold: int] s 5 in
+      let s = [%hash_fold: Exp.t option] s exp in
+      let s = [%hash_fold: Loc.t] s loc in
+      s
+  | Throw {exc; loc} ->
+      let s = [%hash_fold: int] s 6 in
+      let s = [%hash_fold: Exp.t] s exc in
+      let s = [%hash_fold: Loc.t] s loc in
+      s
+  | Unreachable -> [%hash_fold: int] s 7
+
+let hash_func = Hash.of_fold hash_fold_func
+let hash_block = Hash.of_fold hash_fold_block
+let hash_jump = Hash.of_fold hash_fold_jump
+let hash_term = Hash.of_fold hash_fold_term
+
+(* sexp *)
 
 let sexp_cons (hd : Sexp.t) (tl : Sexp.t) =
   match tl with
@@ -76,6 +208,19 @@ let sexp_ctor label args = sexp_cons (Sexp.Atom label) args
 let sexp_of_jump {dst; retreating} =
   [%sexp {dst: label = dst.lbl; retreating: bool}]
 
+let sexp_of_call (type callee) tag sexp_of_callee
+    {callee: callee; typ; actuals; areturn; return; throw; recursive; loc} =
+  sexp_ctor tag
+    [%sexp
+      { callee: callee
+      ; typ: Typ.t
+      ; actuals: Exp.t iarray
+      ; areturn: Reg.t option
+      ; return: jump
+      ; throw: jump option
+      ; recursive: bool
+      ; loc: Loc.t }]
+
 let sexp_of_term = function
   | Switch {key; tbl; els; loc} ->
       sexp_ctor "Switch"
@@ -83,17 +228,9 @@ let sexp_of_term = function
           {key: Exp.t; tbl: (Exp.t * jump) iarray; els: jump; loc: Loc.t}]
   | Iswitch {ptr; tbl; loc} ->
       sexp_ctor "Iswitch" [%sexp {ptr: Exp.t; tbl: jump iarray; loc: Loc.t}]
-  | Call {callee; typ; actuals; areturn; return; throw; recursive; loc} ->
-      sexp_ctor "Call"
-        [%sexp
-          { callee: Exp.t
-          ; typ: Typ.t
-          ; actuals: Exp.t list
-          ; areturn: Reg.t option
-          ; return: jump
-          ; throw: jump option
-          ; recursive: bool
-          ; loc: Loc.t }]
+  | Call call ->
+      sexp_of_call "Call" (fun f -> Function.sexp_of_t f.name) call
+  | ICall call -> sexp_of_call "ICall" Exp.sexp_of_t call
   | Return {exp; loc} ->
       sexp_ctor "Return" [%sexp {exp: Exp.t option; loc: Loc.t}]
   | Throw {exc; loc} -> sexp_ctor "Throw" [%sexp {exc: Exp.t; loc: Loc.t}]
@@ -104,32 +241,31 @@ let sexp_of_block {lbl; cmnd; term; parent; sort_index} =
     { lbl: label
     ; cmnd: cmnd
     ; term: term
-    ; parent: Reg.t = parent.name.reg
+    ; parent: Function.t = parent.name
     ; sort_index: int }]
 
-let sexp_of_func {name; formals; freturn; fthrow; locals; entry} =
+let sexp_of_func {name; formals; freturn; fthrow; locals; entry; loc} =
   [%sexp
-    { name: Global.t
-    ; formals: Reg.t list
+    { name: Function.t
+    ; formals: Reg.t iarray
     ; freturn: Reg.t option
     ; fthrow: Reg.t
     ; locals: Reg.Set.t
-    ; entry: block }]
+    ; entry: block
+    ; loc: Loc.t }]
 
-(* blocks in a [t] are uniquely identified by [sort_index] *)
-let compare_block x y = Int.compare x.sort_index y.sort_index
-let equal_block x y = Int.equal x.sort_index y.sort_index
+type functions = func Function.Map.t [@@deriving sexp_of]
 
-type functions = func String.Map.t [@@deriving sexp_of]
-
-type program = {globals: Global.t iarray; functions: functions}
+type program = {globals: GlobalDefn.t iarray; functions: functions}
 [@@deriving sexp_of]
+
+(* pp *)
 
 let pp_inst fs inst =
   let pf pp = Format.fprintf fs pp in
   match inst with
   | Move {reg_exps; loc} ->
-      let regs, exps = IArray.unzip reg_exps in
+      let regs, exps = IArray.split reg_exps in
       pf "@[<2>@[%a@]@ := @[%a@];@]\t%a" (IArray.pp ",@ " Reg.pp) regs
         (IArray.pp ",@ " Exp.pp) exps Loc.pp loc
   | Load {reg; ptr; len; loc} ->
@@ -137,15 +273,6 @@ let pp_inst fs inst =
         Loc.pp loc
   | Store {ptr; exp; len; loc} ->
       pf "@[<2>store %a@ %a@ %a;@]\t%a" Exp.pp len Exp.pp ptr Exp.pp exp
-        Loc.pp loc
-  | Memset {dst; byt; len; loc} ->
-      pf "@[<2>memset %a %a %a;@]\t%a" Exp.pp len Exp.pp dst Exp.pp byt
-        Loc.pp loc
-  | Memcpy {dst; src; len; loc} ->
-      pf "@[<2>memcpy %a %a %a;@]\t%a" Exp.pp len Exp.pp dst Exp.pp src
-        Loc.pp loc
-  | Memmov {dst; src; len; loc} ->
-      pf "@[<2>memmov %a %a %a;@]\t%a" Exp.pp len Exp.pp dst Exp.pp src
         Loc.pp loc
   | Alloc {reg; num; len; loc} ->
       pf "@[<2>%a@ := alloc [%a x %i];@]\t%a" Reg.pp reg Exp.pp num len
@@ -156,10 +283,13 @@ let pp_inst fs inst =
         (Option.pp "%a := " Reg.pp)
         reg msg Loc.pp loc
   | Abort {loc} -> pf "@[<2>abort;@]\t%a" Loc.pp loc
+  | Intrinsic {reg; name; args; loc} ->
+      pf "@[<2>%aintrinsic@ %a(@,@[<hv>%a@]);@]\t%a"
+        (Option.pp "%a := " Reg.pp)
+        reg Intrinsic.pp name (IArray.pp ",@ " Exp.pp) args Loc.pp loc
 
 let pp_actuals pp_actual fs actuals =
-  Format.fprintf fs "@ (@[%a@])" (List.pp ",@ " pp_actual)
-    (List.rev actuals)
+  Format.fprintf fs "@ (@[%a@])" (IArray.pp ",@ " pp_actual) actuals
 
 let pp_formal fs reg = Reg.pp fs reg
 
@@ -167,6 +297,17 @@ let pp_jump fs {dst; retreating} =
   Format.fprintf fs "@[<2>%s%%%s@]"
     (if retreating then "↑" else "")
     dst.lbl
+
+let pp_call tag pp_callee fs
+    {callee; actuals; areturn; return; throw; recursive; loc; _} =
+  Format.fprintf fs
+    "@[<2>@[<7>%a%s @[<2>%s%a%a@]@]@ @[returnto %a%a;@]@]\t%a"
+    (Option.pp "%a := " Reg.pp)
+    areturn tag
+    (if recursive then "↑" else "")
+    pp_callee callee (pp_actuals Exp.pp) actuals pp_jump return
+    (Option.pp "@ throwto %a" pp_jump)
+    throw Loc.pp loc
 
 let pp_term fs term =
   let pf pp = Format.fprintf fs pp in
@@ -188,14 +329,8 @@ let pp_term fs term =
         (IArray.pp "@ " (fun fs jmp ->
              Format.fprintf fs "%s: %a" jmp.dst.lbl pp_goto jmp ))
         tbl Loc.pp loc
-  | Call {callee; actuals; areturn; return; throw; recursive; loc; _} ->
-      pf "@[<2>@[<7>%acall @[<2>%s%a%a@]@]@ @[returnto %a%a;@]@]\t%a"
-        (Option.pp "%a := " Reg.pp)
-        areturn
-        (if recursive then "↑" else "")
-        Exp.pp callee (pp_actuals Exp.pp) actuals pp_jump return
-        (Option.pp "@ throwto %a" pp_jump)
-        throw Loc.pp loc
+  | Call call -> pp_call "call" (fun fs f -> Function.pp fs f.name) fs call
+  | ICall call -> pp_call "icall" Exp.pp fs call
   | Return {exp; loc} ->
       pf "@[<2>return%a@]\t%a" (Option.pp " %a" Exp.pp) exp Loc.pp loc
   | Throw {exc; loc} -> pf "@[<2>throw %a@]\t%a" Exp.pp exc Loc.pp loc
@@ -219,78 +354,82 @@ let rec dummy_block =
   ; sort_index= 0 }
 
 and dummy_func =
-  let dummy_reg = Reg.program ~global:() Typ.ptr "dummy" in
-  { name= Global.mk dummy_reg Loc.none
-  ; formals= []
+  { name=
+      Function.mk
+        (Typ.pointer ~elt:(Typ.function_ ~args:IArray.empty ~return:None))
+        "dummy"
+  ; formals= IArray.empty
   ; freturn= None
-  ; fthrow= dummy_reg
+  ; fthrow= Reg.mk Typ.ptr "dummy"
   ; locals= Reg.Set.empty
-  ; entry= dummy_block }
+  ; entry= dummy_block
+  ; loc= Loc.none }
 
 (** Instructions *)
 
 module Inst = struct
-  type t = inst [@@deriving sexp]
+  module T = struct
+    type t = inst [@@deriving compare, equal, hash, sexp]
+  end
+
+  include T
+  module Tbl = HashTable.Make (T)
 
   let pp = pp_inst
   let move ~reg_exps ~loc = Move {reg_exps; loc}
   let load ~reg ~ptr ~len ~loc = Load {reg; ptr; len; loc}
   let store ~ptr ~exp ~len ~loc = Store {ptr; exp; len; loc}
-  let memset ~dst ~byt ~len ~loc = Memset {dst; byt; len; loc}
-  let memcpy ~dst ~src ~len ~loc = Memcpy {dst; src; len; loc}
-  let memmov ~dst ~src ~len ~loc = Memmov {dst; src; len; loc}
   let alloc ~reg ~num ~len ~loc = Alloc {reg; num; len; loc}
   let free ~ptr ~loc = Free {ptr; loc}
   let nondet ~reg ~msg ~loc = Nondet {reg; msg; loc}
   let abort ~loc = Abort {loc}
+  let intrinsic ~reg ~name ~args ~loc = Intrinsic {reg; name; args; loc}
 
   let loc = function
     | Move {loc; _}
      |Load {loc; _}
      |Store {loc; _}
-     |Memset {loc; _}
-     |Memcpy {loc; _}
-     |Memmov {loc; _}
      |Alloc {loc; _}
      |Free {loc; _}
      |Nondet {loc; _}
-     |Abort {loc; _} ->
+     |Abort {loc; _}
+     |Intrinsic {loc; _} ->
         loc
 
   let union_locals inst vs =
     match inst with
     | Move {reg_exps; _} ->
-        IArray.fold
-          ~f:(fun vs (reg, _) -> Reg.Set.add vs reg)
-          ~init:vs reg_exps
-    | Load {reg; _} | Alloc {reg; _} | Nondet {reg= Some reg; _} ->
-        Reg.Set.add vs reg
-    | Store _ | Memcpy _ | Memmov _ | Memset _ | Free _
+        IArray.fold ~f:(fun (reg, _) vs -> Reg.Set.add reg vs) reg_exps vs
+    | Load {reg; _}
+     |Alloc {reg; _}
+     |Nondet {reg= Some reg; _}
+     |Intrinsic {reg= Some reg; _} ->
+        Reg.Set.add reg vs
+    | Store _ | Free _
      |Nondet {reg= None; _}
-     |Abort _ ->
+     |Abort _
+     |Intrinsic {reg= None; _} ->
         vs
 
   let locals inst = union_locals inst Reg.Set.empty
 
-  let fold_exps inst ~init ~f =
+  let fold_exps inst s ~f =
     match inst with
     | Move {reg_exps; loc= _} ->
-        IArray.fold reg_exps ~init ~f:(fun acc (_reg, exp) -> f acc exp)
-    | Load {reg= _; ptr; len; loc= _} -> f (f init ptr) len
-    | Store {ptr; exp; len; loc= _} -> f (f (f init ptr) exp) len
-    | Memset {dst; byt; len; loc= _} -> f (f (f init dst) byt) len
-    | Memcpy {dst; src; len; loc= _} | Memmov {dst; src; len; loc= _} ->
-        f (f (f init dst) src) len
-    | Alloc {reg= _; num; len= _; loc= _} -> f init num
-    | Free {ptr; loc= _} -> f init ptr
-    | Nondet {reg= _; msg= _; loc= _} -> init
-    | Abort {loc= _} -> init
+        IArray.fold ~f:(fun (_reg, exp) -> f exp) reg_exps s
+    | Load {reg= _; ptr; len; loc= _} -> f len (f ptr s)
+    | Store {ptr; exp; len; loc= _} -> f len (f exp (f ptr s))
+    | Alloc {reg= _; num; len= _; loc= _} -> f num s
+    | Free {ptr; loc= _} -> f ptr s
+    | Nondet {reg= _; msg= _; loc= _} -> s
+    | Abort {loc= _} -> s
+    | Intrinsic {reg= _; name= _; args; loc= _} -> IArray.fold ~f args s
 end
 
 (** Jumps *)
 
 module Jump = struct
-  type t = jump [@@deriving sexp_of]
+  type t = jump [@@deriving compare, equal, hash, sexp_of]
 
   let compare x y = compare_block x.dst y.dst
   let equal x y = equal_block x.dst y.dst
@@ -301,7 +440,12 @@ end
 (** Basic-Block Terminators *)
 
 module Term = struct
-  type t = term [@@deriving sexp_of]
+  module T = struct
+    type t = term [@@deriving compare, equal, hash, sexp_of]
+  end
+
+  include T
+  module Tbl = HashTable.Make (T)
 
   let pp = pp_term
 
@@ -309,16 +453,19 @@ module Term = struct
     let@ () = Invariant.invariant [%here] term [%sexp_of: t] in
     match term with
     | Switch _ | Iswitch _ -> assert true
-    | Call {typ; actuals; areturn; _} -> (
+    | Call {typ; actuals; areturn; _} | ICall {typ; actuals; areturn; _}
+      -> (
       match typ with
       | Pointer {elt= Function {args; return= retn_typ; _}} ->
-          assert (IArray.length args = List.length actuals) ;
+          assert (IArray.length args = IArray.length actuals) ;
           assert (Option.is_some retn_typ || Option.is_none areturn)
       | _ -> assert false )
     | Return {exp; _} -> (
       match parent with
       | Some parent ->
-          assert (Bool.(Option.is_some exp = Option.is_some parent.freturn))
+          assert (
+            Bool.equal (Option.is_some exp) (Option.is_some parent.freturn)
+          )
       | None -> assert true )
     | Throw _ | Unreachable -> assert true
 
@@ -336,8 +483,22 @@ module Term = struct
 
   let iswitch ~ptr ~tbl ~loc = Iswitch {ptr; tbl; loc} |> check invariant
 
-  let call ~callee ~typ ~actuals ~areturn ~return ~throw ~loc =
-    Call
+  let call ~name ~typ ~actuals ~areturn ~return ~throw ~loc =
+    let cal =
+      { callee= {dummy_func with name= Function.mk typ name}
+      ; typ
+      ; actuals
+      ; areturn
+      ; return
+      ; throw
+      ; recursive= false
+      ; loc }
+    in
+    let k = Call cal in
+    (k |> check invariant, fun ~callee -> cal.callee <- callee)
+
+  let icall ~callee ~typ ~actuals ~areturn ~return ~throw ~loc =
+    ICall
       {callee; typ; actuals; areturn; return; throw; recursive= false; loc}
     |> check invariant
 
@@ -349,6 +510,7 @@ module Term = struct
     | Switch {loc; _}
      |Iswitch {loc; _}
      |Call {loc; _}
+     |ICall {loc; _}
      |Return {loc; _}
      |Throw {loc; _} ->
         loc
@@ -356,15 +518,16 @@ module Term = struct
 
   let union_locals term vs =
     match term with
-    | Call {areturn; _} -> Reg.Set.add_option areturn vs
-    | _ -> vs
+    | Call {areturn; _} | ICall {areturn; _} ->
+        Reg.Set.add_option areturn vs
+    | Switch _ | Iswitch _ | Return _ | Throw _ | Unreachable -> vs
 end
 
 (** Basic-Blocks *)
 
 module Block = struct
   module T = struct
-    type t = block [@@deriving compare, equal, sexp_of]
+    type t = block [@@deriving compare, equal, hash, sexp_of]
   end
 
   include T
@@ -387,76 +550,79 @@ module Block_label = struct
     type t = block [@@deriving sexp_of]
 
     let compare x y =
-      [%compare: string * Global.t] (x.lbl, x.parent.name)
+      [%compare: string * Function.t] (x.lbl, x.parent.name)
         (y.lbl, y.parent.name)
 
-    let hash b = [%hash: string * Global.t] (b.lbl, b.parent.name)
+    let equal x y =
+      [%equal: string * Function.t] (x.lbl, x.parent.name)
+        (y.lbl, y.parent.name)
+
+    let hash b = [%hash: string * Function.t] (b.lbl, b.parent.name)
   end
 
   include T
   module Set = Set.Make (T)
 end
 
-module BlockQ = Hash_queue.Make (Block_label)
-module FuncQ = Hash_queue.Make (Reg)
+module BlockS = HashSet.Make (Block_label)
+module BlockQ = HashQueue.Make (Block_label)
 
 (** Functions *)
 
 module Func = struct
-  type t = func [@@deriving sexp_of]
+  type t = func [@@deriving compare, equal, hash, sexp_of]
 
-  let is_undefined = function
-    | {entry= {cmnd; term= Unreachable; _}; _} -> IArray.is_empty cmnd
-    | _ -> false
+  let undefined_entry =
+    Block.mk ~lbl:"undefined" ~cmnd:IArray.empty ~term:Term.unreachable
 
-  let fold_cfg ~init ~f func =
-    let seen = Hash_set.create (module Block_label) in
-    let rec fold_cfg_ s blk =
-      if Result.is_error (Hash_set.strict_add seen blk) then s
+  let mk_undefined ~name ~formals ~freturn ~fthrow ~loc =
+    let locals = Reg.Set.empty in
+    {name; formals; freturn; fthrow; locals; entry= undefined_entry; loc}
+
+  let is_undefined func = func.entry == undefined_entry
+
+  let fold_cfg func s ~f =
+    let seen = BlockS.create 0 in
+    let rec fold_cfg_ blk s =
+      if not (BlockS.add seen blk) then s
       else
         let s =
-          let f s j = fold_cfg_ s j.dst in
+          let f j s = fold_cfg_ j.dst s in
           match blk.term with
           | Switch {tbl; els; _} ->
-              let s = IArray.fold ~f:(fun s (_, j) -> f s j) ~init:s tbl in
-              f s els
-          | Iswitch {tbl; _} -> IArray.fold ~f ~init:s tbl
-          | Call {return; throw; _} ->
-              let s = f s return in
-              Option.fold ~f ~init:s throw
+              let s = IArray.fold ~f:(fun (_, j) -> f j) tbl s in
+              f els s
+          | Iswitch {tbl; _} -> IArray.fold ~f tbl s
+          | Call {return; throw; _} | ICall {return; throw; _} ->
+              Option.fold ~f throw (f return s)
           | Return _ | Throw _ | Unreachable -> s
         in
-        f s blk
+        f blk s
     in
-    fold_cfg_ init func.entry
+    fold_cfg_ func.entry s
 
-  let fold_term func ~init ~f =
-    fold_cfg func ~init ~f:(fun s blk -> f s blk.term)
-
-  let iter_term func ~f =
-    fold_cfg func ~init:() ~f:(fun () blk -> f blk.term)
-
-  let entry_cfg func = fold_cfg ~init:[] ~f:(fun cfg blk -> blk :: cfg) func
+  let iter_term func ~f = fold_cfg ~f:(fun blk () -> f blk.term) func ()
+  let entry_cfg func = fold_cfg ~f:(fun blk cfg -> blk :: cfg) func []
 
   let pp fs func =
-    let {name; formals; freturn; entry; _} = func in
+    let {name; formals; freturn; entry; loc; _} = func in
     let {cmnd; term; sort_index; _} = entry in
     let pp_if cnd str fs = if cnd then Format.fprintf fs str in
     Format.fprintf fs "@[<v>@[<v>%a%a@[<2>%a%a@]%t@]"
       (Option.pp "%a " Typ.pp)
-      ( match Reg.typ name.reg with
+      ( match Function.typ name with
       | Pointer {elt= Function {return; _}} -> return
       | _ -> None )
       (Option.pp " %a := " Reg.pp)
-      freturn Global.pp name (pp_actuals pp_formal) formals
+      freturn Function.pp name (pp_actuals pp_formal) formals
       (fun fs ->
         if is_undefined func then Format.fprintf fs " #%i@]" sort_index
         else
           let cfg =
-            List.sort ~compare:Block.compare (List.tl_exn (entry_cfg func))
+            List.sort ~cmp:Block.compare (List.tl_exn (entry_cfg func))
           in
           Format.fprintf fs " { #%i %a@;<1 4>@[<v>%a@ %a@]%t%a@]@ }"
-            sort_index Loc.pp name.loc pp_cmnd cmnd Term.pp term
+            sort_index Loc.pp loc pp_cmnd cmnd Term.pp term
             (pp_if (not (List.is_empty cfg)) "@ @   ")
             (List.pp "@\n@\n  " Block.pp)
             cfg )
@@ -464,34 +630,43 @@ module Func = struct
   let invariant func =
     assert (func == func.entry.parent) ;
     let@ () = Invariant.invariant [%here] func [%sexp_of: t] in
-    match Reg.typ func.name.reg with
-    | Pointer {elt= Function {return; _}; _} ->
-        assert (
-          not
-            (List.contains_dup (entry_cfg func) ~compare:(fun b1 b2 ->
-                 String.compare b1.lbl b2.lbl )) ) ;
-        assert (Bool.(Option.is_some return = Option.is_some func.freturn)) ;
-        iter_term func ~f:(fun term -> Term.invariant ~parent:func term)
-    | _ -> assert false
+    try
+      match Function.typ func.name with
+      | Pointer {elt= Function {return; _}; _} ->
+          assert (
+            not
+              (Iter.contains_dup
+                 (Iter.of_list (entry_cfg func))
+                 ~cmp:(fun b1 b2 -> String.compare b1.lbl b2.lbl)) ) ;
+          assert (
+            Bool.equal (Option.is_some return) (Option.is_some func.freturn)
+          ) ;
+          iter_term func ~f:(fun term -> Term.invariant ~parent:func term)
+      | _ -> assert false
+    with exc ->
+      let bt = Printexc.get_raw_backtrace () in
+      [%Trace.info "%a" pp func] ;
+      Printexc.raise_with_backtrace exc bt
 
-  let find functions name = String.Map.find functions name
+  let find name functions =
+    Function.Map.find (Function.counterfeit name) functions
 
-  let mk ~(name : Global.t) ~formals ~freturn ~fthrow ~entry ~cfg =
+  let mk ~name ~formals ~freturn ~fthrow ~entry ~cfg ~loc =
     let locals =
       let locals_cmnd locals cmnd =
-        IArray.fold_right ~f:Inst.union_locals cmnd ~init:locals
+        IArray.fold_right ~f:Inst.union_locals cmnd locals
       in
-      let locals_block locals block =
+      let locals_block block locals =
         locals_cmnd (Term.union_locals block.term locals) block.cmnd
       in
-      let init = locals_block Reg.Set.empty entry in
-      IArray.fold ~f:locals_block cfg ~init
+      IArray.fold ~f:locals_block cfg (locals_block entry Reg.Set.empty)
     in
-    let func = {name; formals; freturn; fthrow; locals; entry} in
+    let func = {name; formals; freturn; fthrow; locals; entry; loc} in
     let resolve_parent_and_jumps block =
       block.parent <- func ;
       let lookup cfg lbl : block =
-        IArray.find_exn cfg ~f:(fun k -> String.equal lbl k.lbl)
+        Iter.find_exn (IArray.to_iter cfg) ~f:(fun k ->
+            String.equal lbl k.lbl )
       in
       let set_dst jmp = jmp.dst <- lookup cfg jmp.dst.lbl in
       match block.term with
@@ -499,48 +674,67 @@ module Func = struct
           IArray.iter tbl ~f:(fun (_, jmp) -> set_dst jmp) ;
           set_dst els
       | Iswitch {tbl; _} -> IArray.iter tbl ~f:set_dst
-      | Call {return; throw; _} ->
+      | Call {return; throw; _} | ICall {return; throw; _} ->
+          set_dst return ;
+          Option.iter throw ~f:set_dst
+      | Return _ | Throw _ | Unreachable -> ()
+    in
+    let elim_jumps_to_jumps block =
+      let rec find_dst retreating jmp =
+        match jmp.dst.term with
+        | Switch {tbl; els; _}
+          when IArray.is_empty tbl && IArray.is_empty jmp.dst.cmnd ->
+            find_dst (retreating || els.retreating) els
+        | _ -> jmp
+      in
+      let set_dst jmp =
+        let tgt = find_dst jmp.retreating jmp in
+        if tgt != jmp then (
+          jmp.dst <- tgt.dst ;
+          jmp.retreating <- tgt.retreating )
+      in
+      match block.term with
+      | Switch {tbl; els; _} ->
+          IArray.iter tbl ~f:(fun (_, jmp) -> set_dst jmp) ;
+          set_dst els
+      | Iswitch {tbl; _} -> IArray.iter tbl ~f:set_dst
+      | Call {return; throw; _} | ICall {return; throw; _} ->
           set_dst return ;
           Option.iter throw ~f:set_dst
       | Return _ | Throw _ | Unreachable -> ()
     in
     resolve_parent_and_jumps entry ;
     IArray.iter cfg ~f:resolve_parent_and_jumps ;
+    elim_jumps_to_jumps entry ;
+    IArray.iter cfg ~f:elim_jumps_to_jumps ;
     func |> check invariant
-
-  let mk_undefined ~name ~formals ~freturn ~fthrow =
-    let entry =
-      Block.mk ~lbl:"" ~cmnd:IArray.empty ~term:Term.unreachable
-    in
-    let cfg = IArray.empty in
-    mk ~name ~entry ~formals ~freturn ~fthrow ~cfg
 end
 
 (** Derived meta-data *)
 
+module FuncQ = HashQueue.Make (Func)
+
 let set_derived_metadata functions =
   let compute_roots functions =
     let roots = FuncQ.create () in
-    String.Map.iter functions ~f:(fun func ->
-        FuncQ.enqueue_back_exn roots func.name.reg func ) ;
-    String.Map.iter functions ~f:(fun func ->
-        Func.fold_term func ~init:() ~f:(fun () -> function
-          | Call {callee; _} -> (
-            match Reg.of_exp callee with
-            | Some callee ->
+    Function.Map.iter functions ~f:(fun func ->
+        FuncQ.enqueue_back_exn roots func func ) ;
+    Function.Map.iter functions ~f:(fun func ->
+        Func.iter_term func ~f:(fun term ->
+            match term with
+            | Call {callee; _} ->
                 FuncQ.remove roots callee |> (ignore : [> ] -> unit)
-            | None -> () )
-          | _ -> () ) ) ;
+            | _ -> () ) ) ;
     roots
   in
-  let topsort functions roots =
+  let topsort roots =
     let tips_to_roots = BlockQ.create () in
     let rec visit ancestors func src =
       if BlockQ.mem tips_to_roots src then ()
       else
-        let ancestors = Block_label.Set.add ancestors src in
+        let ancestors = Block_label.Set.add src ancestors in
         let jump jmp =
-          if Block_label.Set.mem ancestors jmp.dst then
+          if Block_label.Set.mem jmp.dst ancestors then
             jmp.retreating <- true
           else visit ancestors func jmp.dst
         in
@@ -549,18 +743,15 @@ let set_derived_metadata functions =
             IArray.iter tbl ~f:(fun (_, jmp) -> jump jmp) ;
             jump els
         | Iswitch {tbl; _} -> IArray.iter tbl ~f:jump
-        | Call ({callee; return; throw; _} as call) ->
-            ( match
-                Option.bind ~f:(Func.find functions)
-                  (Option.map ~f:Reg.name (Reg.of_exp callee))
-              with
-            | Some func ->
-                if Block_label.Set.mem ancestors func.entry then
-                  call.recursive <- true
-                else visit ancestors func func.entry
-            | None ->
-                (* conservatively assume all virtual calls are recursive *)
-                call.recursive <- true ) ;
+        | Call ({callee; return; throw; _} as cal) ->
+            if Block_label.Set.mem callee.entry ancestors then
+              cal.recursive <- true
+            else visit ancestors func callee.entry ;
+            jump return ;
+            Option.iter ~f:jump throw
+        | ICall ({return; throw; _} as call) ->
+            (* conservatively assume all indirect calls are recursive *)
+            call.recursive <- true ;
             jump return ;
             Option.iter ~f:jump throw
         | Return _ | Throw _ | Unreachable -> () ) ;
@@ -577,11 +768,11 @@ let set_derived_metadata functions =
         index := !index - 1 )
   in
   let functions =
-    List.fold functions ~init:String.Map.empty ~f:(fun m func ->
-        String.Map.add_exn m ~key:(Reg.name func.name.reg) ~data:func )
+    List.fold functions Function.Map.empty ~f:(fun func m ->
+        Function.Map.add_exn ~key:func.name ~data:func m )
   in
   let roots = compute_roots functions in
-  let tips_to_roots = topsort functions roots in
+  let tips_to_roots = topsort roots in
   set_sort_indices tips_to_roots ;
   functions
 
@@ -592,8 +783,8 @@ module Program = struct
     let@ () = Invariant.invariant [%here] pgm [%sexp_of: program] in
     assert (
       not
-        (IArray.contains_dup pgm.globals ~compare:(fun g1 g2 ->
-             Reg.compare g1.Global.reg g2.Global.reg )) )
+        (Iter.contains_dup (IArray.to_iter pgm.globals) ~cmp:(fun g1 g2 ->
+             Global.compare g1.name g2.name )) )
 
   let mk ~globals ~functions =
     { globals= IArray.of_list_rev globals
@@ -602,9 +793,10 @@ module Program = struct
 
   let pp fs {globals; functions} =
     Format.fprintf fs "@[<v>@[%a@]@ @ @ @[%a@]@]"
-      (IArray.pp "@\n@\n" Global.pp_defn)
+      (IArray.pp "@\n@\n" GlobalDefn.pp)
       globals
       (List.pp "@\n@\n" Func.pp)
-      ( String.Map.data functions
-      |> List.sort ~compare:(fun x y -> compare_block x.entry y.entry) )
+      ( Function.Map.values functions
+      |> Iter.to_list
+      |> List.sort ~cmp:(fun x y -> compare_block x.entry y.entry) )
 end

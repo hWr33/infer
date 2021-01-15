@@ -220,8 +220,9 @@ OPTIONS
            relative to project root or be absolute           See also infer-analyze(1).
 
        --clang-biniou-file file
-           Specify a file containing the AST of the program, in biniou format       
-    See also infer-capture(1).
+           Specify a file containing the AST of the program, in biniou
+           format. Please note you still need to provide a compilation
+           command.           See also infer-capture(1).
 
        --clang-blacklisted-flags +string
            Clang flags to filter out           See also infer-capture(1).
@@ -233,6 +234,11 @@ OPTIONS
            Limit after which initialization of compound types (structs and
            arrays) is not done element by element but using a builtin
            function that each analysis has to model.           See also infer-analyze(1) and infer-capture(1).
+
+       --clang-yojson-file file
+           Specify a file containing the AST of the program, in yojson
+           format. Please note you still need to provide a compilation
+           command.           See also infer-capture(1).
 
        --compilation-database +path
            File that contain compilation commands (can be specified multiple
@@ -278,6 +284,10 @@ OPTIONS
        --cost-only
            Activates: Enable cost and disable all other checkers (Conversely:
            --no-cost-only)           See also infer-analyze(1).
+
+       --no-cost-suppress-func-ptr
+           Deactivates: Suppress printing function pointers in cost reports
+           (Conversely: --cost-suppress-func-ptr)           See also infer-analyze(1).
 
        --cost-tests-only-autoreleasepool
            Activates: [EXPERIMENTAL] Report only autoreleasepool size results
@@ -416,6 +426,7 @@ OPTIONS
              DIVIDE_BY_ZERO (disabled by default),
              DO_NOT_REPORT (enabled by default),
              EMPTY_VECTOR_ACCESS (enabled by default),
+             ERADICATE_ANNOTATION_GRAPH (enabled by default),
              ERADICATE_BAD_NESTED_CLASS_ANNOTATION (enabled by default),
              ERADICATE_CONDITION_REDUNDANT (enabled by default),
              ERADICATE_FIELD_NOT_INITIALIZED (enabled by default),
@@ -441,6 +452,8 @@ OPTIONS
              EXECUTION_TIME_COMPLEXITY_INCREASE_UI_THREAD (enabled by
            default),
              EXECUTION_TIME_UNREACHABLE_AT_EXIT (disabled by default),
+             EXPENSIVE_AUTORELEASEPOOL_SIZE (disabled by default),
+             EXPENSIVE_EXECUTION_TIME (disabled by default),
              EXPENSIVE_LOOP_INVARIANT_CALL (enabled by default),
              EXPOSED_INSECURE_INTENT_HANDLING (enabled by default),
              Failure_exe (enabled by default),
@@ -477,10 +490,11 @@ OPTIONS
              MEMORY_LEAK (enabled by default),
              MISSING_REQUIRED_PROP (enabled by default),
              MIXED_SELF_WEAKSELF (enabled by default),
+             MODIFIES_IMMUTABLE (enabled by default),
              MULTIPLE_WEAKSELF (enabled by default),
              MUTABLE_LOCAL_VARIABLE_IN_COMPONENT_FILE (enabled by default),
              Missing_fld (enabled by default),
-             NULLPTR_DEREFERENCE (disabled by default),
+             NULLPTR_DEREFERENCE (enabled by default),
              NULL_DEREFERENCE (enabled by default),
              OPTIONAL_EMPTY_ACCESS (disabled by default),
              PARAMETER_NOT_NULL_CHECKED (enabled by default),
@@ -488,6 +502,7 @@ OPTIONS
              PRECONDITION_NOT_FOUND (enabled by default),
              PRECONDITION_NOT_MET (enabled by default),
              PREMATURE_NIL_TERMINATION_ARGUMENT (enabled by default),
+             PULSE_UNINITIALIZED_VALUE (disabled by default),
              PURE_FUNCTION (enabled by default),
              QUANDARY_TAINT_ERROR (enabled by default),
              RESOURCE_LEAK (enabled by default),
@@ -777,6 +792,10 @@ OPTIONS
            unique_ptr<type>) will count as dead stores when the variables are
            not read explicitly by the program.           See also infer-analyze(1).
 
+       --liveness-ignored-constant +string
+           List of integer constants to be ignored by liveness analysis       
+    See also infer-analyze(1).
+
        --liveness-only
            Activates: Enable liveness and disable all other checkers
            (Conversely: --no-liveness-only)           See also infer-analyze(1).
@@ -802,6 +821,15 @@ OPTIONS
            Level of nested procedure calls to show. Trace elements beyond the
            maximum nesting level are skipped. If omitted, all levels are
            shown.           See also infer-explore(1).
+
+       --memtrace-analysis-profiling
+           Activates: Generate OCaml analysis allocation traces in
+           `infer-out/memtrace`. (Conversely:
+           --no-memtrace-analysis-profiling)           See also infer-analyze(1).
+
+       --memtrace-sampling-rate float
+           Sampling rate for Memtrace allocation profiling. Default is 1e-6.       
+    See also infer-analyze(1).
 
        --merge
            Activates: Merge the captured results directories specified in the
@@ -879,6 +907,11 @@ OPTIONS
        --procedures-summary
            Activates: Print the summaries of each procedure in the output of
            --procedures (Conversely: --no-procedures-summary)           See also infer-debug(1).
+
+       --procedures-summary-json
+           Activates: Emit the summaries of each procedure in the output of
+           --procedures as JSON (Conversely: --no-procedures-summary-json)       
+    See also infer-debug(1).
 
        --no-progress-bar,-P
            Deactivates: Show a progress bar (Conversely: --progress-bar | -p)       
@@ -1014,6 +1047,10 @@ OPTIONS
        --report-formatter { none | phabricator }
            Which formatter to use when emitting the report           See also infer-report(1).
 
+       --report-immutable-modifications
+           Activates: Report modifications to immutable fields (Conversely:
+           --no-report-immutable-modifications)           See also infer-report(1) and infer-run(1).
+
        --report-previous path
            Report of the base revision to use for comparison           See also infer-reportdiff(1).
 
@@ -1039,8 +1076,9 @@ OPTIONS
            performs better in some circumstances
            See also infer-analyze(1).
 
-       --select N
-           Select bug number N. If omitted, prompt for input.           See also infer-explore(1).
+       --select (N|all)
+           Select option number N or all of them. If omitted, prompt for
+           input.           See also infer-debug(1) and infer-explore(1).
 
        --no-self-in-block
            Deactivates: checker self-in-block: An Objective-C-specific
@@ -1184,6 +1222,13 @@ OPTIONS
 
        --version-json
            Print version information in json format and exit           See also infer-run(1).
+
+       --workspace path
+           Specifies the root of the workspace, which is a directory
+           containing --project-root. This can be needed if the capture phase
+           is expected to require several different project roots, all
+           relative to a common workspace. Usually a single project root is
+           enough, though.           See also infer-capture(1).
 
        --write-website path_to_website_dir
            Use to write website files documenting issue types and checkers
@@ -1353,6 +1398,9 @@ INTERNAL OPTIONS
 
        --clang-libcxx-include-to-override-regex-reset
            Cancel the effect of --clang-libcxx-include-to-override-regex.
+
+       --clang-yojson-file-reset
+           Cancel the effect of --clang-yojson-file.
 
        --classpath string
            Specify the Java classpath
@@ -1537,6 +1585,10 @@ INTERNAL OPTIONS
        --java-jar-compiler-reset
            Cancel the effect of --java-jar-compiler.
 
+       --java-source-parser-experimental
+           Activates: The experimental Java source parser for declaration
+           locations. (Conversely: --no-java-source-parser-experimental)
+
        --java-version-reset
            Cancel the effect of --java-version.
 
@@ -1564,6 +1616,9 @@ INTERNAL OPTIONS
        --linters-doc-url-reset
            Set --linters-doc-url to the empty list.
 
+       --liveness-ignored-constant-reset
+           Set --liveness-ignored-constant to the empty list.
+
        --load-average-reset
            Cancel the effect of --load-average.
 
@@ -1575,6 +1630,9 @@ INTERNAL OPTIONS
 
        --max-nesting-reset
            Cancel the effect of --max-nesting.
+
+       --memtrace-sampling-rate-reset
+           Cancel the effect of --memtrace-sampling-rate.
 
        --method-decls-info method_decls_info.json
            Specifies the file containing the method declarations info (eg.
@@ -1616,17 +1674,23 @@ INTERNAL OPTIONS
            typechecker, use `--eradicate` for now. (Conversely:
            --no-nullsafe)
 
+       --nullsafe-annotation-graph
+           Activates: Nullsafe: an experimental mode for calculating the
+           dependency graph between potential annotations to add in the
+           source code. (Conversely: --no-nullsafe-annotation-graph)
+
        --nullsafe-disable-field-not-initialized-in-nonstrict-classes
            Activates: Nullsafe: In this mode field not initialized issues
            won't be reported unless the class is marked as @NullsafeStrict.
            This feature is needed for compatibility reasons. (Conversely:
            --no-nullsafe-disable-field-not-initialized-in-nonstrict-classes)
 
-       --no-nullsafe-optimistic-third-party-params-in-non-strict
-           Deactivates: Nullsafe: in this mode we treat non annotated third
-           party method params as if they were annotated as nullable.
-           (Conversely:
-           --nullsafe-optimistic-third-party-params-in-non-strict)
+       --no-nullsafe-optimistic-third-party-in-default-mode
+           Deactivates: Nullsafe: Unless @Nullsafe annotation is used, treat
+           not annotated third party method params as if they were annotated
+           as nullable, and return values as if they were annotated as
+           non-null (Conversely:
+           --nullsafe-optimistic-third-party-in-default-mode)
 
        --nullsafe-strict-containers
            Activates: Warn when containers are used with nullable keys or
@@ -1714,6 +1778,11 @@ INTERNAL OPTIONS
            Activates: Disable inter-procedural analysis in Pulse. Used for
            experimentations only. (Conversely:
            --no-pulse-intraprocedural-only)
+
+       --pulse-isl
+           Activates: [Pulse] Incorrectness Separation Logic (ISL) mode:
+           explicit Ok/Error summaries are recorded. For experiments only.
+           (Conversely: --no-pulse-isl)
 
        --pulse-max-disjuncts int
            Under-approximate after int disjunctions in the domain
@@ -1872,6 +1941,12 @@ INTERNAL OPTIONS
        --summaries-caches-max-size int
            The maximum amount of elements the summaries LRU caches can hold
 
+       --suppress-lint-ignore-types
+           Activates: [DEPRECATED] Check only the presence of @SuppressLint
+           but not the issues types specified as parameters to the
+           annotations when deciding to suppress issues. Use for backwards
+           compatibility only! (Conversely: --no-suppress-lint-ignore-types)
+
        --symops-per-iteration int
            Set the number of symbolic operations per iteration (see
            --iterations)
@@ -1894,9 +1969,23 @@ INTERNAL OPTIONS
            Activates: Mode for testing, where no headers are translated, and
            dot files are created (clang only) (Conversely: --no-testing-mode)
 
+       --topl-max-conjuncts int
+           Stop tracking states that reach have at least int conjuncts
+
+       --topl-max-disjuncts int
+           Under-approximate after int disjunctions in the domain
+
        --topl-properties +path
            [EXPERIMENTAL] Specify a file containing a temporal property
-           definition (e.g., jdk.topl).
+           definition (e.g., jdk.topl).           One needs to also select one of the three implementations, by
+           enabling one of the following checkers
+           --pulse       will run pulse with updated transfer functions
+           --topl-pulse  [SLOW] uses SIL-instrumentation, runs pulse, and
+           analyzes pulse summaries
+           --topl-biabd  [SLOW] uses SIL-instrumentation, runs biabduction,
+           and analyzes biabduction summaries
+           Note that enabling topl-pulse or topl-biabd will disable the
+           first implementation using updated pulse transfer functions.
 
        --topl-properties-reset
            Set --topl-properties to the empty list.
@@ -1947,6 +2036,9 @@ INTERNAL OPTIONS
 
        --visits-bias
            nodes visited fewer times are analyzed first
+
+       --workspace-reset
+           Cancel the effect of --workspace.
 
        --write-dotty
            Activates: Produce dotty files for specs in the results directory

@@ -141,7 +141,7 @@ let filter_and_replace_unsupported_args ?(replace_options_arg = fun _ s -> s) ?(
 let clang_cc1_cmd_sanitizer cmd =
   let replace_args arg = function
     | Some override_regex when Str.string_match override_regex arg 0 ->
-        Config.fcp_dir ^/ "clang" ^/ "install" ^/ "lib" ^/ "clang" ^/ "9.0.0" ^/ "include"
+        Config.fcp_dir ^/ "clang" ^/ "install" ^/ "lib" ^/ "clang" ^/ "10.0.1" ^/ "include"
     | _ ->
         arg
   in
@@ -204,7 +204,7 @@ let mk ~is_driver quoting_style ~prog ~args =
   (* Some arguments break the compiler so they need to be removed even before the normalization step *)
   let sanitized_args = filter_and_replace_unsupported_args args in
   let sanitized_args =
-    if is_driver then sanitized_args @ List.rev Config.clang_extra_flags else sanitized_args
+    if is_driver then sanitized_args @ Config.clang_extra_flags else sanitized_args
   in
   {exec= prog; orig_argv= sanitized_args; argv= sanitized_args; quoting_style; is_driver}
 
