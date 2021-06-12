@@ -10,6 +10,7 @@ module BasicCost = CostDomain.BasicCost
 module BasicCostWithReason = CostDomain.BasicCostWithReason
 open BufferOverrunUtils.ModelEnv
 open CostUtils.CostModelEnv
+open ProcnameDispatcher.Call.FuncArg
 
 let unit_cost_model _model_env ~ret:_ _inferbo_mem = BasicCost.one ()
 
@@ -26,14 +27,6 @@ let linear = cost_of_exp ~degree_kind:Polynomials.DegreeKind.Linear
 
 let log = cost_of_exp ~degree_kind:Polynomials.DegreeKind.Log
 
-let provider_get {model_env= {pname; location}} ~ret:(_, ret_typ) _ : BasicCost.t =
-  let callsite = CallSite.make pname location in
-  let path = Symb.SymbolPath.of_callsite ~ret_typ callsite in
-  let itv = Itv.of_modeled_path ~is_expensive:true path in
-  CostUtils.of_itv ~itv ~degree_kind:Polynomials.DegreeKind.Linear ~of_function:"Provider.get"
-    location
-
-
 module BoundsOf (Container : CostUtils.S) = struct
   let of_length exp {model_env= {location}} ~ret:_ mem ~of_function ~degree_kind =
     let itv = Container.length exp mem |> BufferOverrunDomain.Val.get_itv in
@@ -48,6 +41,12 @@ module BoundsOf (Container : CostUtils.S) = struct
     let log_n = logarithmic_length exp ~of_function cost_model_env mem ~ret in
     let n = linear_length exp ~of_function cost_model_env mem ~ret in
     BasicCost.mult n log_n
+
+
+  let op_on_two_lengths exp1 exp2 ~f cost_model_env ~ret mem ~of_function =
+    let n = linear_length exp1 ~of_function cost_model_env mem ~ret in
+    let m = linear_length exp2 ~of_function cost_model_env mem ~ret in
+    f n m
 end
 
 module IntHashMap = struct
@@ -161,6 +160,32 @@ module NSString = struct
   let substring_from_index = JavaString.substring_no_end
 end
 
+module NSAttributedString = struct
+  let enumerate_using_block args ({get_summary; model_env} as cost_model_env) ~ret inferbo_mem =
+    let pname = model_env.pname in
+    match List.rev args with
+    | _attr :: _inRange :: _options :: _usingBlock :: {exp= str} :: _captured_args -> (
+        let length =
+          BoundsOfCString.linear_length
+            ~of_function:(Procname.to_simplified_string pname)
+            str cost_model_env ~ret inferbo_mem
+        in
+        match pname with
+        | WithBlockParameters (_, [block_name]) -> (
+          match get_summary (Procname.Block block_name) with
+          | Some {CostDomain.post= callee_summary} ->
+              let {BasicCostWithReason.cost= callee_cost} =
+                CostDomain.get_cost_kind OperationCost callee_summary
+              in
+              BasicCost.mult_loop ~iter:length ~body:callee_cost
+          | None ->
+              length )
+        | _ ->
+            length )
+    | _ ->
+        BasicCost.one ()
+end
+
 module NSCollection = struct
   let get_length str ~of_function {model_env= {location}} ~ret:_ mem =
     let itv =
@@ -175,25 +200,29 @@ module NSCollection = struct
     cost_op (get_length coll1) (get_length coll2)
 
 
-  let enumerate_using_block array ({get_summary; model_env} as cost_model_env) ~ret inferbo_mem =
+  let enumerate_using_block args ({get_summary; model_env} as cost_model_env) ~ret inferbo_mem =
     let pname = model_env.pname in
-    match pname with
-    | WithBlockParameters (_, [block_name]) -> (
-      match get_summary (Procname.Block block_name) with
-      | Some {CostDomain.post= callee_summary} ->
-          let {BasicCostWithReason.cost= callee_cost} =
-            CostDomain.get_cost_kind OperationCost callee_summary
-          in
-          let length =
-            BoundsOfNSCollection.linear_length
-              ~of_function:(Procname.to_simplified_string pname)
-              array cost_model_env ~ret inferbo_mem
-          in
-          BasicCost.mult_loop ~iter:length ~body:callee_cost
-      | None ->
-          BasicCost.zero )
+    match List.rev args with
+    | _block :: {exp= array} :: _captured_args -> (
+        let length =
+          BoundsOfNSCollection.linear_length
+            ~of_function:(Procname.to_simplified_string pname)
+            array cost_model_env ~ret inferbo_mem
+        in
+        match pname with
+        | WithBlockParameters (_, [block_name]) -> (
+          match get_summary (Procname.Block block_name) with
+          | Some {CostDomain.post= callee_summary} ->
+              let {BasicCostWithReason.cost= callee_cost} =
+                CostDomain.get_cost_kind OperationCost callee_summary
+              in
+              BasicCost.mult_loop ~iter:length ~body:callee_cost
+          | None ->
+              length )
+        | _ ->
+            length )
     | _ ->
-        BasicCost.zero
+        BasicCost.one ()
 end
 
 module ImmutableSet = struct
@@ -231,7 +260,7 @@ module Call = struct
         ; +PatternMatch.ObjectiveC.implements "NSString"
           &:: "substringFromIndex:" <>$ capt_exp $+ capt_exp $!--> NSString.substring_from_index
         ; +PatternMatch.ObjectiveC.implements "NSString"
-          &:: "rangeOfString:" <>$ capt_exp $+ capt_exp
+          &:: "rangeOfString:" <>$ capt_exp $+ capt_exp $+ any_arg
           $!--> NSString.op_on_two_str BasicCost.mult ~of_function:"NSString.rangeOfString:"
         ; +PatternMatch.ObjectiveC.implements "NSMutableString"
           &:: "appendString:" <>$ any_arg $+ capt_exp
@@ -261,12 +290,29 @@ module Call = struct
         ; +PatternMatch.ObjectiveC.implements "NSMutableArray"
           &:: "removeAllObjects" <>$ capt_exp
           $--> BoundsOfNSCollection.linear_length ~of_function:"NSArray.removeAllObjects"
+        ; +PatternMatch.ObjectiveC.implements "NSDictionary"
+          &:: "dictionaryWithDictionary:" <>$ capt_exp
+          $--> BoundsOfNSCollection.linear_length
+                 ~of_function:"NSDictionary.dictionaryWithDictionary:"
+        ; +PatternMatch.ObjectiveC.implements "NSDictionary"
+          &:: "initWithDictionary:" <>$ any_arg $+ capt_exp
+          $--> BoundsOfNSCollection.linear_length ~of_function:"NSArray.initWithArray:"
+        ; +PatternMatch.ObjectiveC.implements "NSMutableDictionary"
+          &:: "removeAllObjects" <>$ capt_exp
+          $--> BoundsOfNSCollection.linear_length
+                 ~of_function:"NSMutableDictionary.removeAllObjects"
+        ; +PatternMatch.ObjectiveC.implements "NSMutableDictionary"
+          &:: "addEntriesFromDictionary:" <>$ any_arg $+ capt_exp
+          $--> BoundsOfNSCollection.linear_length
+                 ~of_function:"addEntriesFromDictionary.NSMutableDictionary:"
         ; +PatternMatch.ObjectiveC.implements "NSMutableArray"
           &:: "addObjectsFromArray:" <>$ any_arg $+ capt_exp
           $--> BoundsOfNSCollection.linear_length ~of_function:"NSArray.addObjectsFromArray:"
         ; +PatternMatch.ObjectiveC.implements_collection
-          &:: "enumerateObjectsUsingBlock:" <>$ capt_exp $+ any_arg
-          $--> NSCollection.enumerate_using_block
+          &:: "enumerateObjectsUsingBlock:" &::.*++> NSCollection.enumerate_using_block
+        ; +PatternMatch.ObjectiveC.implements "NSAttributedString"
+          &:: "enumerateAttribute:inRange:options:usingBlock:"
+          &::.*++> NSAttributedString.enumerate_using_block
         ; +PatternMatch.Java.implements_collections
           &:: "sort" $ capt_exp
           $+...$--> BoundsOfCollection.n_log_n_length ~of_function:"Collections.sort"
@@ -276,9 +322,23 @@ module Call = struct
         ; +PatternMatch.Java.implements_arrays
           &:: "sort" $ capt_exp
           $+...$--> BoundsOfArray.n_log_n_length ~of_function:"Arrays.sort"
+        ; +PatternMatch.Java.implements_set &:: "contains" <>$ any_arg $+ any_arg
+          $--> unit_cost_model
+        ; +PatternMatch.Java.implements_set &:: "containsAll" <>$ any_arg $+ capt_exp
+          $--> BoundsOfCollection.linear_length ~of_function:"Set.containsAll"
+        ; +PatternMatch.Java.implements_collection
+          &:: "removeAll" <>$ any_arg $+ capt_exp
+          $--> BoundsOfCollection.linear_length ~of_function:"Collection.removeAll"
         ; +PatternMatch.Java.implements_list
           &:: "contains" <>$ capt_exp
           $+...$--> BoundsOfCollection.linear_length ~of_function:"List.contains"
+        ; +PatternMatch.Java.implements_collection
+          &:: "contains" <>$ capt_exp
+          $+...$--> BoundsOfCollection.linear_length ~of_function:"Collection.contains"
+        ; +PatternMatch.Java.implements_collection
+          &:: "containsAll" <>$ capt_exp $+ capt_exp
+          $+...$--> BoundsOfCollection.op_on_two_lengths ~f:BasicCost.mult
+                      ~of_function:"Collection.containsAll"
         ; +PatternMatch.Java.implements_collections
           &:: "binarySearch" <>$ capt_exp
           $+...$--> BoundsOfCollection.logarithmic_length ~of_function:"Collections.binarySearch"
@@ -303,6 +363,8 @@ module Call = struct
           $+...$--> BoundsOfCollection.linear_length ~of_function:"Iterable.forEach"
         ; +PatternMatch.Java.implements_map &:: "forEach" $ capt_exp
           $+...$--> BoundsOfCollection.linear_length ~of_function:"Map.forEach"
+        ; +PatternMatch.Java.implements_map &:: "containsValue" $ capt_exp
+          $+...$--> BoundsOfCollection.linear_length ~of_function:"Map.containsValue"
         ; +PatternMatch.Java.implements_collections
           &:: "fill" <>$ capt_exp
           $+...$--> BoundsOfCollection.linear_length ~of_function:"Collections.fill"
@@ -336,7 +398,6 @@ module Call = struct
           &:: "substring"
           $ any_arg_of_typ (+PatternMatch.Java.implements_lang "String")
           $+ capt_exp $+ capt_exp $--> JavaString.substring
-        ; +PatternMatch.Java.implements_inject "Provider" &:: "get" <>--> provider_get
         ; +PatternMatch.Java.implements_xmob_utils "IntHashMap" &:: "<init>" <>--> unit_cost_model
         ; +PatternMatch.Java.implements_xmob_utils "IntHashMap"
           &:: "getElement" <>--> unit_cost_model

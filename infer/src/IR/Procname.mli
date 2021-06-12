@@ -10,6 +10,33 @@ module F = Format
 
 (** Module for Procedure Names. *)
 
+(** Type of csharp procedure names. *)
+module CSharp : sig
+  type kind =
+    | Non_Static
+        (** in Java, procedures called with invokevirtual, invokespecial, and invokeinterface *)
+    | Static  (** in Java, procedures called with invokestatic *)
+
+  type t [@@deriving compare]
+
+  val constructor_method_name : string
+
+  val get_method : t -> string
+  (** Return the method name of a csharp procedure name. *)
+
+  val get_class_type_name : t -> Typ.Name.t
+  (** Return the class name as a typename of a java procedure name. *)
+
+  val get_return_typ : t -> Typ.t
+  (** Return the return type of [pname_csharp]. return Tvoid if there's no return type *)
+
+  val get_class_name : t -> string
+  (** Return the class name of a java procedure name. *)
+
+  val is_generated : t -> bool
+  (** Check if the proc name comes from generated code *)
+end
+
 (** Type of java procedure names. *)
 module Java : sig
   type kind =
@@ -102,7 +129,12 @@ module Parameter : sig
   type clang_parameter = Typ.Name.t option [@@deriving compare, equal]
 
   (** Type for parameters in procnames, for java and clang. *)
-  type t = JavaParameter of Typ.t | ClangParameter of clang_parameter [@@deriving compare, equal]
+  type t =
+    | JavaParameter of Typ.t
+    | ClangParameter of clang_parameter
+    | CSharpParameter of Typ.t
+    | ErlangParameter
+  [@@deriving compare, equal]
 
   val of_typ : Typ.t -> clang_parameter
 end
@@ -110,7 +142,7 @@ end
 module ObjC_Cpp : sig
   type kind =
     | CPPMethod of {mangled: string option}
-    | CPPConstructor of {mangled: string option; is_constexpr: bool}
+    | CPPConstructor of {mangled: string option}
     | CPPDestructor of {mangled: string option}
     | ObjCClassMethod
     | ObjCInstanceMethod
@@ -150,12 +182,6 @@ module ObjC_Cpp : sig
 
   val is_inner_destructor : t -> bool
   (** Check if this is a frontend-generated "inner" destructor (see D5834555/D7189239) *)
-
-  val is_constexpr : t -> bool
-  (** Check if this is a constexpr function. *)
-
-  val is_cpp_lambda : t -> bool
-  (** Return whether the procname is a cpp lambda. *)
 end
 
 module C : sig
@@ -175,11 +201,20 @@ end
 
 module Block : sig
   (** Type of Objective C block names. *)
-  type block_name = string
+  type block_type =
+    | InOuterScope of {outer_scope: block_type; block_index: int}
+        (** a block nested in the scope of an outer one *)
+    | SurroundingProc of {name: string}  (** tracks the name of the surrounding proc *)
 
-  type t = {name: block_name; parameters: Parameter.clang_parameter list} [@@deriving compare]
+  type t = {block_type: block_type; parameters: Parameter.clang_parameter list} [@@deriving compare]
 
-  val make : block_name -> Parameter.clang_parameter list -> t
+  val make_surrounding : string -> Parameter.clang_parameter list -> t
+
+  val make_in_outer_scope : block_type -> int -> Parameter.clang_parameter list -> t
+end
+
+module Erlang : sig
+  type t
 end
 
 (** Type of procedure names. WithBlockParameters is used for creating an instantiation of a method
@@ -188,8 +223,10 @@ end
     [foo_my_block() {my_block(); }] where foo_my_block is created with WithBlockParameters (foo,
     [my_block]) *)
 type t =
+  | CSharp of CSharp.t
   | Java of Java.t
   | C of C.t
+  | Erlang of Erlang.t
   | Linters_dummy_method
   | Block of Block.t
   | ObjC_Cpp of ObjC_Cpp.t
@@ -199,6 +236,9 @@ type t =
 val block_of_procname : t -> Block.t
 
 val equal : t -> t -> bool
+
+val compare_name : t -> t -> int
+(** Similar to compare, but compares only names, except parameter types and template arguments. *)
 
 val get_class_type_name : t -> Typ.Name.t option
 
@@ -254,9 +294,20 @@ val make_java :
   -> method_name:string
   -> parameters:Typ.t list
   -> kind:Java.kind
-  -> unit
   -> t
 (** Create a Java procedure name. *)
+
+val make_csharp :
+     class_name:Typ.Name.t
+  -> return_type:Typ.t option
+  -> method_name:string
+  -> parameters:Typ.t list
+  -> kind:CSharp.kind
+  -> t
+(** Create a CSharp procedure name. *)
+
+val make_erlang : module_name:string -> function_name:string -> arity:int -> t
+(** Create an Erlang procedure name. *)
 
 val make_objc_dealloc : Typ.Name.t -> t
 (** Create a Objective-C dealloc name. This is a destructor for an Objective-C class. This procname
@@ -268,6 +319,8 @@ val make_objc_copyWithZone : is_mutable:bool -> Typ.Name.t -> t
 val empty_block : t
 (** Empty block name. *)
 
+val get_block_type : t -> Block.block_type
+
 val get_language : t -> Language.t
 (** Return the language of the procedure. *)
 
@@ -277,14 +330,23 @@ val get_method : t -> string
 val is_objc_block : t -> bool
 (** Return whether the procname is a block procname. *)
 
+val is_cpp_lambda : t -> bool
+(** Return whether the procname is a cpp lambda procname. *)
+
 val is_objc_dealloc : t -> bool
 (** Return whether the dealloc method of an Objective-C class. *)
+
+val is_objc_init : t -> bool
+(** Return whether the init method of an Objective-C class. *)
 
 val is_c_method : t -> bool
 (** Return true this is an Objective-C/C++ method name. *)
 
 val is_constructor : t -> bool
 (** Check if this is a constructor. *)
+
+val is_csharp : t -> bool
+(** Check if this is a CSharp procedure name. *)
 
 val is_java : t -> bool
 (** Check if this is a Java procedure name. *)
@@ -328,6 +390,9 @@ val to_simplified_string : ?withclass:bool -> t -> string
 
 val from_string_c_fun : string -> t
 (** Convert a string to a c function name. *)
+
+val replace_java_inner_class_prefix_regex : string -> string
+(** Replace "$\[0-9\]+" index into "$_" in Java proc name. *)
 
 val hashable_name : t -> string
 (** Convert the procedure name in a format suitable for computing the bug hash. *)

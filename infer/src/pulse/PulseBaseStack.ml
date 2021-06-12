@@ -6,6 +6,7 @@
  *)
 open! IStd
 module F = Format
+module L = Logging
 open PulseBasicInterface
 
 (** Stacks: map addresses of variables to values and histoy. *)
@@ -19,7 +20,7 @@ module VarAddress = struct
 end
 
 module AddrHistPair = struct
-  type t = AbstractValue.t * ValueHistory.t [@@deriving compare, yojson_of]
+  type t = AbstractValue.t * ValueHistory.t [@@deriving compare, equal, yojson_of]
 
   let pp f addr_trace =
     if Config.debug_level_analysis >= 3 then
@@ -32,23 +33,39 @@ module M = PrettyPrintable.MakePPMonoMap (VarAddress) (AddrHistPair)
 let yojson_of_t m = [%yojson_of: (VarAddress.t * AddrHistPair.t) list] (M.bindings m)
 
 let canonicalize ~get_var_repr stack =
-  let changed = ref false in
-  let stack' =
-    M.map
-      (fun ((addr, hist) as addr_hist) ->
-        let addr' = get_var_repr addr in
-        if phys_equal addr addr' then addr_hist
-        else (
-          changed := true ;
-          (addr', hist) ) )
-      stack
-  in
-  if !changed then stack' else stack
+  let exception AliasingContradiction in
+  try
+    let (_allocated, changed), stack' =
+      M.fold_mapi stack ~init:(AbstractValue.Set.empty, false)
+        ~f:(fun var (allocated, changed) ((addr, hist) as addr_hist) ->
+          let addr' = get_var_repr addr in
+          if Var.is_pvar var && AbstractValue.Set.mem addr' allocated then (
+            L.d_printfln
+              "CONTRADICTION: %a = %a makes two stack variables' addresses equal (%a=%a) in %a@\n"
+              AbstractValue.pp addr AbstractValue.pp addr' AbstractValue.pp addr Var.pp var M.pp
+              stack ;
+            raise AliasingContradiction ) ;
+          let allocated =
+            if Var.is_pvar var then AbstractValue.Set.add addr' allocated else allocated
+          in
+          if phys_equal addr addr' then ((allocated, changed), addr_hist)
+          else
+            let changed = true in
+            ((allocated, changed), (addr', hist)) )
+    in
+    Sat (if changed then stack' else stack)
+  with AliasingContradiction -> Unsat
+
+
+let subst_var (v, v') stack =
+  canonicalize stack ~get_var_repr:(fun addr -> if AbstractValue.equal v addr then v' else addr)
 
 
 include M
 
 let compare = M.compare AddrHistPair.compare
+
+let equal = M.equal AddrHistPair.equal
 
 let pp fmt m =
   let pp_item fmt (var_address, v) =

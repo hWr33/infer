@@ -417,7 +417,7 @@ let check_arith_norm_exp {InterproceduralAnalysis.proc_desc; err_log; tenv} exp 
 
 
 let method_exists right_proc_name methods =
-  if Language.curr_language_is Java then
+  if Language.curr_language_is Java || Language.curr_language_is CIL then
     List.exists ~f:(fun meth_name -> Procname.equal right_proc_name meth_name) methods
   else
     (* ObjC/C++ case : The attribute map will only exist when we have code for the method or
@@ -474,6 +474,13 @@ let resolve_virtual_pname tenv prop actuals callee_pname call_flags : Procname.t
             Typ.mk (Typ.Tptr (Typ.mk (Tstruct name), Pk_pointer))
         | None ->
             fallback_typ )
+    | Procname.CSharp pname_csharp -> (
+        let name = Procname.CSharp.get_class_type_name pname_csharp in
+        match Tenv.lookup tenv name with
+        | Some _ ->
+            Typ.mk (Typ.Tptr (Typ.mk (Tstruct name), Pk_pointer))
+        | None ->
+            fallback_typ )
     | _ ->
         fallback_typ
   in
@@ -492,7 +499,7 @@ let resolve_virtual_pname tenv prop actuals callee_pname call_flags : Procname.t
       (* if this is not a virtual or interface call, there's no need for resolution *)
       [callee_pname]
   | (receiver_exp, actual_receiver_typ) :: _ ->
-      if not (Language.curr_language_is Java) then
+      if not (Language.curr_language_is Java || Language.curr_language_is CIL) then
         (* default mode for Obj-C/C++/Java virtual calls: resolution only *)
         [do_resolve callee_pname receiver_exp actual_receiver_typ]
       else
@@ -629,7 +636,7 @@ let call_constructor_url_update_args =
       ~class_name:(Typ.Name.Java.from_string "java.net.URL")
       ~return_type:None ~method_name:Procname.Java.constructor_method_name
       ~parameters:[StdTyp.Java.pointer_to_java_lang_string]
-      ~kind:Procname.Java.Non_Static ()
+      ~kind:Procname.Java.Non_Static
   in
   fun pname actual_params ->
     if Procname.equal url_pname pname then
@@ -840,7 +847,10 @@ let add_constraints_on_retval tenv pdesc prop ret_exp ~has_nonnull_annot typ cal
       let prop_with_abduced_var =
         let abduced_ret_pv =
           (* in Java, always re-use the same abduced ret var to prevent false alarms with repeated method calls *)
-          let loc = if Procname.is_java callee_pname then Location.dummy else callee_loc in
+          let loc =
+            if Procname.is_java callee_pname || Procname.is_csharp callee_pname then Location.dummy
+            else callee_loc
+          in
           Pvar.mk_abduced_ret callee_pname loc
         in
         if !BiabductionConfig.footprint then
@@ -921,7 +931,7 @@ let execute_load ?(report_deref_errors = true) ({InterproceduralAnalysis.tenv; _
         let undef = Exp.get_undefined !BiabductionConfig.footprint in
         [Prop.conjoin_eq tenv (Exp.Var id) undef prop] )
   with Rearrange.ARRAY_ACCESS ->
-    if Int.equal Config.array_level 0 then assert false
+    if Int.equal Config.biabduction_array_level 0 then assert false
     else
       let undef = Exp.get_undefined false in
       [Prop.conjoin_eq tenv (Exp.Var id) undef prop_]
@@ -973,12 +983,13 @@ let execute_store ?(report_deref_errors = true) ({InterproceduralAnalysis.tenv; 
       List.rev (List.fold ~f:(execute_store_ analysis_data tenv n_rhs_exp) ~init:[] iter_list)
     in
     prop_list
-  with Rearrange.ARRAY_ACCESS -> if Int.equal Config.array_level 0 then assert false else [prop_]
+  with Rearrange.ARRAY_ACCESS ->
+    if Int.equal Config.biabduction_array_level 0 then assert false else [prop_]
 
 
 let is_variadic_procname callee_pname =
-  Option.value_map ~default:false (AnalysisCallbacks.proc_resolve_attributes callee_pname)
-    ~f:(fun proc_attrs -> proc_attrs.ProcAttributes.is_variadic)
+  Option.exists (AnalysisCallbacks.proc_resolve_attributes callee_pname) ~f:(fun proc_attrs ->
+      proc_attrs.ProcAttributes.is_variadic )
 
 
 let resolve_and_analyze_no_dynamic_dispatch {InterproceduralAnalysis.analyze_dependency; tenv}
@@ -1066,11 +1077,6 @@ let declare_locals_and_ret tenv pdesc (prop_ : Prop.normal Prop.t) =
   prop'
 
 
-let get_closure_opt actual_params =
-  List.find_map actual_params ~f:(fun (exp, _) ->
-      match exp with Exp.Closure c when Procname.is_objc_block c.name -> Some c | _ -> None )
-
-
 (** Execute [instr] with a symbolic heap [prop].*)
 let rec sym_exec
     ( {InterproceduralAnalysis.proc_desc= current_pdesc; analyze_dependency; err_log; tenv} as
@@ -1098,12 +1104,9 @@ let rec sym_exec
               let par' = List.map ~f:(fun (id_exp, _, typ, _) -> (id_exp, typ)) c.captured_vars in
               Sil.Call (ret, proc_exp', par' @ par, loc, call_flags)
           | Exp.Const (Const.Cfun callee_pname) when ObjCDispatchModels.is_model callee_pname -> (
-            match get_closure_opt par with
-            | Some c ->
-                (* We assume that for these modelled functions, the block passed as parameter doesn't
-                   have arguments, so we only pass the captured variables. *)
-                let args = List.map ~f:(fun (id_exp, _, typ, _) -> (id_exp, typ)) c.captured_vars in
-                Sil.Call (ret, Exp.Const (Const.Cfun c.name), args, loc, call_flags)
+            match ObjCDispatchModels.get_dispatch_closure_opt par with
+            | Some (cname, args) ->
+                Sil.Call (ret, Exp.Const (Const.Cfun cname), args, loc, call_flags)
             | None ->
                 Sil.Call (ret, exp', par, loc, call_flags) )
           | _ ->
@@ -1192,6 +1195,33 @@ let rec sym_exec
             match analyze_dependency pname with
             | None ->
                 let ret_typ = Procname.Java.get_return_typ callee_pname_java in
+                let ret_annots = load_ret_annots callee_pname in
+                exec_skip_call ~reason:"unknown method" ret_annots ret_typ
+            | Some ((callee_proc_desc, _) as callee_summary) -> (
+              match reason_to_skip ~callee_desc:(`Summary callee_summary) with
+              | None ->
+                  let handled_args = call_args norm_prop pname url_handled_args ret_id_typ loc in
+                  proc_call callee_summary handled_args
+              | Some reason ->
+                  let proc_attrs = Procdesc.get_attributes callee_proc_desc in
+                  let ret_annots = proc_attrs.ProcAttributes.method_annotation.return in
+                  exec_skip_call ~reason ret_annots proc_attrs.ProcAttributes.ret_type )
+          in
+          List.fold ~f:(fun acc pname -> exec_one_pname pname @ acc) ~init:[] resolved_pnames
+      | CSharp callee_pname_csharp ->
+          let norm_prop, norm_args = normalize_params analysis_data prop_ actual_params in
+          let url_handled_args = call_constructor_url_update_args callee_pname norm_args in
+          let resolved_pnames =
+            resolve_virtual_pname tenv norm_prop url_handled_args callee_pname call_flags
+          in
+          let exec_one_pname pname =
+            let exec_skip_call ~reason ret_annots ret_type =
+              skip_call ~reason norm_prop path pname ret_annots loc ret_id_typ ret_type
+                url_handled_args
+            in
+            match analyze_dependency pname with
+            | None ->
+                let ret_typ = Procname.CSharp.get_return_typ callee_pname_csharp in
                 let ret_annots = load_ret_annots callee_pname in
                 exec_skip_call ~reason:"unknown method" ret_annots ret_typ
             | Some ((callee_proc_desc, _) as callee_summary) -> (
@@ -1311,7 +1341,7 @@ let rec sym_exec
   | Sil.Metadata (ExitScope (dead_vars, _)) ->
       let dead_ids = List.filter_map dead_vars ~f:Var.get_ident in
       ret_old_path [Prop.exist_quantify tenv dead_ids prop_]
-  | Sil.Metadata (Skip | VariableLifetimeBegins _) ->
+  | Sil.Metadata (CatchEntry _ | Skip | TryEntry _ | TryExit _ | VariableLifetimeBegins _) ->
       ret_old_path [prop_]
 
 
@@ -1330,7 +1360,7 @@ and instrs ?(mask_errors = false) analysis_data instrs ppl =
     L.d_ln () ;
     try sym_exec analysis_data instr p path
     with exn ->
-      IExn.reraise_if exn ~f:(fun () -> (not mask_errors) || not (SymOp.exn_not_failure exn)) ;
+      IExn.reraise_if exn ~f:(fun () -> (not mask_errors) || not (Exception.exn_not_failure exn)) ;
       let error = Exceptions.recognize_exception exn in
       let loc =
         match error.ocaml_pos with
@@ -1471,6 +1501,9 @@ and unknown_or_scan_call ~is_scan ~reason ret_typ ret_annots
     | Java _ ->
         (* FIXME (T19882766): we need to disable this for Java because it breaks too many tests *)
         false
+    | CSharp _ ->
+        (* FIXME (T19882766): we need to disable this for Java because it breaks too many tests *)
+        false
     | ObjC_Cpp cpp_name ->
         (* FIXME: we need to work around a frontend hack for std::shared_ptr
          * to silent some of the uninitialization warnings *)
@@ -1498,7 +1531,11 @@ and unknown_or_scan_call ~is_scan ~reason ret_typ ret_annots
   let has_nonnull_annot = Annotations.ia_is_nonnull ret_annots in
   let pre_final =
     (* in Java, assume that skip functions close resources passed as params *)
-    let pre_1 = if Procname.is_java callee_pname then remove_file_attribute pre else pre in
+    let pre_1 =
+      if Procname.is_java callee_pname || Procname.is_csharp callee_pname then
+        remove_file_attribute pre
+      else pre
+    in
     let pre_2 =
       (* TODO(jjb): Should this use the type of ret_id, or ret_type from the procedure type? *)
       add_constraints_on_retval tenv proc_desc pre_1
@@ -1548,7 +1585,7 @@ and check_variadic_sentinel ?(fails_on_nil = false) n_formals (sentinel, null_po
     let tmp_id_deref = Ident.create_fresh Ident.kprimed in
     let load_instr = Sil.Load {id= tmp_id_deref; e= lexp; root_typ= typ; typ; loc} in
     try instrs analysis_data (Instrs.singleton load_instr) result
-    with e when SymOp.exn_not_failure e ->
+    with e when Exception.exn_not_failure e ->
       IExn.reraise_if e ~f:(fun () -> fails_on_nil) ;
       let deref_str = Localise.deref_str_nil_argument_in_variadic_method proc_name nargs i in
       let err_desc =

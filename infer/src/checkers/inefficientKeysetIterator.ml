@@ -87,8 +87,7 @@ let when_dominating_preds_satisfy idom my_node ~fun_name ~class_name_f ~f =
     |> List.filter ~f:(fun node -> Dominators.dominates idom node my_node)
   in
   let rec aux node (counter : int) =
-    if Int.equal counter 0 then ()
-    else
+    if not (Int.equal counter 0) then
       match preds node with
       | [pred_node] -> (
         match find_first_arg_pvar pred_node ~fun_name ~class_name_f with
@@ -104,7 +103,9 @@ let when_dominating_preds_satisfy idom my_node ~fun_name ~class_name_f ~f =
 
 let checker {IntraproceduralAnalysis.proc_desc; tenv; err_log} =
   let cfg = CFG.from_pdesc proc_desc in
-  let _, loop_head_to_loop_nodes = Loop_control.get_loop_control_maps cfg in
+  let loop_head_to_loop_nodes =
+    Loop_control.(get_loop_head_to_source_nodes cfg |> get_loop_head_to_loop_nodes)
+  in
   let idom = Dominators.get_idoms proc_desc in
   Procdesc.NodeMap.iter
     (fun loop_head loop_nodes ->

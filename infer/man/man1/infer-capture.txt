@@ -34,7 +34,7 @@ OPTIONS
            Activates: Debug mode (also sets --debug-level 2,
            --developer-mode, --print-buckets, --print-types,
            --reports-include-ml-loc, --no-only-cheap-debug, --trace-error,
-           --write-dotty, --write-html) (Conversely: --no-debug | -G)
+           --write-html) (Conversely: --no-debug | -G)
 
        --debug-level level
            Debug level (sets --bo-debug level, --debug-level-analysis level,
@@ -64,7 +64,7 @@ OPTIONS
            Proceed as if the first argument after -- was command. Possible
            values: ant, buck, gradle, gradlew, java, javac, cc, clang, gcc,
            clang++, c++, g++, make, configure, cmake, waf, mvn, mvnw,
-           ndk-build, xcodebuild.
+           ndk-build, rebar3, xcodebuild.
 
        --help
            Show this manual
@@ -133,10 +133,6 @@ BUCK OPTIONS
            Activates: Buck integration for clang-based targets
            (C/C++/Objective-C/Objective-C++). (Conversely: --no-buck-clang)
 
-       --buck-combined
-           Activates: Buck integration for clang-based and Java targets.
-           (Conversely: --no-buck-combined)
-
        --buck-compilation-database { no-deps | deps }
            Buck integration using the compilation database, with or without
            dependencies. Only includes clang targets, as per Buck's
@@ -145,10 +141,6 @@ BUCK OPTIONS
        --buck-compilation-database-depth int
            Depth of dependencies used by the --buck-compilation-database deps
            option. By default, all recursive dependencies are captured.
-
-       --buck-java
-           Activates: Buck integration for Java targets. (Conversely:
-           --no-buck-java)
 
        --buck-java-flavor
            Activates: Buck integration for Java which uses the buck flavor
@@ -159,6 +151,10 @@ BUCK OPTIONS
            Activates: Suppress setting buck config values for the infer
            binary and its version in the buck-java-flavor integration.
            (Conversely: --no-buck-java-flavor-suppress-config)
+
+       --buck-java-heap-size-gb int
+           Explicitly set the size of the Java heap of Buck processes, in
+           gigabytes.
 
        --buck-merge-all-deps
            Activates: Find and merge all infer dependencies produced by buck.
@@ -267,8 +263,13 @@ CLANG OPTIONS
        --headers
            Activates: Analyze code in header files (Conversely: --no-headers)
 
-       --skip-translation-headers +path_prefix
-           Ignore headers whose path matches the given prefix
+       --skip-non-capture-clang-commands
+           Activates: Skip clang commands that Infer doesn't use to capture
+           data (Conversely: --no-skip-non-capture-clang-commands)
+
+       --skip-translation-headers +path_regex
+           Ignore declarations in headers whose path matches the given OCaml
+           regex from the start of the string during capture.
 
        --Xclang +string
            Pass values as command-line arguments to invocations of clang
@@ -278,6 +279,14 @@ CLANG OPTIONS
            analyze an iOS app. xcpretty just needs to be in the path, infer
            command is still just `infer -- <xcodebuild command>`.
            (Conversely: --no-xcpretty)
+ERLANG OPTIONS
+       --erlang-ast-dir dir
+           Also load AST from all .json files in the given path. These .json
+           files usually come from a previous run with --debug.
+
+       --erlang-skip-rebar3
+           Activates: Skip running rebar, to save time. It is useful together
+           with --erlang-ast-dir. (Conversely: --no-erlang-skip-rebar3)
 JAVA OPTIONS
        --bootclasspath string
            Specify the Java bootclasspath

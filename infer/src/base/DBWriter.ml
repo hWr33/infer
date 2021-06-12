@@ -147,6 +147,8 @@ module Implementation = struct
 
   let merge_db infer_out_src =
     let db_file = ResultsDirEntryName.get_path ~results_dir:infer_out_src CaptureDB in
+    if not (ISys.file_exists db_file) then
+      L.die InternalError "Tried to merge in DB at %s but path does not exist.@\n" db_file ;
     let main_db = ResultsDatabase.get_database () in
     SqliteUtils.exec main_db
       ~stmt:(Printf.sprintf "ATTACH '%s' AS attached" db_file)
@@ -177,6 +179,20 @@ module Implementation = struct
     ResultsDatabase.create_tables db
 
 
+  module IntHash = Caml.Hashtbl.Make (Int)
+
+  let specs_overwrite_counts =
+    (* We don't want to keep all [proc_uid]s in memory just to keep an overwrite count,
+       so use a table keyed on their integer hashes; collisions will just lead to some noise. *)
+    IntHash.create 10
+
+
+  let log_specs_overwrite_counts () =
+    let overwrites = IntHash.fold (fun _hash count acc -> acc + count) specs_overwrite_counts 0 in
+    ScubaLogging.log_count ~label:"overwritten_specs" ~value:overwrites ;
+    L.debug Analysis Quiet "Detected %d spec overwrittes.@\n" overwrites
+
+
   let store_spec =
     let store_statement =
       ResultsDatabase.register_statement
@@ -186,6 +202,11 @@ module Implementation = struct
         |}
     in
     fun ~proc_uid ~proc_name ~analysis_summary ~report_summary ->
+      let proc_uid_hash = String.hash proc_uid in
+      IntHash.find_opt specs_overwrite_counts proc_uid_hash
+      |> Option.value_map ~default:0 ~f:(( + ) 1)
+      (* [default] is 0 as we are only counting overwrites *)
+      |> IntHash.replace specs_overwrite_counts proc_uid_hash ;
       ResultsDatabase.with_registered_statement store_statement ~f:(fun db store_stmt ->
           Sqlite3.bind store_stmt 1 (Sqlite3.Data.TEXT proc_uid)
           |> SqliteUtils.check_result_code db ~log:"store spec bind proc_uid" ;
@@ -292,7 +313,7 @@ module Command = struct
     | ResetCaptureTables ->
         Implementation.reset_capture_tables ()
     | Terminate ->
-        ()
+        Implementation.log_specs_overwrite_counts ()
     | Vacuum ->
         Implementation.canonicalize ()
 end
@@ -352,7 +373,7 @@ module Server = struct
           Unix.close socket ;
           Unix.remove socket_name )
     in
-    Utils.try_finally_swallow_timeout ~f:(fun () -> server_loop socket) ~finally:shutdown
+    Exception.try_finally ~f:(fun () -> server_loop socket) ~finally:shutdown
 
 
   let send cmd =
@@ -385,7 +406,10 @@ module Server = struct
         send Command.Handshake
 end
 
-let use_daemon = Config.((not (buck || genrule_mode)) && jobs > 1)
+let use_daemon =
+  let is_windows = match Version.build_platform with Windows -> true | Linux | Darwin -> false in
+  Config.((not is_windows) && (not is_WSL) && dbwriter && (not (buck || genrule_mode)) && jobs > 1)
+
 
 let perform cmd = if use_daemon then Server.send cmd else Command.execute cmd
 

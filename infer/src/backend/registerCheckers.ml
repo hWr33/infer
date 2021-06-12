@@ -134,22 +134,27 @@ let all_checkers =
                interprocedural later on *)
             interprocedural Payloads.Fields.lab_resource_leaks ResourceLeaks.checker
           , Java ) ] }
+  ; (* .NET resource analysis, based on the toy resource analysis in the infer lab *)
+    { checker= DOTNETResourceLeaks
+    ; callbacks=
+        [(interprocedural Payloads.Fields.dotnet_resource_leaks ResourceLeaksCS.checker, CIL)] }
   ; { checker= RacerD
     ; callbacks=
-        (let racerd_proc = interprocedural Payloads.Fields.racerd RacerD.analyze_procedure in
-         let racerd_file = file RacerDIssues Payloads.Fields.racerd RacerD.file_analysis in
-         [(racerd_proc, Clang); (racerd_proc, Java); (racerd_file, Clang); (racerd_file, Java)] ) }
+        (let racerd_proc = interprocedural Payloads.Fields.racerd RacerDProcAnalysis.analyze in
+         let racerd_file = file RacerDIssues Payloads.Fields.racerd RacerDFileAnalysis.analyze in
+         [ (racerd_proc, Clang)
+         ; (racerd_proc, Java)
+         ; (racerd_proc, CIL)
+         ; (racerd_file, Clang)
+         ; (racerd_file, Java)
+         ; (racerd_file, CIL) ] ) }
   ; { checker= Quandary
     ; callbacks=
         [ (interprocedural Payloads.Fields.quandary JavaTaintAnalysis.checker, Java)
         ; (interprocedural Payloads.Fields.quandary ClangTaintAnalysis.checker, Clang) ] }
   ; { checker= Pulse
     ; callbacks=
-        (let checker =
-           if Config.is_checker_enabled ToplOnPulse then PulseToplShallow.analyze Pulse.checker
-           else Pulse.checker
-         in
-         let pulse = interprocedural Payloads.Fields.pulse checker in
+        (let pulse = interprocedural Payloads.Fields.pulse Pulse.checker in
          [(pulse, Clang); (pulse, Java)] ) }
   ; { checker= Impurity
     ; callbacks=
@@ -175,12 +180,9 @@ let all_checkers =
   ; { checker= Biabduction
     ; callbacks=
         (let biabduction =
-           dynamic_dispatch Payloads.Fields.biabduction
-             ( if Config.is_checker_enabled ToplOnBiabduction then
-               Topl.analyze_with_biabduction Interproc.analyze_procedure
-             else Interproc.analyze_procedure )
+           dynamic_dispatch Payloads.Fields.biabduction Interproc.analyze_procedure
          in
-         [(biabduction, Clang); (biabduction, Java)] ) }
+         [(biabduction, Clang); (biabduction, Java); (biabduction, CIL)] ) }
   ; { checker= AnnotationReachability
     ; callbacks=
         (let annot_reach =
@@ -192,6 +194,15 @@ let all_checkers =
         (let checker =
            interprocedural Payloads.Fields.config_checks_between_markers
              ConfigChecksBetweenMarkers.checker
+         in
+         [(checker, Clang); (checker, Java)] ) }
+  ; { checker= ConfigImpactAnalysis
+    ; callbacks=
+        (let checker =
+           interprocedural3
+             ~set_payload:(Field.fset Payloads.Fields.config_impact_analysis)
+             Payloads.Fields.buffer_overrun_analysis Payloads.Fields.config_impact_analysis
+             Payloads.Fields.cost ConfigImpactAnalysis.checker
          in
          [(checker, Clang); (checker, Java)] ) } ]
 

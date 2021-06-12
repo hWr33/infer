@@ -5,9 +5,11 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#include <type_traits>
 #include <atomic>
 #include <cstdlib>
+#include <memory>
+#include <string>
+#include <type_traits>
 
 void assign_zero_ok() {
   int x[2];
@@ -33,7 +35,7 @@ struct X {
 bool choice();
 
 X* may_return_nullptr() {
-  if (choice) {
+  if (choice()) {
     return nullptr;
   }
   return new X();
@@ -193,4 +195,83 @@ void free_nullptr_ok() {
 void delete_nullptr_ok() {
   int* p = nullptr;
   delete p;
+}
+
+void FN_test_after_dereference_latent(int* x) {
+  // create a path split where x==0 in one of the paths
+  if (x == 0)
+    ;
+  *x = 42;
+}
+
+void call_test_after_dereference_bad() {
+  FN_test_after_dereference_latent(NULL);
+}
+
+void test_after_dereference2_latent(int* x) {
+  *x = 42;
+  if (x == 0)
+    ;
+}
+
+void call_test_after_dereference2_bad() {
+  test_after_dereference2_latent(NULL);
+}
+
+enum Type { STRING };
+
+static constexpr Type typeGlobal = STRING;
+
+struct D {
+  Type type;
+  std::string string;
+
+  D(std::string s) : type(STRING) { new (&string) std::string(std::move(s)); }
+
+  std::string const* get() const& {
+    if (type != typeGlobal) {
+      return nullptr;
+    }
+    return &string;
+  }
+
+  std::string to(const std::string& value) const { return value.c_str(); };
+
+  std::string asString() const {
+    if (type == STRING) {
+      const std::string& value = *get();
+      return to(value);
+    }
+    return "";
+  }
+};
+
+std::string global_const_skipped_function_ok() {
+  D* s = new D("");
+  std::shared_ptr<D> ptr(s);
+  return ptr->asString();
+}
+
+struct SomeClass {
+  X* pointer_;
+  int field_init_to_zero_{0};
+  explicit SomeClass(X* ptr) : pointer_(ptr) {
+    if (pointer_) {
+    }
+  }
+};
+
+class SomeDerivedClass : public SomeClass {
+ public:
+  explicit SomeDerivedClass(X* ptr) : SomeClass(ptr) { ptr->foo(); }
+};
+
+X* unknown_function_X();
+
+// this creates a null derefer false positives with a non-sensical "forked"
+// trace (one sub-trace for where 0 came from, which in this case ends in the
+// unrelated "field_init_to_zero" assignment, and one sub-trace for the
+// dereference in ptr->foo() in the constructor), which should be ignored
+void createSomeDerivedClass_from_unknown_function_ok() {
+  SomeDerivedClass something(unknown_function_X());
 }

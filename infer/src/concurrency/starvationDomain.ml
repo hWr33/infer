@@ -128,15 +128,20 @@ module Lock = struct
 
 
   let is_recursive tenv lock =
-    let is_class_and_recursive_lock = function
-      | {Typ.desc= Tptr ({desc= Tstruct name}, _)} | {desc= Tstruct name} ->
-          ConcurrencyModels.is_recursive_lock_type name
-      | typ ->
-          L.debug Analysis Verbose "Asked if non-struct type %a is a recursive lock type.@."
-            (Typ.pp_full Pp.text) typ ;
-          true
-    in
-    get_typ tenv lock |> Option.exists ~f:is_class_and_recursive_lock
+    (* We default to recursive if the type can't be found or looks malformed.
+       This reduces self-deadlock FPs. *)
+    match get_typ tenv lock with
+    | Some {Typ.desc= Tptr ({desc= Tstruct name}, _) | Tstruct name} ->
+        ConcurrencyModels.is_recursive_lock_type name
+    | Some typ ->
+        (* weird type passed as a lock, return default *)
+        L.debug Analysis Verbose "Asked if non-struct type %a is a recursive lock type.@\n"
+          (Typ.pp_full Pp.text) typ ;
+        true
+    | None ->
+        (* could not find type definition, return default *)
+        L.debug Analysis Verbose "Could not resolve type for lock %a.@\n" pp lock ;
+        true
 end
 
 module AccessExpressionDomain = struct
@@ -189,38 +194,48 @@ end
 
 module Event = struct
   type t =
+    | Ipc of {callee: Procname.t; thread: ThreadDomain.t}
     | LockAcquire of {locks: Lock.t list; thread: ThreadDomain.t}
-    | MayBlock of {callee: Procname.t; severity: StarvationModels.severity; thread: ThreadDomain.t}
-    | StrictModeCall of {callee: Procname.t; thread: ThreadDomain.t}
+    | MayBlock of {callee: Procname.t; thread: ThreadDomain.t}
     | MonitorWait of {lock: Lock.t; thread: ThreadDomain.t}
+    | MustNotOccurUnderLock of {callee: Procname.t; thread: ThreadDomain.t}
+    | StrictModeCall of {callee: Procname.t; thread: ThreadDomain.t}
   [@@deriving compare]
 
   let pp fmt = function
+    | Ipc {callee; thread} ->
+        F.fprintf fmt "Ipc(%a, %a)" Procname.pp callee ThreadDomain.pp thread
     | LockAcquire {locks; thread} ->
         F.fprintf fmt "LockAcquire(%a, %a)"
           (PrettyPrintable.pp_collection ~pp_item:Lock.pp)
           locks ThreadDomain.pp thread
-    | MayBlock {callee; severity; thread} ->
-        F.fprintf fmt "MayBlock(%a, %a, %a)" Procname.pp callee StarvationModels.pp_severity
-          severity ThreadDomain.pp thread
-    | StrictModeCall {callee; thread} ->
-        F.fprintf fmt "StrictModeCall(%a, %a)" Procname.pp callee ThreadDomain.pp thread
+    | MayBlock {callee; thread} ->
+        F.fprintf fmt "MayBlock(%a, %a)" Procname.pp callee ThreadDomain.pp thread
     | MonitorWait {lock; thread} ->
         F.fprintf fmt "MonitorWait(%a, %a)" Lock.pp lock ThreadDomain.pp thread
+    | MustNotOccurUnderLock {callee; thread} ->
+        F.fprintf fmt "MustNotOccurUnderLock(%a, %a)" Procname.pp callee ThreadDomain.pp thread
+    | StrictModeCall {callee; thread} ->
+        F.fprintf fmt "StrictModeCall(%a, %a)" Procname.pp callee ThreadDomain.pp thread
 
 
   let describe fmt elem =
     match elem with
     | LockAcquire {locks} ->
         Pp.comma_seq Lock.pp_locks fmt locks
-    | MayBlock {callee} | StrictModeCall {callee} ->
+    | Ipc {callee} | MayBlock {callee} | MustNotOccurUnderLock {callee} | StrictModeCall {callee} ->
         F.fprintf fmt "calls %a" describe_pname callee
     | MonitorWait {lock} ->
         F.fprintf fmt "calls `wait` on %a" Lock.describe lock
 
 
   let get_thread = function
-    | LockAcquire {thread} | MayBlock {thread} | StrictModeCall {thread} | MonitorWait {thread} ->
+    | Ipc {thread}
+    | LockAcquire {thread}
+    | MayBlock {thread}
+    | MonitorWait {thread}
+    | MustNotOccurUnderLock {thread}
+    | StrictModeCall {thread} ->
         thread
 
 
@@ -228,14 +243,18 @@ module Event = struct
     if ThreadDomain.equal thread (get_thread event) then event
     else
       match event with
+      | Ipc ipc ->
+          Ipc {ipc with thread}
       | LockAcquire lock_acquire ->
           LockAcquire {lock_acquire with thread}
       | MayBlock may_block ->
           MayBlock {may_block with thread}
-      | StrictModeCall strict_mode_call ->
-          StrictModeCall {strict_mode_call with thread}
       | MonitorWait monitor_wait ->
           MonitorWait {monitor_wait with thread}
+      | MustNotOccurUnderLock not_under_lock ->
+          MustNotOccurUnderLock {not_under_lock with thread}
+      | StrictModeCall strict_mode_call ->
+          StrictModeCall {strict_mode_call with thread}
 
 
   let apply_caller_thread caller_thread event =
@@ -248,17 +267,21 @@ module Event = struct
 
   let make_acquire locks thread = LockAcquire {locks; thread}
 
-  let make_blocking_call callee severity thread = MayBlock {callee; severity; thread}
+  let make_blocking_call callee thread = MayBlock {callee; thread}
 
   let make_strict_mode_call callee thread = StrictModeCall {callee; thread}
 
   let make_object_wait lock thread = MonitorWait {lock; thread}
 
+  let make_arbitrary_code_exec callee thread = MustNotOccurUnderLock {callee; thread}
+
+  let make_ipc callee thread = Ipc {callee; thread}
+
   let get_acquired_locks = function LockAcquire {locks} -> locks | _ -> []
 
   let apply_subst subst event =
     match event with
-    | MayBlock _ | StrictModeCall _ ->
+    | Ipc _ | MayBlock _ | StrictModeCall _ | MustNotOccurUnderLock _ ->
         Some event
     | MonitorWait {lock; thread} -> (
       match Lock.apply_subst subst lock with
@@ -280,6 +303,14 @@ module Event = struct
 
   let has_recursive_lock tenv event =
     get_acquired_locks event |> List.exists ~f:(Lock.is_recursive tenv)
+
+
+  let is_blocking_call = function
+    | LockAcquire _ | MustNotOccurUnderLock _ ->
+        (* lock taking is not a method call (though it may block) and [MustNotOccurUnderLock] calls not necessarily blocking *)
+        false
+    | Ipc _ | MayBlock _ | MonitorWait _ | StrictModeCall _ ->
+        true
 end
 
 (** A lock acquisition with source location and procname in which it occurs. The location & procname
@@ -449,6 +480,9 @@ module CriticalPairElement = struct
     | Some event ->
         let acquisitions = Acquisitions.apply_subst subst elem.acquisitions in
         Some {acquisitions; event}
+
+
+  let is_blocking_call elt = Event.is_blocking_call elt.event
 end
 
 module CriticalPair = struct
@@ -511,17 +545,21 @@ module CriticalPair = struct
         Some (map ~f:(fun (elem : CriticalPairElement.t) -> {elem with event}) callee_pair)
 
 
-  let integrate_summary_opt ~subst ~tenv existing_acquisitions call_site
+  let is_blocking_call pair = CriticalPairElement.is_blocking_call pair.elem
+
+  let integrate_summary_opt ~subst ~tenv ~ignore_blocking_calls existing_acquisitions call_site
       (caller_thread : ThreadDomain.t) (callee_pair : t) =
-    apply_subst subst callee_pair
-    |> Option.bind ~f:(filter_out_reentrant_relocks (Some tenv) existing_acquisitions)
-    |> Option.bind ~f:(apply_caller_thread caller_thread)
-    |> Option.map ~f:(fun callee_pair ->
-           let f (elem : CriticalPairElement.t) =
-             {elem with acquisitions= Acquisitions.union existing_acquisitions elem.acquisitions}
-           in
-           map ~f callee_pair )
-    |> Option.map ~f:(fun callee_pair -> with_callsite callee_pair call_site)
+    if ignore_blocking_calls && is_blocking_call callee_pair then None
+    else
+      apply_subst subst callee_pair
+      |> Option.bind ~f:(filter_out_reentrant_relocks (Some tenv) existing_acquisitions)
+      |> Option.bind ~f:(apply_caller_thread caller_thread)
+      |> Option.map ~f:(fun callee_pair ->
+             let f (elem : CriticalPairElement.t) =
+               {elem with acquisitions= Acquisitions.union existing_acquisitions elem.acquisitions}
+             in
+             map ~f callee_pair )
+      |> Option.map ~f:(fun callee_pair -> with_callsite callee_pair call_site)
 
 
   let get_earliest_lock_or_call_loc ~procname ({elem= {acquisitions}} as t) =
@@ -589,12 +627,12 @@ end
 module CriticalPairs = struct
   include CriticalPair.FiniteSet
 
-  let with_callsite astate ~tenv ~subst lock_state call_site thread =
+  let with_callsite astate ~tenv ~subst ~ignore_blocking_calls lock_state call_site thread =
     let existing_acquisitions = LockState.get_acquisitions lock_state in
     fold
       (fun critical_pair acc ->
-        CriticalPair.integrate_summary_opt ~subst ~tenv existing_acquisitions call_site thread
-          critical_pair
+        CriticalPair.integrate_summary_opt ~subst ~tenv ~ignore_blocking_calls existing_acquisitions
+          call_site thread critical_pair
         |> Option.bind
              ~f:(CriticalPair.filter_out_reentrant_relocks (Some tenv) existing_acquisitions)
         |> Option.value_map ~default:acc ~f:(fun new_pair -> add new_pair acc) )
@@ -772,8 +810,13 @@ let make_call_with_event new_event ~loc astate =
         add_critical_pair ~tenv_opt:None astate.lock_state new_event ~loc astate.critical_pairs }
 
 
-let blocking_call ~callee sev ~loc astate =
-  let new_event = Event.make_blocking_call callee sev astate.thread in
+let blocking_call ~callee ~loc astate =
+  let new_event = Event.make_blocking_call callee astate.thread in
+  make_call_with_event new_event ~loc astate
+
+
+let ipc ~callee ~loc astate =
+  let new_event = Event.make_ipc callee astate.thread in
   make_call_with_event new_event ~loc astate
 
 
@@ -795,7 +838,7 @@ let future_get ~callee ~loc actuals astate =
          |> Option.exists ~f:(function Attribute.FutureDoneState x -> x | _ -> false) ->
       astate
   | HilExp.AccessExpression _ :: _ ->
-      let new_event = Event.make_blocking_call callee Low astate.thread in
+      let new_event = Event.make_blocking_call callee astate.thread in
       make_call_with_event new_event ~loc astate
   | _ ->
       astate
@@ -803,6 +846,11 @@ let future_get ~callee ~loc actuals astate =
 
 let strict_mode_call ~callee ~loc astate =
   let new_event = Event.make_strict_mode_call callee astate.thread in
+  make_call_with_event new_event ~loc astate
+
+
+let arbitrary_code_execution ~callee ~loc astate =
+  let new_event = Event.make_arbitrary_code_exec callee astate.thread in
   make_call_with_event new_event ~loc astate
 
 
@@ -878,7 +926,7 @@ let pp_summary fmt (summary : summary) =
 let integrate_summary ~tenv ~lhs ~subst callsite (astate : t) (summary : summary) =
   let critical_pairs' =
     CriticalPairs.with_callsite summary.critical_pairs ~tenv ~subst astate.lock_state callsite
-      astate.thread
+      astate.thread ~ignore_blocking_calls:astate.ignore_blocking_calls
   in
   { astate with
     critical_pairs= CriticalPairs.join astate.critical_pairs critical_pairs'

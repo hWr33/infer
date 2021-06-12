@@ -473,7 +473,7 @@ let rec fsel_star_fld fsel1 fsel2 =
 
 
 and array_content_star se1 se2 =
-  try sexp_star_fld se1 se2 with exn when SymOp.exn_not_failure exn -> se1
+  try sexp_star_fld se1 se2 with exn when Exception.exn_not_failure exn -> se1
 
 
 (* let postcondition override *)
@@ -581,7 +581,7 @@ let sigma_star_fld tenv (sigma1 : Predicates.hpred list) (sigma2 : Predicates.hp
           star sg1 sigma2' )
   in
   try star sigma1 sigma2
-  with exn when SymOp.exn_not_failure exn ->
+  with exn when Exception.exn_not_failure exn ->
     L.d_str "cannot star " ;
     Prop.d_sigma sigma1 ;
     L.d_str " and " ;
@@ -620,7 +620,7 @@ let sigma_star_typ (sigma1 : Predicates.hpred list) (typings2 : (Exp.t * Exp.t) 
           star sg1 typings2' )
   in
   try star sigma1 typings2
-  with exn when SymOp.exn_not_failure exn ->
+  with exn when Exception.exn_not_failure exn ->
     L.d_str "cannot star " ;
     Prop.d_sigma sigma1 ;
     L.d_str " and " ;
@@ -1029,7 +1029,7 @@ let add_missing_field_to_tenv ~missing_sigma exe_env caller_tenv callee_pname hp
   (* if the callee is a model, then we don't have a tenv for it *)
   if (not callee_attributes.ProcAttributes.is_biabduction_model) && add_fields then
     let callee_tenv_opt =
-      try Some (Exe_env.get_tenv exe_env callee_pname)
+      try Some (Exe_env.get_proc_tenv exe_env callee_pname)
       with _ ->
         let source_file = callee_attributes.ProcAttributes.loc.Location.file in
         Tenv.load source_file

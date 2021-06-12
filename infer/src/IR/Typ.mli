@@ -102,14 +102,15 @@ and desc =
 and name =
   | CStruct of QualifiedCppName.t
   | CUnion of QualifiedCppName.t
-  (* qualified name does NOT contain template arguments of the class. It will contain template
-     args of its parent classes, for example: MyClass<int>::InnerClass<int> will store
-     "MyClass<int>", "InnerClass" *)
-  | CppClass of QualifiedCppName.t * template_spec_info
+      (** qualified name does NOT contain template arguments of the class. It will contain template
+          args of its parent classes, for example: MyClass<int>::InnerClass<int> will store
+          "MyClass<int>", "InnerClass" *)
+  | CppClass of {name: QualifiedCppName.t; template_spec_info: template_spec_info; is_union: bool}
+  | CSharpClass of CSharpClassName.t
+  | ErlangType of ErlangTypeName.t
   | JavaClass of JavaClassName.t
   | ObjcClass of QualifiedCppName.t * name list
-  (* ObjC class that conforms to a list of protocols,
-     e.g. id<NSFastEnumeration, NSCopying> *)
+      (** ObjC class that conforms to a list of protocols, e.g. id<NSFastEnumeration, NSCopying> *)
   | ObjcProtocol of QualifiedCppName.t
 
 and template_arg = TType of t | TInt of Int64.t | TNull | TNullPtr | TOpaque
@@ -152,6 +153,12 @@ module Name : sig
   (** Named types. *)
   type t = name [@@deriving compare, yojson_of]
 
+  val loose_compare : t -> t -> int
+  (** Similar to compare, but addresses [CStruct x] and [CppClass x] as equal. *)
+
+  val compare_name : t -> t -> int
+  (** Similar to compare, but compares only names, except template arguments. *)
+
   val equal : t -> t -> bool
   (** Equality for typenames *)
 
@@ -191,6 +198,10 @@ module Name : sig
     val union_from_qual_name : QualifiedCppName.t -> t
   end
 
+  module CSharp : sig
+    val from_string : string -> t
+  end
+
   module Java : sig
     val from_string : string -> t
     (** Create a typename from a Java classname in the form "package.class" *)
@@ -212,7 +223,7 @@ module Name : sig
   end
 
   module Cpp : sig
-    val from_qual_name : template_spec_info -> QualifiedCppName.t -> t
+    val from_qual_name : template_spec_info -> is_union:bool -> QualifiedCppName.t -> t
     (** Create a typename from a C++ classname *)
 
     val is_class : t -> bool
@@ -226,6 +237,8 @@ module Name : sig
     val from_qual_name : QualifiedCppName.t -> t
 
     val protocol_from_qual_name : QualifiedCppName.t -> t
+
+    val remodel_class : t option
   end
 
   module Set : PrettyPrintable.PPSet with type elt = t
@@ -258,6 +271,9 @@ val pp_desc : Pp.env -> F.formatter -> desc -> unit
 
 val pp_java : verbose:bool -> F.formatter -> t -> unit
 (** Pretty print a Java type. Raises if type isn't produced by the Java frontend *)
+
+val pp_cs : verbose:bool -> F.formatter -> t -> unit
+(** Pretty print a Java type. Raises if type isn't produced by the CSharp frontend *)
 
 val pp_protocols : Pp.env -> F.formatter -> name list -> unit
 
@@ -311,6 +327,12 @@ val is_int : t -> bool
 val is_unsigned_int : t -> bool
 
 val is_char : t -> bool
+
+val is_csharp_type : t -> bool
+(** is [t] a type produced by the Java frontend? *)
+
+val is_java_primitive_type : t -> bool
+(** is [t] a primitive type produced by the Java frontend? *)
 
 val is_java_type : t -> bool
 (** is [t] a type produced by the Java frontend? *)

@@ -11,7 +11,9 @@
     Functions that return contexts that might be stronger than their
     argument contexts accept and return a set of variables. The input set is
     the variables with which any generated variables must be chosen fresh,
-    and the output set is the variables that have been generated. *)
+    and the output set is the variables that have been generated. If the
+    empty set is given, then no fresh variables are generated and equations
+    that cannot be solved without generating fresh variables are dropped. *)
 
 open Exp
 
@@ -99,16 +101,16 @@ module Subst : sig
       ks ∩ fv(τ) = ∅. *)
 end
 
-val apply_subst : Var.Set.t -> Subst.t -> t -> Var.Set.t * t
-(** Context induced by applying a solution substitution to a set of
-    equations generating the argument context. *)
-
 val solve_for_vars : Var.Set.t list -> t -> Subst.t
 (** [solve_for_vars vss x] is a solution substitution that is implied by [x]
     and consists of oriented equalities [v ↦ e] that map terms [v] with
     free variables contained in (the union of) a prefix [uss] of [vss] to
     terms [e] with free variables contained in as short a prefix of [uss] as
     possible. *)
+
+val apply_subst : Var.Set.t -> Subst.t -> t -> Var.Set.t * t
+(** Context induced by applying a solution substitution to a set of
+    equations generating the argument context. *)
 
 val apply_and_elim :
   wrt:Var.Set.t -> Var.Set.t -> Subst.t -> t -> Var.Set.t * t * Var.Set.t

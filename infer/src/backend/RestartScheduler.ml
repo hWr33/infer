@@ -59,8 +59,8 @@ let make sources =
 
 
 let if_restart_scheduler f =
-  if Int.equal Config.jobs 1 then ()
-  else match Config.scheduler with File | SyntacticCallGraph -> () | Restart -> f ()
+  if not (Int.equal Config.jobs 1) then
+    match Config.scheduler with File | SyntacticCallGraph -> () | Restart -> f ()
 
 
 type locked_proc =
@@ -102,8 +102,8 @@ let lock_exn pname =
       else (
         unlock_all () ;
         raise
-          (TaskSchedulerTypes.ProcnameAlreadyLocked {dependency_filename= Procname.to_filename pname})
-        ) )
+          (RestartSchedulerException.ProcnameAlreadyLocked
+             {dependency_filename= Procname.to_filename pname}) ) )
 
 
 let unlock pname =

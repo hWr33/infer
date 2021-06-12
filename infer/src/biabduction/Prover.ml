@@ -15,7 +15,7 @@ module F = Format
 
 let decrease_indent_when_exception thunk =
   try thunk ()
-  with exn when SymOp.exn_not_failure exn ->
+  with exn when Exception.exn_not_failure exn ->
     IExn.reraise_after exn ~f:(fun () -> L.d_decrease_indent ())
 
 
@@ -963,16 +963,17 @@ let check_inconsistency_base tenv prop =
         in
         List.exists ~f:do_hpred sigma
   in
-  let inconsistent_atom = function
-    | Predicates.Aeq (e1, e2) -> (
+  let inconsistent_atom (atom : Predicates.atom) =
+    match atom with
+    | Aeq (e1, e2) -> (
       match (e1, e2) with
       | Exp.Const c1, Exp.Const c2 ->
           not (Const.equal c1 c2)
       | _ ->
           check_disequal tenv prop e1 e2 )
-    | Predicates.Aneq (e1, e2) -> (
+    | Aneq (e1, e2) -> (
       match (e1, e2) with Exp.Const c1, Exp.Const c2 -> Const.equal c1 c2 | _ -> Exp.equal e1 e2 )
-    | Predicates.Apred _ | Anpred _ ->
+    | Apred _ | Anpred _ ->
         false
   in
   let inconsistent_inequalities () =
@@ -1884,7 +1885,8 @@ let texp_imply tenv subs texp1 texp2 e1 calc_missing =
     of length given by its type only active in type_size mode *)
 let sexp_imply_preprocess se1 texp1 se2 =
   match (se1, texp1, se2) with
-  | Predicates.Eexp (_, inst), Exp.Sizeof _, Predicates.Earray _ when Config.type_size ->
+  | Predicates.Eexp (_, inst), Exp.Sizeof _, Predicates.Earray _ when Config.biabduction_type_size
+    ->
       let se1' = Predicates.Earray (texp1, [(Exp.zero, se1)], inst) in
       L.d_strln ~color:Orange "sexp_imply_preprocess" ;
       L.d_str " se1: " ;
@@ -2112,7 +2114,7 @@ let rec hpred_imply tenv calc_index_frame calc_missing subs prop1 sigma2 hpred2 
                   let res =
                     decrease_indent_when_exception (fun () ->
                         try sigma_imply tenv calc_index_frame calc_missing subs prop1 hpred_list2
-                        with exn when SymOp.exn_not_failure exn ->
+                        with exn when Exception.exn_not_failure exn ->
                           L.d_strln ~color:Red "backtracking lseg: trying rhs of length exactly 1" ;
                           let _, para_inst3 = Predicates.hpara_instantiate para2 e2_ f2_ elist2 in
                           sigma_imply tenv calc_index_frame calc_missing subs prop1 para_inst3 )
@@ -2222,6 +2224,20 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : subst2 * 
           in
           let fields = ["count"; "hash"; "offset"; "value"] in
           Predicates.Estruct (List.map ~f:mk_fld_sexp fields, Predicates.inst_none)
+      | CIL ->
+          let mk_fld_sexp field_name =
+            let fld = Fieldname.make StdTyp.Name.CSharp.system_string field_name in
+            let se =
+              Predicates.Eexp (Exp.Var (Ident.create_fresh Ident.kprimed), Predicates.Inone)
+            in
+            (fld, se)
+          in
+          let fields =
+            ["System.String.Empty" (* ; "System.String.Chars" *); "System.String.Length"]
+          in
+          Predicates.Estruct (List.map ~f:mk_fld_sexp fields, Predicates.inst_none)
+      | Erlang ->
+          L.die InternalError "Erlang not supported"
     in
     let const_string_texp =
       match !Language.curr_language with
@@ -2238,6 +2254,17 @@ and sigma_imply tenv calc_index_frame calc_missing subs prop1 sigma2 : subst2 * 
             ; nbytes= None
             ; dynamic_length= None
             ; subtype= Subtype.exact }
+      | CIL ->
+          (* cil todo *)
+          (* Logging.die Logging.InternalError "No string constant support for CIL yet." *)
+          let object_type = Typ.Name.CSharp.from_string "System.String" in
+          Exp.Sizeof
+            { typ= Typ.mk (Tstruct object_type)
+            ; nbytes= None
+            ; dynamic_length= None
+            ; subtype= Subtype.exact }
+      | Erlang ->
+          L.die InternalError "Erlang not supported"
     in
     Predicates.Hpointsto (root, sexp, const_string_texp)
   in
@@ -2364,10 +2391,10 @@ let imply_atom tenv calc_missing (sub1, sub2) prop a =
 (** Check pure implications before looking at the spatial part. Add necessary instantiations for
     equalities and check that instantiations are possible for disequalities. *)
 let rec pre_check_pure_implication tenv calc_missing (subs : subst2) pi1 pi2 =
-  match pi2 with
+  match (pi2 : Predicates.atom list) with
   | [] ->
       subs
-  | (Predicates.Aeq (e2_in, f2_in) as a) :: pi2' when not (Prop.atom_is_inequality a) -> (
+  | (Aeq (e2_in, f2_in) as a) :: pi2' when not (Prop.atom_is_inequality a) -> (
       let e2, f2 = (Predicates.exp_sub (snd subs) e2_in, Predicates.exp_sub (snd subs) f2_in) in
       if Exp.equal e2 f2 then pre_check_pure_implication tenv calc_missing subs pi1 pi2'
       else
@@ -2385,14 +2412,14 @@ let rec pre_check_pure_implication tenv calc_missing (subs : subst2) pi1 pi2 =
             let prop_for_impl = prepare_prop_for_implication tenv subs pi1' [] in
             imply_atom tenv calc_missing subs prop_for_impl (Predicates.Aeq (e2_in, f2_in)) ;
             pre_check_pure_implication tenv calc_missing subs pi1 pi2' )
-  | (Predicates.Aneq (e, _) | Apred (_, e :: _) | Anpred (_, e :: _)) :: _
+  | (Aneq (e, _) | Apred (_, e :: _) | Anpred (_, e :: _)) :: _
     when (not calc_missing) && match e with Var v -> not (Ident.is_primed v) | _ -> true ->
       raise
         (IMPL_EXC
            ( "ineq e2=f2 in rhs with e2 not primed var"
            , (Predicates.sub_empty, Predicates.sub_empty)
            , EXC_FALSE ))
-  | (Predicates.Aeq _ | Aneq _ | Apred _ | Anpred _) :: pi2' ->
+  | (Aeq _ | Aneq _ | Apred _ | Anpred _) :: pi2' ->
       pre_check_pure_implication tenv calc_missing subs pi1 pi2'
 
 

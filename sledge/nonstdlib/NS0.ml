@@ -119,15 +119,20 @@ let map_endo map t ~f =
   in
   if !change then t' else t
 
+let fold_map_from_map map x s ~f =
+  let s = ref s in
+  let f y =
+    let y', s' = f y !s in
+    s := s' ;
+    y'
+  in
+  let x' = map x ~f in
+  (x', !s)
+
 (** Containers *)
 
-(* from upcoming Stdlib *)
-module Either = struct
-  type ('a, 'b) t = Left of 'a | Right of 'b
-
-  let left v = Left v
-  let right v = Right v
-end
+type 'a zero_one_many = Zero | One of 'a | Many
+type ('a, 'b) zero_one_many2 = Zero2 | One2 of 'a * 'b | Many2
 
 module Pair = Containers.Pair
 module Bijection = CCBijection [@@warning "-49"]

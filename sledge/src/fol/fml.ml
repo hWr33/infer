@@ -9,9 +9,6 @@
 
 module Prop = Propositional.Make (Trm)
 module Set = Prop.Fmls
-
-type set = Set.t
-
 include Prop.Fml
 
 let pp_boxed fs fmt =
@@ -20,7 +17,7 @@ let pp_boxed fs fmt =
 
 let ppx strength fs fml =
   let pp_t = Trm.ppx strength in
-  let pp_a = Trm.Arith.ppx strength in
+  let pp_a = Trm.Arith.ppx pp_t in
   let rec pp fs fml =
     let pf fmt = pp_boxed fs fmt in
     let pp_binop x = pf "(%a@ @<2>%s %a)" x in
@@ -105,30 +102,39 @@ let _Eq x y =
         _Eq0 (Trm.sub x y)
     (* α^β^δ = α^γ^δ ==> β = γ *)
     | Concat a, Concat b ->
-        let m = Array.length a in
-        let n = Array.length b in
-        let l = min m n in
+        let length_a = Array.length a in
+        let length_b = Array.length b in
+        let min_length = min length_a length_b in
         let length_common_prefix =
           let rec find_lcp i =
-            if i < l && Trm.equal a.(i) b.(i) then find_lcp (i + 1) else i
+            if i < min_length && Trm.equal a.(i) b.(i) then find_lcp (i + 1)
+            else i
           in
           find_lcp 0
         in
-        if length_common_prefix = l then tt
-        else
-          let length_common_suffix =
-            let rec find_lcs i =
-              if Trm.equal a.(m - 1 - i) b.(n - 1 - i) then find_lcs (i + 1)
-              else i
-            in
-            find_lcs 0
+        let min_length_without_common_prefix =
+          min_length - length_common_prefix
+        in
+        let length_common_suffix =
+          let rec find_lcs i =
+            if
+              i < min_length_without_common_prefix
+              && Trm.equal a.(length_a - 1 - i) b.(length_b - 1 - i)
+            then find_lcs (i + 1)
+            else i
           in
-          let length_common = length_common_prefix + length_common_suffix in
-          if length_common = 0 then sort_eq x y
+          find_lcs 0
+        in
+        let length_common = length_common_prefix + length_common_suffix in
+        if length_common = 0 then sort_eq x y
+        else
+          let len_a = length_a - length_common in
+          let len_b = length_b - length_common in
+          if len_a = 0 && len_b = 0 then tt
           else
             let pos = length_common_prefix in
-            let a = Array.sub ~pos ~len:(m - length_common) a in
-            let b = Array.sub ~pos ~len:(n - length_common) b in
+            let a = Array.sub ~pos ~len:len_a a in
+            let b = Array.sub ~pos ~len:len_b b in
             _Eq (Trm.concat a) (Trm.concat b)
     | (Sized _ | Extract _ | Concat _), (Sized _ | Extract _ | Concat _) ->
         sort_eq x y
@@ -150,9 +156,6 @@ let iff = _Iff
 let cond ~cnd ~pos ~neg = _Cond cnd pos neg
 let lit = _Lit
 
-let map_pos_neg f e cons ~pos ~neg =
-  map2 (Set.map ~f) e (fun pos neg -> cons ~pos ~neg) pos neg
-
 let rec map_trms b ~f =
   match b with
   | Tt -> b
@@ -160,8 +163,8 @@ let rec map_trms b ~f =
   | Eq0 x -> map1 f b _Eq0 x
   | Pos x -> map1 f b _Pos x
   | Not x -> map1 (map_trms ~f) b _Not x
-  | And {pos; neg} -> map_pos_neg (map_trms ~f) b _And ~pos ~neg
-  | Or {pos; neg} -> map_pos_neg (map_trms ~f) b _Or ~pos ~neg
+  | And {pos; neg} -> map_and b ~pos ~neg (map_trms ~f)
+  | Or {pos; neg} -> map_or b ~pos ~neg (map_trms ~f)
   | Iff (x, y) -> map2 (map_trms ~f) b _Iff x y
   | Cond {cnd; pos; neg} -> map3 (map_trms ~f) b _Cond cnd pos neg
   | Lit (p, xs) -> mapN f b (_Lit p) xs
@@ -174,7 +177,12 @@ let fold_pos_neg ~pos ~neg s ~f =
   let f_not p s = f (not_ p) s in
   Set.fold ~f:f_not neg (Set.fold ~f pos s)
 
-let fold_dnf ~meet1 ~join1 ~top ~bot fml =
+let iter_pos_neg ~pos ~neg ~f =
+  let f_not p = f (not_ p) in
+  Set.iter ~f pos ;
+  Set.iter ~f:f_not neg
+
+let iter_dnf ~meet1 ~top fml ~f =
   let rec add_conjunct fml (cjn, splits) =
     match fml with
     | Tt | Eq _ | Eq0 _ | Pos _ | Iff _ | Lit _ | Not _ ->
@@ -184,13 +192,13 @@ let fold_dnf ~meet1 ~join1 ~top ~bot fml =
     | Cond {cnd; pos; neg} ->
         add_conjunct (or_ (and_ cnd pos) (and_ (not_ cnd) neg)) (cjn, splits)
   in
-  let rec add_disjunct (cjn, splits) fml djn =
+  let rec add_disjunct (cjn, splits) fml =
     let cjn, splits = add_conjunct fml (cjn, splits) in
     match splits with
     | (pos, neg) :: splits ->
-        fold_pos_neg ~f:(add_disjunct (cjn, splits)) ~pos ~neg djn
-    | [] -> join1 cjn djn
+        iter_pos_neg ~f:(add_disjunct (cjn, splits)) ~pos ~neg
+    | [] -> f cjn
   in
-  add_disjunct (top, []) fml bot
+  add_disjunct (top, []) fml
 
 let vars p = Iter.flat_map ~f:Trm.vars (trms p)

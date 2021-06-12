@@ -101,6 +101,13 @@ many linked to memory safety. (Conversely:
 and disable all other checkers (Conversely:
 <b>--no-biabduction-only</b>)</p>
 
+
+<p style="margin-left:11%;"><b>--biabduction-write-dotty</b></p>
+
+<p style="margin-left:17%;">Activates: Produce dotty files
+for specs and retain cycles reports in infer-out/captured.
+(Conversely: <b>--no-biabduction-write-dotty</b>)</p>
+
 <p style="margin-left:11%;"><b>--bufferoverrun</b></p>
 
 <p style="margin-left:17%;">Activates: checker
@@ -137,6 +144,21 @@ config checks between marker start and end. (Conversely:
 config-checks-between-markers and disable all other checkers
 (Conversely:
 <b>--no-config-checks-between-markers-only</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--config-impact-analysis</b></p>
+
+<p style="margin-left:17%;">Activates: checker
+config-impact-analysis: [EXPERIMENTAL] Collects function
+that are called without config checks. (Conversely:
+<b>--no-config-impact-analysis</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--config-impact-analysis-only</b></p>
+
+<p style="margin-left:17%;">Activates: Enable
+config-impact-analysis and disable all other checkers
+(Conversely: <b>--no-config-impact-analysis-only</b>)</p>
 
 <p style="margin-left:11%;"><b>--continue-analysis</b></p>
 
@@ -181,8 +203,8 @@ sets <b>--debug-level 2</b>, <b>--developer-mode</b>,
 <b>--print-buckets</b>, <b>--print-types</b>,
 <b>--reports-include-ml-loc</b>,
 <b>--no-only-cheap-debug</b>, <b>--trace-error</b>,
-<b>--write-dotty</b>, <b>--write-html</b>) (Conversely:
-<b>--no-debug</b> | <b>-G</b>)</p>
+<b>--write-html</b>) (Conversely: <b>--no-debug</b> |
+<b>-G</b>)</p>
 
 <p style="margin-left:11%;"><b>--debug-level</b>
 <i>level</i></p>
@@ -226,9 +248,10 @@ reporting. (Conversely: <b>--deduplicate</b>)</p>
 <p style="margin-left:17%;">Deactivates: Default checkers:
 <b>--biabduction</b>, <b>--fragment-retains-view</b>,
 <b>--inefficient-keyset-iterator</b>, <b>--linters</b>,
-<b>--liveness</b>, <b>--racerd</b>, <b>--siof</b>,
-<b>--self-in-block</b>, <b>--starvation</b>, <b>--uninit</b>
-(Conversely: <b>--default-checkers</b>)</p>
+<b>--liveness</b>, <b>--racerd</b>,
+<b>--dotnet-resource-leak</b>, <b>--siof</b>,
+<b>--self-in-block</b>, <b>--starvation</b> (Conversely:
+<b>--default-checkers</b>)</p>
 
 <p style="margin-left:11%;"><b>--eradicate</b></p>
 
@@ -305,6 +328,13 @@ disable all other checkers (Conversely:
 <b>--no-impurity-only</b>)</p>
 
 
+<p style="margin-left:11%;"><b>--impurity-report-immutable-modifications</b></p>
+
+<p style="margin-left:17%;">Activates: Report modifications
+to immutable fields in the Impurity checker (Conversely:
+<b>--no-impurity-report-immutable-modifications</b>)</p>
+
+
 <p style="margin-left:11%;"><b>--no-inefficient-keyset-iterator</b></p>
 
 <p style="margin-left:17%;">Deactivates: checker
@@ -367,6 +397,13 @@ litho-required-props and disable all other checkers
 Detection of dead stores and unused variables. (Conversely:
 <b>--liveness</b>)</p>
 
+
+<p style="margin-left:11%;"><b>--liveness-ignored-constant</b>
+<i>+string</i></p>
+
+<p style="margin-left:17%;">List of integer constants to be
+ignored by liveness analysis</p>
+
 <p style="margin-left:11%;"><b>--liveness-only</b></p>
 
 <p style="margin-left:17%;">Activates: Enable liveness and
@@ -392,6 +429,21 @@ and disable all other checkers (Conversely:
 
 <p style="margin-left:17%;">Maximum number of analysis jobs
 running simultaneously</p>
+
+
+<p style="margin-left:11%;"><b>--memtrace-analysis-profiling</b></p>
+
+<p style="margin-left:17%;">Activates: Generate OCaml
+analysis allocation traces in
+&lsquo;infer-out/memtrace&lsquo;. (Conversely:
+<b>--no-memtrace-analysis-profiling</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--memtrace-sampling-rate</b>
+<i>float</i></p>
+
+<p style="margin-left:17%;">Sampling rate for Memtrace
+allocation profiling. Default is 1e-6.</p>
 
 
 <p style="margin-left:11%;"><b>--print-active-checkers</b></p>
@@ -464,6 +516,38 @@ as abort in Pulse</p>
 modelled as allocs in Pulse</p>
 
 
+<p style="margin-left:11%;"><b>--pulse-model-free-pattern</b>
+<i>string</i></p>
+
+<p style="margin-left:17%;">Regex of methods that should be
+modelled as wrappers to <i>free</i>(3) in Pulse. The pointer
+to be freed should be the first argument of the function.
+This should only be needed if the code of the wrapper is not
+visible to infer or if Pulse somehow doesn't understand it
+(e.g. the call is dispatched to global function
+pointers).</p>
+
+
+<p style="margin-left:11%;"><b>--pulse-model-malloc-pattern</b>
+<i>string</i></p>
+
+<p style="margin-left:17%;">Regex of methods that should be
+modelled as wrappers to <i>malloc</i>(3) in Pulse. The size
+to allocate should be the first argument of the function.
+See <b>--pulse-model-free-pattern</b> for more
+information.</p>
+
+
+<p style="margin-left:11%;"><b>--pulse-model-realloc-pattern</b>
+<i>string</i></p>
+
+<p style="margin-left:17%;">Regex of methods that should be
+modelled as wrappers to <i>realloc</i>(3) in Pulse. The
+pointer to be reallocated should be the first argument of
+the function and the new size the second argument. See
+<b>--pulse-model-free-pattern</b> for more information.</p>
+
+
 <p style="margin-left:11%;"><b>--pulse-model-release-pattern</b>
 <i>string</i></p>
 
@@ -471,11 +555,18 @@ modelled as allocs in Pulse</p>
 modelled as release in Pulse</p>
 
 
-<p style="margin-left:11%;"><b>--pulse-model-return-nonnull</b>
-<i>+string</i></p>
+<p style="margin-left:11%;"><b>--pulse-model-return-first-arg</b>
+<i>string</i></p>
 
-<p style="margin-left:17%;">Methods that should be modelled
-as returning non-null in Pulse</p>
+<p style="margin-left:17%;">Regex of methods that should be
+modelled as returning the first argument in Pulse</p>
+
+
+<p style="margin-left:11%;"><b>--pulse-model-return-nonnull</b>
+<i>string</i></p>
+
+<p style="margin-left:17%;">Regex of methods that should be
+modelled as returning non-null in Pulse</p>
 
 
 <p style="margin-left:11%;"><b>--pulse-model-skip-pattern</b>
@@ -497,6 +588,19 @@ are method or namespace::method</p>
 <p style="margin-left:17%;">Activates: Enable pulse and
 disable all other checkers (Conversely:
 <b>--no-pulse-only</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--pulse-report-ignore-unknown-java-methods-patterns</b>
+<i>+string</i></p>
+
+<p style="margin-left:17%;">On Java, issues that are found
+on program paths that contain calls to unknown methods
+(those without implementation) are not reported unless all
+the unknown method names match this pattern. If the empty
+list is provided with
+<b>--pulse-report-ignore-unknown-java-methods-patterns-reset</b>,
+all issues will be reported regardless the presence of
+unknown code</p>
 
 <p style="margin-left:11%;"><b>--purity</b></p>
 
@@ -646,37 +750,24 @@ progress is being made because of concurrency errors.
 and disable all other checkers (Conversely:
 <b>--no-starvation-only</b>)</p>
 
-<p style="margin-left:11%;"><b>--topl-biabd</b></p>
+<p style="margin-left:11%;"><b>--topl</b></p>
 
-<p style="margin-left:17%;">Activates: checker topl-biabd:
-Detects errors based on user-provided state machines
-describing multi-object monitors. (Conversely:
-<b>--no-topl-biabd</b>)</p>
+<p style="margin-left:17%;">Activates: checker topl: Detect
+errors based on user-provided state machines describing
+temporal properties over multiple objects. (Conversely:
+<b>--no-topl</b>)</p>
 
-<p style="margin-left:11%;"><b>--topl-biabd-only</b></p>
+<p style="margin-left:11%;"><b>--topl-only</b></p>
 
-<p style="margin-left:17%;">Activates: Enable topl-biabd
-and disable all other checkers (Conversely:
-<b>--no-topl-biabd-only</b>)</p>
+<p style="margin-left:17%;">Activates: Enable topl and
+disable all other checkers (Conversely:
+<b>--no-topl-only</b>)</p>
 
-<p style="margin-left:11%;"><b>--topl-pulse</b></p>
+<p style="margin-left:11%;"><b>--uninit</b></p>
 
-<p style="margin-left:17%;">Activates: checker topl-pulse:
-Detects errors based on user-provided state machines
-describing multi-object monitors. (Conversely:
-<b>--no-topl-pulse</b>)</p>
-
-<p style="margin-left:11%;"><b>--topl-pulse-only</b></p>
-
-<p style="margin-left:17%;">Activates: Enable topl-pulse
-and disable all other checkers (Conversely:
-<b>--no-topl-pulse-only</b>)</p>
-
-<p style="margin-left:11%;"><b>--no-uninit</b></p>
-
-<p style="margin-left:17%;">Deactivates: checker uninit:
+<p style="margin-left:17%;">Activates: checker uninit:
 Warns when values are used before having been initialized.
-(Conversely: <b>--uninit</b>)</p>
+(Conversely: <b>--no-uninit</b>)</p>
 
 <p style="margin-left:11%;"><b>--uninit-only</b></p>
 
@@ -684,8 +775,25 @@ Warns when values are used before having been initialized.
 disable all other checkers (Conversely:
 <b>--no-uninit-only</b>)</p>
 
-<p style="margin-left:11%;"><b>--xcode-isysroot-suffix</b>
-<i>string</i></p>
+<p style="margin-left:11%;"><b>--write-html</b></p>
+
+<p style="margin-left:17%;">Activates: Produce html debug
+output for the analyses in infer-out/captured. This shows
+the abstract state of all analyses at each program point in
+the source code. Each captured source file has its own html
+page. This HTML file contains the source file, and at each
+line of</p>
+
+<p style="margin-left:11%;">the file there are links to the
+nodes of the control flow graph <br>
+of Infer's translation of that line of code into its
+intermediate <br>
+representation (SIL). This way it's possible to see what the
+<br>
+translation is, and the details of the symbolic execution on
+each <br>
+node. (Conversely: <b>--no-write-html</b>) <b><br>
+--xcode-isysroot-suffix</b> <i>string</i></p>
 
 <p style="margin-left:17%;">Specify the suffix of Xcode
 isysroot directory, to avoid absolute paths in tests</p>
@@ -771,6 +879,13 @@ annotation reachability specs with the given sources
 spec</p>
 
 
+<p style="margin-left:11%;"><b>--biabduction-unsafe-malloc</b></p>
+
+<p style="margin-left:17%;">Activates: Assume that
+malloc(3) never returns null. (Conversely:
+<b>--no-biabduction-unsafe-malloc</b>)</p>
+
+
 <p style="margin-left:11%;"><b>--clang-compound-literal-init-limit</b>
 <i>int</i></p>
 
@@ -797,22 +912,6 @@ common wrappers around these types such as
 <i>unique_ptr&lt;type&gt;</i>) will count as dead stores
 when the variables are not read explicitly by the
 program.</p>
-
-<p style="margin-left:11%;"><b>--ml-buckets</b>
-<i>,-separated sequence of { all | cf | arc | narc | cpp |
-<br>
-unknown_origin }</i></p>
-
-<p style="margin-left:17%;">Specify the memory leak buckets
-to be checked in C++:</p>
-
-<p style="margin-left:11%;">- <b>cpp</b> from C++ code
-<b><br>
---unsafe-malloc</b></p>
-
-<p style="margin-left:17%;">Activates: Assume that
-malloc(3) never returns null. (Conversely:
-<b>--no-unsafe-malloc</b>)</p>
 
 <h2>JAVA OPTIONS
 <a name="JAVA OPTIONS"></a>

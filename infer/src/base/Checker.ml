@@ -14,6 +14,7 @@ type t =
   | BufferOverrunAnalysis
   | BufferOverrunChecker
   | ConfigChecksBetweenMarkers
+  | ConfigImpactAnalysis
   | Cost
   | Eradicate
   | FragmentRetainsView
@@ -32,11 +33,11 @@ type t =
   | Quandary
   | RacerD
   | ResourceLeakLabExercise
+  | DOTNETResourceLeaks
   | SIOF
   | SelfInBlock
   | Starvation
-  | ToplOnBiabduction
-  | ToplOnPulse
+  | Topl
   | Uninit
 [@@deriving equal, enumerate]
 
@@ -67,10 +68,26 @@ let config_unsafe checker =
   let supports_clang_and_java _ = Support in
   let supports_clang_and_java_experimental _ = ExperimentalSupport in
   let supports_clang (language : Language.t) =
-    match language with Clang -> Support | Java -> NoSupport
+    match language with
+    | Clang ->
+        Support
+    | Java ->
+        NoSupport
+    | CIL ->
+        NoSupport
+    | Erlang ->
+        NoSupport
   in
   let supports_java (language : Language.t) =
-    match language with Clang -> NoSupport | Java -> Support
+    match language with
+    | Clang ->
+        NoSupport
+    | Java ->
+        Support
+    | CIL ->
+        Support
+    | Erlang ->
+        NoSupport
   in
   match checker with
   | AnnotationReachability ->
@@ -127,12 +144,35 @@ let config_unsafe checker =
       ; kind=
           UserFacing
             { title= "Config Checks between Markers"
-            ; markdown_body= "This checker is currently only useful for certain Facebook code." }
+            ; markdown_body=
+                "This checker collects config checkings in some program regions determined by \
+                 pairs of marker-starts and marker-ends. The set of config checking functions, \
+                 marker-start functions, and marker-end functions is hardcoded and empty by \
+                 default for now, so to use this checker, please modify the code directly in \
+                 [FbGKInteraction.ml](https://github.com/facebook/infer/tree/master/infer/src/opensource)."
+            }
       ; support= supports_clang_and_java_experimental
       ; short_documentation= "[EXPERIMENTAL] Collects config checks between marker start and end."
       ; cli_flags= Some {deprecated= []; show_in_help= true}
       ; enabled_by_default= false
       ; activates= [] }
+  | ConfigImpactAnalysis ->
+      { id= "config-impact-analysis"
+      ; kind=
+          UserFacing
+            { title= "Config Impact Analysis"
+            ; markdown_body=
+                "This checker collects functions whose execution isn't gated by certain \
+                 pre-defined gating functions. The set of gating functions is hardcoded and empty \
+                 by default for now, so to use this checker, please modify the code directly in \
+                 [FbGKInteraction.ml](https://github.com/facebook/infer/tree/master/infer/src/opensource)."
+            }
+      ; support= supports_clang_and_java_experimental
+      ; short_documentation=
+          "[EXPERIMENTAL] Collects function that are called without config checks."
+      ; cli_flags= Some {deprecated= []; show_in_help= true}
+      ; enabled_by_default= false
+      ; activates= [Cost] }
   | Cost ->
       { id= "cost"
       ; kind=
@@ -280,8 +320,9 @@ let config_unsafe checker =
       ; activates= [] }
   | Pulse ->
       { id= "pulse"
-      ; kind= UserFacing {title= "Pulse"; markdown_body= ""}
-      ; support= (function Clang -> Support | Java -> ExperimentalSupport)
+      ; kind=
+          UserFacing {title= "Pulse"; markdown_body= [%blob "../../documentation/checkers/Pulse.md"]}
+      ; support= (function Clang | Java -> Support | CIL -> NoSupport | Erlang -> Support)
       ; short_documentation= "Memory and lifetime analysis."
       ; cli_flags= Some {deprecated= ["-ownership"]; show_in_help= true}
       ; enabled_by_default= false
@@ -323,7 +364,8 @@ let config_unsafe checker =
       ; kind=
           UserFacing
             {title= "RacerD"; markdown_body= [%blob "../../documentation/checkers/RacerD.md"]}
-      ; support= supports_clang_and_java
+      ; support=
+          (function Clang -> Support | Java -> Support | CIL -> Support | Erlang -> NoSupport)
       ; short_documentation= "Thread safety analysis."
       ; cli_flags= Some {deprecated= ["-threadsafety"]; show_in_help= true}
       ; enabled_by_default= true
@@ -338,11 +380,21 @@ let config_unsafe checker =
                  leaks! See the [lab \
                  instructions](https://github.com/facebook/infer/blob/master/infer/src/labs/README.md)."
             }
-      ; support= (function Clang -> NoSupport | Java -> Support)
+      ; support=
+          (function Clang -> NoSupport | Java -> Support | CIL -> Support | Erlang -> NoSupport)
       ; short_documentation=
           "Toy checker for the \"resource leak\" write-your-own-checker exercise."
       ; cli_flags= Some {deprecated= []; show_in_help= false}
       ; enabled_by_default= false
+      ; activates= [] }
+  | DOTNETResourceLeaks ->
+      { id= "dotnet-resource-leak"
+      ; kind= UserFacing {title= "Resource Leak checker for .NET"; markdown_body= ""}
+      ; support=
+          (function Clang -> NoSupport | Java -> NoSupport | CIL -> Support | Erlang -> NoSupport)
+      ; short_documentation= "\"resource leak\" checker for .NET."
+      ; cli_flags= Some {deprecated= []; show_in_help= false}
+      ; enabled_by_default= true
       ; activates= [] }
   | SIOF ->
       { id= "siof"
@@ -376,31 +428,28 @@ let config_unsafe checker =
       ; cli_flags= Some {deprecated= []; show_in_help= true}
       ; enabled_by_default= true
       ; activates= [] }
-  | ToplOnBiabduction ->
-      { id= "topl-biabd"
-      ; kind= UserFacing {title= "TOPL"; markdown_body= ""}
+  | Topl ->
+      { id= "topl"
+      ; kind=
+          UserFacing {title= "Topl"; markdown_body= [%blob "../../documentation/checkers/Topl.md"]}
       ; support= supports_clang_and_java_experimental
       ; short_documentation=
-          "Detects errors based on user-provided state machines describing multi-object monitors."
-      ; cli_flags= Some {deprecated= []; show_in_help= true}
-      ; enabled_by_default= false
-      ; activates= [Biabduction] }
-  | ToplOnPulse ->
-      { id= "topl-pulse"
-      ; kind= UserFacing {title= "TOPL"; markdown_body= ""}
-      ; support= supports_clang_and_java_experimental
-      ; short_documentation=
-          "Detects errors based on user-provided state machines describing multi-object monitors."
+          "Detect errors based on user-provided state machines describing temporal properties over \
+           multiple objects."
       ; cli_flags= Some {deprecated= []; show_in_help= true}
       ; enabled_by_default= false
       ; activates= [Pulse] }
   | Uninit ->
       { id= "uninit"
-      ; kind= UserFacing {title= "Uninitialized Value"; markdown_body= ""}
+      ; kind=
+          UserFacingDeprecated
+            { title= "Uninitialized Value"
+            ; markdown_body= ""
+            ; deprecation_message= "Uninitialized value checking has moved to Pulse." }
       ; support= supports_clang
       ; short_documentation= "Warns when values are used before having been initialized."
       ; cli_flags= Some {deprecated= []; show_in_help= true}
-      ; enabled_by_default= true
+      ; enabled_by_default= false
       ; activates= [] }
 
 

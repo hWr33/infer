@@ -60,6 +60,9 @@ val is_static_local : t -> bool
 val is_constant_array : t -> bool
 (** Check if the pvar has a constant array type *)
 
+val is_const : t -> bool
+(** Check if the pvar has a const type *)
+
 val is_local : t -> bool
 (** Check if the pvar is a (non-static) local var *)
 
@@ -115,6 +118,7 @@ val mk_global :
   -> ?is_static_local:bool
   -> ?is_static_global:bool
   -> ?is_constant_array:bool
+  -> ?is_const:bool
   -> ?translation_unit:SourceFile.t
   -> Mangled.t
   -> t
@@ -158,6 +162,8 @@ val is_pod : t -> bool
 (** Is the variable's type a "Plain Old Data" type (C++)? Always (potentially incorrectly) returns
     [true] for non-globals. *)
 
+val is_local_to_procedure : Procname.t -> t -> bool
+
 val get_initializer_pname : t -> Procname.t option
 (** Get the procname of the initializer function for the given global variable *)
 
@@ -169,11 +175,8 @@ val materialized_cpp_temporary : string
 
 val swap_proc_in_local_pvar : t -> Procname.t -> t
 
-val rename : f:(string -> string) -> t -> t
-
 (** Sets of pvars. *)
 module Set : PrettyPrintable.PPSet with type elt = t
 
-type capture_mode = ByReference | ByValue [@@deriving compare, equal]
-
-val string_of_capture_mode : capture_mode -> string
+val get_pvar_formals : ProcAttributes.t -> (t * Typ.t) list
+(** Return pvar and type of formal parameters *)

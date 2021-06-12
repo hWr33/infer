@@ -33,8 +33,19 @@ type t =
   | JavaIterator of java_iterator_function
 [@@deriving compare, equal]
 
+val isl_equiv : t -> t -> bool
+(** check equality up to some ISL equivalences *)
+
 val pp : F.formatter -> t -> unit
 
-val issue_type_of_cause : t -> IssueType.t
-
 val describe : F.formatter -> t -> unit
+
+type must_be_valid_reason =
+  | BlockCall
+  | InsertionIntoCollection
+  | SelfOfNonPODReturnMethod of Typ.t
+[@@deriving compare, equal]
+
+val pp_must_be_valid_reason : F.formatter -> must_be_valid_reason option -> unit
+
+val issue_type_of_cause : t -> must_be_valid_reason option -> IssueType.t

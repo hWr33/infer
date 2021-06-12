@@ -61,6 +61,8 @@ let knormal = KNormal
 
 let kprimed = KPrimed
 
+let knone = KNone
+
 let equal_kind = [%compare.equal: kind]
 
 (* timestamp for a path identifier *)
@@ -153,9 +155,6 @@ end
 
 (** Name used for the return variable *)
 let name_return = Mangled.from_string "return"
-
-(** Name used for the return param variable *)
-let name_return_param = Mangled.from_string "__return_param"
 
 (** Return the standard name for the given kind *)
 let standard_name kind =

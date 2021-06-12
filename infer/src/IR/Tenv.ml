@@ -39,10 +39,11 @@ let lookup tenv name : Struct.t option =
   with Caml.Not_found -> (
     (* ToDo: remove the following additional lookups once C/C++ interop is resolved *)
     match (name : Typ.Name.t) with
-    | CStruct m -> (
-      try Some (TypenameHash.find tenv (CppClass (m, NoTemplate))) with Caml.Not_found -> None )
-    | CppClass (m, NoTemplate) -> (
-      try Some (TypenameHash.find tenv (CStruct m)) with Caml.Not_found -> None )
+    | CStruct m ->
+        TypenameHash.find_opt tenv
+          (CppClass {name= m; template_spec_info= NoTemplate; is_union= false})
+    | CppClass {name= m; template_spec_info= NoTemplate} ->
+        TypenameHash.find_opt tenv (CStruct m)
     | _ ->
         None )
 
@@ -60,6 +61,17 @@ let add_field tenv class_tn_name field =
         ignore (mk_struct tenv ~default:struct_typ ~fields:new_fields ~statics:[] class_tn_name)
   | _ ->
       ()
+
+
+let implements_remodel_class tenv name =
+  Option.exists Typ.Name.Objc.remodel_class ~f:(fun remodel_class ->
+      let rec implements_remodel_class_helper name =
+        Typ.Name.equal name remodel_class
+        || lookup tenv name
+           |> Option.exists ~f:(fun {Struct.supers} ->
+                  List.exists supers ~f:implements_remodel_class_helper )
+      in
+      implements_remodel_class_helper name )
 
 
 type per_file = Global | FileLocal of t
@@ -224,10 +236,15 @@ let resolve_method ~method_exists tenv class_name proc_name =
       else
         let supers_to_search =
           match (class_name : Typ.Name.t) with
+          | ErlangType _ ->
+              L.die InternalError "attempting to call a method on an Erlang value"
           | CStruct _ | CUnion _ | CppClass _ ->
               (* multiple inheritance possible, search all supers *)
               class_struct.supers
           | JavaClass _ ->
+              (* multiple inheritance not possible, but cannot distinguish interfaces from typename so search all *)
+              class_struct.supers
+          | CSharpClass _ ->
               (* multiple inheritance not possible, but cannot distinguish interfaces from typename so search all *)
               class_struct.supers
           | ObjcClass _ ->

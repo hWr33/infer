@@ -27,9 +27,9 @@ type extras_WorstCaseCost =
   ; proc_resolve_attributes: Procname.t -> ProcAttributes.t option }
 
 let instantiate_cost ?get_closure_callee_cost ~default_closure_cost integer_type_widths
-    ~inferbo_caller_mem ~callee_pname ~callee_formals ~params ~callee_cost ~loc =
+    ~inferbo_caller_mem ~callee_pname ~callee_formals ~args ~callee_cost ~loc =
   let {BufferOverrunDomain.eval_sym; eval_func_ptrs} =
-    BufferOverrunSemantics.mk_eval_sym_cost integer_type_widths callee_formals params
+    BufferOverrunSemantics.mk_eval_sym_cost integer_type_widths callee_formals args
       inferbo_caller_mem
   in
   let get_closure_callee_cost pname =
@@ -62,17 +62,25 @@ module InstrBasicCostWithReason = struct
         && Procdesc.is_objc_arc_on callee_pdesc )
 
 
+  let get_modeled_cost_unless_top ~default modeled_cost =
+    if BasicCost.is_top modeled_cost then
+      (* If we get Top modeled cost, this could cause
+         Top-poisoning up the call chain, so instead, we keep
+         underestimating the cost as we do with the case where we
+         have no summary below.*)
+      default
+    else BasicCostWithReason.of_basic_cost modeled_cost
+
+
   let dispatch_operation tenv callee_pname callee_cost_opt fun_arg_list get_summary model_env ret
       inferbo_mem =
     match CostModels.Call.dispatch tenv callee_pname fun_arg_list with
     | Some model ->
-        BasicCostWithReason.of_basic_cost
-          (model {get_summary; model_env= Lazy.force model_env} ~ret inferbo_mem)
+        let modeled_cost = model {get_summary; model_env= Lazy.force model_env} ~ret inferbo_mem in
+        get_modeled_cost_unless_top ~default:(BasicCostWithReason.one ()) modeled_cost
     | None -> (
       match callee_cost_opt with
       | Some callee_cost ->
-          L.debug Analysis Verbose "@\nInstantiated cost : %a@\n" BasicCostWithReason.pp_hum
-            callee_cost ;
           callee_cost
       | _ ->
           ScubaLogging.cost_log_message ~label:"unmodeled_function_operation_cost"
@@ -83,31 +91,33 @@ module InstrBasicCostWithReason = struct
   let dispatch_autoreleasepool tenv callee_pname callee_cost_opt fun_arg_list
       ({get_summary} as extras) model_env ((_, ret_typ) as ret) cfg loc inferbo_mem :
       BasicCostWithReason.t =
+    let fun_cost =
+      if
+        is_objc_call_from_no_arc_to_arc extras cfg callee_pname
+        && Typ.is_pointer_to_objc_non_tagged_class ret_typ
+        && not (return_object_owned_by_caller callee_pname)
+      then
+        let autoreleasepool_trace =
+          Bounds.BoundTrace.of_arc_from_non_arc (Procname.to_string callee_pname) loc
+        in
+        BasicCostWithReason.one ~autoreleasepool_trace ()
+      else BasicCostWithReason.zero
+    in
     match CostAutoreleaseModels.Call.dispatch tenv callee_pname fun_arg_list with
     | Some model ->
         let autoreleasepool_size =
           model {get_summary; model_env= Lazy.force model_env} ~ret inferbo_mem
         in
-        BasicCostWithReason.of_basic_cost autoreleasepool_size
+        get_modeled_cost_unless_top ~default:fun_cost autoreleasepool_size
     | None ->
-        let fun_cost =
-          if
-            is_objc_call_from_no_arc_to_arc extras cfg callee_pname
-            && Typ.is_pointer_to_objc_non_tagged_class ret_typ
-            && not (return_object_owned_by_caller callee_pname)
-          then
-            let autoreleasepool_trace =
-              Bounds.BoundTrace.of_arc_from_non_arc (Procname.to_string callee_pname) loc
-            in
-            BasicCostWithReason.one ~autoreleasepool_trace ()
-          else BasicCostWithReason.zero
-        in
         Option.value_map ~default:fun_cost ~f:(BasicCostWithReason.plus fun_cost) callee_cost_opt
 
 
   let dispatch_allocation tenv callee_pname callee_cost_opt : BasicCostWithReason.t =
     CostAllocationModels.ProcName.dispatch tenv callee_pname
-    |> Option.value ~default:(Option.value callee_cost_opt ~default:BasicCostWithReason.zero)
+    |> Option.value_map ~default:(Option.value callee_cost_opt ~default:BasicCostWithReason.zero)
+         ~f:(fun modeled_cost ->
+           get_modeled_cost_unless_top ~default:BasicCostWithReason.zero modeled_cost )
 
 
   let dispatch_func_ptr_call {inferbo_invariant_map; integer_type_widths} instr_node fun_exp
@@ -131,7 +141,7 @@ module InstrBasicCostWithReason = struct
 
   let get_instr_cost_record tenv extras cfg instr_node instr =
     match instr with
-    | Sil.Call (ret, Exp.Const (Const.Cfun callee_pname), params, location, _)
+    | Sil.Call (ret, Exp.Const (Const.Cfun callee_pname), args, location, _)
       when Config.inclusive_cost -> (
         let { inferbo_invariant_map
             ; integer_type_widths
@@ -141,7 +151,7 @@ module InstrBasicCostWithReason = struct
           extras
         in
         let fun_arg_list =
-          List.map params ~f:(fun (exp, typ) ->
+          List.map args ~f:(fun (exp, typ) ->
               ProcnameDispatcher.Call.FuncArg.{exp; typ; arg_payload= ()} )
         in
         let inferbo_mem_opt =
@@ -172,7 +182,7 @@ module InstrBasicCostWithReason = struct
                      in
                      instantiate_cost ~get_closure_callee_cost ~default_closure_cost
                        integer_type_widths ~inferbo_caller_mem:inferbo_mem ~callee_pname
-                       ~callee_formals ~params ~callee_cost ~loc:location )
+                       ~callee_formals ~args ~callee_cost ~loc:location )
           | _ ->
               None
         in
@@ -202,7 +212,15 @@ module InstrBasicCostWithReason = struct
         CostDomain.zero_record
     | Sil.Load _ | Sil.Store _ | Sil.Prune _ ->
         CostDomain.unit_cost_atomic_operation
-    | Sil.Metadata (Abstract _ | ExitScope _ | Nullify _ | Skip | VariableLifetimeBegins _) ->
+    | Sil.Metadata
+        ( Abstract _
+        | CatchEntry _
+        | ExitScope _
+        | Nullify _
+        | Skip
+        | TryEntry _
+        | TryExit _
+        | VariableLifetimeBegins _ ) ->
         CostDomain.zero_record
 
 
@@ -337,10 +355,27 @@ type bound_map = BasicCost.t Node.IdMap.t
 
 type get_node_nb_exec = Node.t -> BasicCost.t
 
-let compute_bound_map node_cfg inferbo_invariant_map control_dep_invariant_map loop_invmap :
-    bound_map =
+let compute_bound_map tenv proc_desc node_cfg inferbo_invariant_map analyze_dependency : bound_map =
+  (* computes reaching defs: node -> (var -> node set) *)
+  let reaching_defs_invariant_map = ReachingDefs.compute_invariant_map proc_desc in
+  (* collect all prune nodes that occur in loop guards, needed for ControlDepAnalyzer *)
+  let loop_head_to_source_nodes = Loop_control.get_loop_head_to_source_nodes node_cfg in
+  let control_maps = Loop_control.get_loop_control_maps loop_head_to_source_nodes in
+  (* computes the control dependencies: node -> var set *)
+  let control_dep_invariant_map = Control.compute_invariant_map proc_desc control_maps in
+  (* compute loop invariant map for control var analysis *)
+  let loop_head_to_loop_nodes =
+    Loop_control.get_loop_head_to_loop_nodes loop_head_to_source_nodes
+  in
+  let loop_inv_map =
+    let get_callee_purity callee_pname =
+      match analyze_dependency callee_pname with Some (_, (_, _, purity)) -> purity | _ -> None
+    in
+    LoopInvariant.get_loop_inv_var_map tenv get_callee_purity reaching_defs_invariant_map
+      loop_head_to_loop_nodes
+  in
   BoundMap.compute_upperbound_map node_cfg inferbo_invariant_map control_dep_invariant_map
-    loop_invmap
+    loop_inv_map
 
 
 let compute_get_node_nb_exec node_cfg bound_map : get_node_nb_exec =
@@ -371,30 +406,16 @@ let just_throws_exception proc_desc =
 
 let checker ({InterproceduralAnalysis.proc_desc; exe_env; analyze_dependency} as analysis_data) =
   let proc_name = Procdesc.get_proc_name proc_desc in
-  let tenv = Exe_env.get_tenv exe_env proc_name in
+  let tenv = Exe_env.get_proc_tenv exe_env proc_name in
   let integer_type_widths = Exe_env.get_integer_type_widths exe_env proc_name in
   let inferbo_invariant_map =
     BufferOverrunAnalysis.cached_compute_invariant_map
       (InterproceduralAnalysis.bind_payload ~f:snd3 analysis_data)
   in
   let node_cfg = NodeCFG.from_pdesc proc_desc in
-  (* computes reaching defs: node -> (var -> node set) *)
-  let reaching_defs_invariant_map = ReachingDefs.compute_invariant_map proc_desc in
-  (* collect all prune nodes that occur in loop guards, needed for ControlDepAnalyzer *)
-  let control_maps, loop_head_to_loop_nodes = Loop_control.get_loop_control_maps node_cfg in
-  (* computes the control dependencies: node -> var set *)
-  let control_dep_invariant_map = Control.compute_invariant_map proc_desc control_maps in
-  (* compute loop invariant map for control var analysis *)
-  let loop_inv_map =
-    let get_callee_purity callee_pname =
-      match analyze_dependency callee_pname with Some (_, (_, _, purity)) -> purity | _ -> None
-    in
-    LoopInvariant.get_loop_inv_var_map tenv get_callee_purity reaching_defs_invariant_map
-      loop_head_to_loop_nodes
-  in
   (* given the semantics computes the upper bound on the number of times a node could be executed *)
   let bound_map =
-    compute_bound_map node_cfg inferbo_invariant_map control_dep_invariant_map loop_inv_map
+    compute_bound_map tenv proc_desc node_cfg inferbo_invariant_map analyze_dependency
   in
   let is_on_ui_thread =
     (not (Procname.is_objc_method proc_name)) && ConcurrencyModels.runs_on_ui_thread tenv proc_name
@@ -415,7 +436,7 @@ let checker ({InterproceduralAnalysis.proc_desc; exe_env; analyze_dependency} as
       inferbo_summary
     in
     let get_formals callee_pname =
-      AnalysisCallbacks.proc_resolve_attributes callee_pname >>| ProcAttributes.get_pvar_formals
+      AnalysisCallbacks.proc_resolve_attributes callee_pname >>| Pvar.get_pvar_formals
     in
     let instr_cfg = InstrCFG.from_pdesc proc_desc in
     let extras =

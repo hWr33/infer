@@ -12,6 +12,8 @@ open! NS0
 module type MULTIPLICITY = sig
   type t [@@deriving compare, equal, hash, sexp]
 
+  include Comparer.S with type t := t
+
   val zero : t
   val add : t -> t -> t
   val sub : t -> t -> t
@@ -21,13 +23,18 @@ end
 module type S = sig
   type mul
   type elt
-  type t
+  type t [@@deriving compare, equal, sexp_of]
 
-  val compare : t -> t -> int
-  val equal : t -> t -> bool
   val hash_fold_t : elt Hash.folder -> t Hash.folder
-  val sexp_of_t : t -> Sexp.t
-  val t_of_sexp : (Sexp.t -> elt) -> Sexp.t -> t
+
+  include Comparer.S with type t := t
+
+  module Provide_of_sexp (_ : sig
+    type t = elt [@@deriving of_sexp]
+  end) : sig
+    type t [@@deriving of_sexp]
+  end
+  with type t := t
 
   val pp :
        ?pre:(unit, unit) fmt
@@ -87,25 +94,16 @@ module type S = sig
   val only_elt : t -> (elt * mul) option
   (** The only element of a singleton multiset. [O(1)]. *)
 
-  val choose_exn : t -> elt * mul
-  (** Find an unspecified element. [O(1)]. *)
-
-  val choose : t -> (elt * mul) option
-  (** Find an unspecified element. [O(1)]. *)
-
-  val pop : t -> (elt * mul * t) option
-  (** Find and remove an unspecified element. [O(1)]. *)
-
   val min_elt : t -> (elt * mul) option
   (** Minimum element. [O(log n)]. *)
 
   val pop_min_elt : t -> (elt * mul * t) option
   (** Find and remove minimum element. [O(log n)]. *)
 
-  val classify : t -> [`Zero | `One of elt * mul | `Many]
+  val classify : t -> (elt, mul) zero_one_many2
   (** Classify a set as either empty, singleton, or otherwise. *)
 
-  val find_and_remove : elt -> t -> (mul * t) option
+  val find_and_remove : elt -> t -> mul option * t
   (** Find and remove an element. *)
 
   val to_iter : t -> (elt * mul) iter

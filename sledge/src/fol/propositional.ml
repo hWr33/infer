@@ -9,34 +9,44 @@
 
 include Propositional_intf
 
-module Make (Trm : TERM) = struct
-  (** Sets of formulas *)
-  module rec Fmls : (FORMULA_SET with type elt := Fml.t) = struct
-    module T = struct
-      type t = Fml.t [@@deriving compare, equal, sexp]
-    end
+module Make (Trm : sig
+  type t [@@deriving compare, equal, sexp]
+end) =
+struct
+  module Fml1 = struct
+    type compare [@@deriving compare, equal, sexp]
 
-    include Set.Make (T)
-    include Provide_of_sexp (T)
-  end
-
-  (** Formulas, built from literals with predicate symbols from various
-      theories, and propositional constants and connectives. Denote sets of
-      structures. *)
-  and Fml : (FORMULA with type trm := Trm.t with type set := Fmls.t) =
-  struct
     type t =
       | Tt
       | Eq of Trm.t * Trm.t
       | Eq0 of Trm.t
       | Pos of Trm.t
       | Not of t
-      | And of {pos: Fmls.t; neg: Fmls.t}
-      | Or of {pos: Fmls.t; neg: Fmls.t}
+      | And of {pos: set; neg: set}
+      | Or of {pos: set; neg: set}
       | Iff of t * t
       | Cond of {cnd: t; pos: t; neg: t}
       | Lit of Predsym.t * Trm.t array
-    [@@deriving compare, equal, sexp]
+
+    and set = (t, compare) Set.t [@@deriving compare, equal, sexp]
+  end
+
+  module Fml2 = struct
+    include Comparer.Counterfeit (Fml1)
+    include Fml1
+  end
+
+  (** Sets of formulas *)
+  module Fmls = struct
+    include Set.Make_from_Comparer (Fml2)
+    include Provide_of_sexp (Fml2)
+  end
+
+  (** Formulas, built from literals with predicate symbols from various
+      theories, and propositional constants and connectives. Denote sets of
+      structures. *)
+  module Fml = struct
+    include Fml2
 
     let invariant f =
       let@ () = Invariant.invariant [%here] f [%sexp_of: t] in
@@ -85,12 +95,12 @@ module Make (Trm : TERM) = struct
       then zero
       else
         match Fmls.classify neg with
-        | `Zero -> (
+        | Zero -> (
           match Fmls.classify pos with
-          | `Zero -> unit
-          | `One p -> p
-          | `Many -> cons ~pos ~neg )
-        | `One n when Fmls.is_empty pos -> _Not n
+          | Zero -> unit
+          | One p -> p
+          | Many -> cons ~pos ~neg )
+        | One n when Fmls.is_empty pos -> _Not n
         | _ -> cons ~pos ~neg
 
     let _And ~pos ~neg =
@@ -142,7 +152,9 @@ module Make (Trm : TERM) = struct
       |> check invariant
 
     let and_ p q =
-      join _And ff
+      join
+        (_Join (fun ~pos ~neg -> And {pos; neg}) tt ff)
+        ff
         (function
           | And {pos; neg} -> (pos, neg)
           | Tt -> (Fmls.empty, Fmls.empty)
@@ -151,7 +163,9 @@ module Make (Trm : TERM) = struct
         p q
 
     let or_ p q =
-      join _Or tt
+      join
+        (_Join (fun ~pos ~neg -> Or {pos; neg}) ff tt)
+        tt
         (function
           | Or {pos; neg} -> (pos, neg)
           | Not Tt -> (Fmls.empty, Fmls.empty)
@@ -253,5 +267,57 @@ module Make (Trm : TERM) = struct
       | Lit (_, xs) -> Array.iter ~f xs
 
     let trms p = Iter.from_labelled_iter (iter_trms p)
+
+    type polarity = Con | Dis
+
+    let map_join polarity b ~pos ~neg f =
+      let pos_to_flatten = ref [] in
+      let neg_to_flatten = ref [] in
+      let pos0, neg0 = (pos, neg) in
+      let pos =
+        Fmls.map pos ~f:(fun p ->
+            let p' = f p in
+            if p' == p then p
+            else
+              match (polarity, p') with
+              | Con, And {pos; neg} | Dis, Or {pos; neg} ->
+                  pos_to_flatten := (p, pos, neg) :: !pos_to_flatten ;
+                  p
+              | _ -> p' )
+      in
+      let neg =
+        Fmls.map neg ~f:(fun n ->
+            let n' = f n in
+            if n' == n then n
+            else
+              match (polarity, n') with
+              | Con, Or {pos; neg} | Dis, And {pos; neg} ->
+                  neg_to_flatten := (n, pos, neg) :: !neg_to_flatten ;
+                  n
+              | _ -> n' )
+      in
+      let pos, neg =
+        if List.is_empty !pos_to_flatten then (pos, neg)
+        else
+          List.fold !pos_to_flatten (pos, neg)
+            ~f:(fun (p, p', n') (pos, neg) ->
+              (Fmls.union p' (Fmls.remove p pos), Fmls.union n' neg) )
+      in
+      let pos, neg =
+        if List.is_empty !neg_to_flatten then (pos, neg)
+        else
+          List.fold !neg_to_flatten (pos, neg)
+            ~f:(fun (n, p', n') (pos, neg) ->
+              (Fmls.union n' pos, Fmls.union p' (Fmls.remove n neg)) )
+      in
+      if pos0 == pos && neg0 == neg then b
+      else
+        match polarity with
+        | Con -> _Join (fun ~pos ~neg -> And {pos; neg}) tt ff ~pos ~neg
+        | Dis -> _Join (fun ~pos ~neg -> Or {pos; neg}) ff tt ~pos ~neg
+
+    let map_and = map_join Con
+    let map_or = map_join Dis
   end
 end
+[@@inline]

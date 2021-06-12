@@ -13,7 +13,7 @@ module type Config = sig
 end
 
 module type S = sig
-  type t
+  type t [@@deriving compare, equal]
 
   type key
 
@@ -29,6 +29,8 @@ module type S = sig
 
   val bindings : t -> (key * value) list
 
+  val exists : t -> f:(key * value -> bool) -> bool
+
   val filter : t -> f:(key * value -> bool) -> t
 
   val find_opt : key -> t -> value option
@@ -39,18 +41,26 @@ module type S = sig
 
   val is_empty : t -> bool
 
+  val map : t -> f:(value -> value) -> t
+
   val mem : t -> key -> bool
 
   val union_left_biased : t -> t -> t
+
+  val to_seq : t -> (key * value) Seq.t
 end
 
 module Make
     (Key : PrettyPrintable.PrintableEquatableOrderedType)
     (Value : PrettyPrintable.PrintableOrderedType)
     (Config : Config) : S with type key = Key.t and type value = Value.t = struct
-  type key = Key.t
+  type key = Key.t [@@deriving compare]
 
   type value = Value.t [@@deriving compare]
+
+  (* suppress warnings about using {!List.Assoc.compare} since our own compare function also ignores
+     that different representations of a [t] can have the same meaning *)
+  [@@@warning "-3"]
 
   (** [new_] and [old] together represent the map. Keys may be present in both [old] and [new_], in
       which case bindings in [new_] take precendence.
@@ -68,6 +78,11 @@ module Make
     ; old: (key, value) List.Assoc.t
           (** invariant: [List.length old ≤ Config.limit]. Actually, the length of [old] is always
               either [0] or [N], except possibly after a call to [merge]. *) }
+  [@@deriving compare]
+
+  [@@@warning "+3"]
+
+  let equal = [%compare.equal: t]
 
   let empty = {count_new= 0; old= []; new_= []}
 
@@ -126,16 +141,22 @@ module Make
     else {count_new= next_count_new; new_= (key, value) :: new_without_key; old= map.old}
 
 
-  let equal map1 map2 = phys_equal map1 map2
-
-  let fold map ~init ~f =
-    let acc = List.fold map.new_ ~init ~f in
-    (* this is quadratic time but the lists are at most [Config.limit] long, assumed small *)
-    List.fold map.old ~init:acc ~f:(fun acc binding ->
-        if List.Assoc.mem ~equal:Key.equal map.new_ (fst binding) then acc else f acc binding )
+  let to_seq map =
+    Seq.append (Caml.List.to_seq map.new_)
+      ( (* this is quadratic time but the lists are at most [Config.limit] long, assumed small *)
+        Caml.List.to_seq map.old
+      |> Seq.filter (fun binding -> not (List.Assoc.mem ~equal:Key.equal map.new_ (fst binding))) )
 
 
-  let bindings map = fold ~init:[] ~f:(fun bindings binding -> binding :: bindings) map
+  let fold map ~init ~f = Seq.fold_left f init (to_seq map)
+
+  let bindings map = to_seq map |> Caml.List.of_seq
+
+  let exists map ~f =
+    List.exists map.new_ ~f
+    || List.exists map.old ~f:(fun binding ->
+           if List.Assoc.mem ~equal:Key.equal map.new_ (fst binding) then false else f binding )
+
 
   let filter map ~f =
     let count_new = ref map.count_new in

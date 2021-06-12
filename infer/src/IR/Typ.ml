@@ -182,7 +182,12 @@ module T = struct
   and name =
     | CStruct of QualifiedCppName.t
     | CUnion of QualifiedCppName.t
-    | CppClass of QualifiedCppName.t * template_spec_info
+    | CppClass of
+        { name: QualifiedCppName.t
+        ; template_spec_info: template_spec_info
+        ; is_union: bool [@compare.ignore] }
+    | CSharpClass of CSharpClassName.t
+    | ErlangType of ErlangTypeName.t
     | JavaClass of JavaClassName.t
     | ObjcClass of QualifiedCppName.t * name list
     | ObjcProtocol of QualifiedCppName.t
@@ -306,10 +311,14 @@ and pp_name_c_syntax pe f = function
       QualifiedCppName.pp f name
   | ObjcClass (name, protocol_names) ->
       F.fprintf f "%a%a" QualifiedCppName.pp name (pp_protocols pe) protocol_names
-  | CppClass (name, template_spec) ->
-      F.fprintf f "%a%a" QualifiedCppName.pp name (pp_template_spec_info pe) template_spec
+  | CppClass {name; template_spec_info} ->
+      F.fprintf f "%a%a" QualifiedCppName.pp name (pp_template_spec_info pe) template_spec_info
+  | ErlangType name ->
+      ErlangTypeName.pp f name
   | JavaClass name ->
       JavaClassName.pp f name
+  | CSharpClass name ->
+      CSharpClassName.pp f name
 
 
 and pp_template_spec_info pe f = function
@@ -332,15 +341,14 @@ and pp_template_spec_info pe f = function
 
 
 and pp_protocols pe f protocols =
-  if List.is_empty protocols then ()
-  else
+  if not (List.is_empty protocols) then
     F.fprintf f "%s%a%s" (escape pe "<")
       (Pp.comma_seq (pp_name_c_syntax pe))
       protocols (escape pe ">")
 
 
 (** Pretty print a type. Do nothing by default. *)
-let pp pe f te = if Config.print_types then pp_full pe f te else ()
+let pp pe f te = if Config.print_types then pp_full pe f te
 
 let to_string typ =
   let pp fmt = pp_full Pp.text fmt typ in
@@ -355,6 +363,59 @@ let desc_to_string desc =
 module Name = struct
   type t = name [@@deriving compare, equal, yojson_of]
 
+  (* NOTE: When a same struct type is used in C/C++/ObjC/ObjC++, their struct types may different,
+     eg [CStruct] in C, but [CppClass] in C++.  On the other hand, since [Fieldname.t] includes the
+     class names, even for the same field, its field name used in C and C++ can be different.
+     However, in analyses, we may want to *not* distinguish fieldnames of the same struct type.  For
+     that, we can use these loosened compare functions instead. *)
+  let loose_compare x y =
+    match (x, y) with
+    | ( (CStruct name1 | CppClass {name= name1; template_spec_info= NoTemplate})
+      , (CStruct name2 | CppClass {name= name2; template_spec_info= NoTemplate}) ) ->
+        QualifiedCppName.compare name1 name2
+    | _ ->
+        compare x y
+
+
+  let rec compare_name x y =
+    let open ICompare in
+    match (x, y) with
+    | ( (CStruct name1 | CUnion name1 | CppClass {name= name1})
+      , (CStruct name2 | CUnion name2 | CppClass {name= name2}) ) ->
+        QualifiedCppName.compare_name name1 name2
+    | (CStruct _ | CUnion _ | CppClass _), _ ->
+        -1
+    | _, (CStruct _ | CUnion _ | CppClass _) ->
+        1
+    | CSharpClass name1, CSharpClass name2 ->
+        String.compare (CSharpClassName.classname name1) (CSharpClassName.classname name2)
+    | CSharpClass _, _ ->
+        -1
+    | _, CSharpClass _ ->
+        1
+    | ErlangType name1, ErlangType name2 ->
+        ErlangTypeName.compare name1 name2
+    | ErlangType _, _ ->
+        -1
+    | _, ErlangType _ ->
+        1
+    | JavaClass name1, JavaClass name2 ->
+        String.compare (JavaClassName.classname name1) (JavaClassName.classname name2)
+    | JavaClass _, _ ->
+        -1
+    | _, JavaClass _ ->
+        1
+    | ObjcClass (name1, names1), ObjcClass (name2, names2) ->
+        QualifiedCppName.compare_name name1 name2
+        <*> fun () -> List.compare compare_name names1 names2
+    | ObjcClass _, _ ->
+        -1
+    | _, ObjcClass _ ->
+        1
+    | ObjcProtocol name1, ObjcProtocol name2 ->
+        QualifiedCppName.compare_name name1 name2
+
+
   let hash = Hashtbl.hash
 
   let qual_name = function
@@ -363,23 +424,28 @@ module Name = struct
     | ObjcClass (name, protocol_names) ->
         let protocols = F.asprintf "%a" (pp_protocols Pp.text) protocol_names in
         QualifiedCppName.append_protocols name ~protocols
-    | CppClass (name, templ_args) ->
-        let template_suffix = F.asprintf "%a" (pp_template_spec_info Pp.text) templ_args in
+    | CppClass {name; template_spec_info} ->
+        let template_suffix = F.asprintf "%a" (pp_template_spec_info Pp.text) template_spec_info in
         QualifiedCppName.append_template_args_to_last name ~args:template_suffix
-    | JavaClass _ ->
+    | JavaClass _ | CSharpClass _ | ErlangType _ ->
         QualifiedCppName.empty
 
 
   let unqualified_name = function
     | CStruct name | CUnion name | ObjcProtocol name | ObjcClass (name, _) ->
         name
-    | CppClass (name, _) ->
+    | CppClass {name} ->
         name
-    | JavaClass _ ->
+    | JavaClass _ | CSharpClass _ | ErlangType _ ->
         QualifiedCppName.empty
 
 
-  let get_template_spec_info = function CppClass (_, templ_args) -> Some templ_args | _ -> None
+  let get_template_spec_info = function
+    | CppClass {template_spec_info} ->
+        Some template_spec_info
+    | _ ->
+        None
+
 
   let name n =
     match n with
@@ -387,6 +453,10 @@ module Name = struct
         qual_name n |> QualifiedCppName.to_qual_string
     | JavaClass name ->
         JavaClassName.to_string name
+    | CSharpClass name ->
+        CSharpClassName.to_string name
+    | ErlangType name ->
+        ErlangTypeName.to_string name
 
 
   let pp fmt tname =
@@ -395,8 +465,10 @@ module Name = struct
           "struct"
       | CUnion _ ->
           "union"
-      | CppClass _ | JavaClass _ | ObjcClass _ ->
+      | CppClass _ | CSharpClass _ | JavaClass _ | ObjcClass _ ->
           "class"
+      | ErlangType _ ->
+          "erlang"
       | ObjcProtocol _ ->
           "protocol"
     in
@@ -405,7 +477,12 @@ module Name = struct
 
   let to_string = F.asprintf "%a" pp
 
-  let is_class = function CppClass _ | JavaClass _ | ObjcClass _ -> true | _ -> false
+  let is_class = function
+    | CppClass _ | JavaClass _ | ObjcClass _ | CSharpClass _ ->
+        true
+    | _ ->
+        false
+
 
   let is_union = function CUnion _ -> true | _ -> false
 
@@ -418,7 +495,8 @@ module Name = struct
     | CppClass _, CppClass _
     | JavaClass _, JavaClass _
     | ObjcClass _, ObjcClass _
-    | ObjcProtocol _, ObjcProtocol _ ->
+    | ObjcProtocol _, ObjcProtocol _
+    | CSharpClass _, CSharpClass _ ->
         true
     | _ ->
         false
@@ -430,6 +508,10 @@ module Name = struct
     let from_string name_str = QualifiedCppName.of_qual_string name_str |> from_qual_name
 
     let union_from_qual_name qual_name = CUnion qual_name
+  end
+
+  module CSharp = struct
+    let from_string name_str = CSharpClass (CSharpClassName.from_string name_str)
   end
 
   module Java = struct
@@ -465,7 +547,9 @@ module Name = struct
   end
 
   module Cpp = struct
-    let from_qual_name template_spec_info qual_name = CppClass (qual_name, template_spec_info)
+    let from_qual_name template_spec_info ~is_union qual_name =
+      CppClass {name= qual_name; template_spec_info; is_union}
+
 
     let is_class = function CppClass _ -> true | _ -> false
   end
@@ -499,6 +583,9 @@ module Name = struct
       in
       function
       | ObjcClass (name, _) -> not (QualifiedCppName.Set.mem name tagged_classes) | _ -> false
+
+
+    let remodel_class = Option.map Config.remodel_class ~f:from_string
   end
 
   module Set = PrettyPrintable.MakePPSet (struct
@@ -520,11 +607,14 @@ module Name = struct
 
     let normalize t =
       match t with
-      | CStruct _ | CUnion _ | CppClass _ | ObjcClass _ | ObjcProtocol _ ->
+      | CStruct _ | CUnion _ | CppClass _ | ErlangType _ | ObjcClass _ | ObjcProtocol _ ->
           t
       | JavaClass java_class_name ->
           let java_class_name' = JavaClassName.Normalizer.normalize java_class_name in
           if phys_equal java_class_name java_class_name' then t else JavaClass java_class_name'
+      | CSharpClass cs_class_name ->
+          let cs_class_name' = CSharpClassName.Normalizer.normalize cs_class_name in
+          if phys_equal cs_class_name cs_class_name' then t else CSharpClass cs_class_name'
   end)
 end
 
@@ -644,6 +734,73 @@ let rec pp_java ~verbose f {desc} =
       F.fprintf f "%a[]" (pp_java ~verbose) elt
   | _ ->
       L.die InternalError "pp_java rec"
+
+
+let rec pp_cs ~verbose f {desc} =
+  let string_of_int = function
+    | IInt ->
+        JConfig.int_st
+    | IBool ->
+        JConfig.boolean_st
+    | ISChar ->
+        JConfig.byte_st
+    | IUShort ->
+        JConfig.char_st
+    | ILong ->
+        JConfig.long_st
+    | IShort ->
+        JConfig.short_st
+    | _ ->
+        L.die InternalError "pp_cs int"
+  in
+  let string_of_float = function
+    | FFloat ->
+        JConfig.float_st
+    | FDouble ->
+        JConfig.double_st
+    | _ ->
+        L.die InternalError "pp_cs float"
+  in
+  match desc with
+  | Tint ik ->
+      F.pp_print_string f (string_of_int ik)
+  | Tfloat fk ->
+      F.pp_print_string f (string_of_float fk)
+  | Tvoid ->
+      F.pp_print_string f JConfig.void
+  | Tptr (typ, _) ->
+      pp_cs ~verbose f typ
+  | Tstruct (CSharpClass cs_class_name) ->
+      CSharpClassName.pp_with_verbosity ~verbose f cs_class_name
+  | Tarray {elt} ->
+      F.fprintf f "%a[]" (pp_cs ~verbose) elt
+  | _ ->
+      L.die InternalError "pp_cs rec"
+
+
+let is_csharp_primitive_type {desc} =
+  let is_csharp_int = function
+    | IInt | IBool | ISChar | IUShort | ILong | IShort ->
+        true
+    | _ ->
+        false
+  in
+  let is_csharp_float = function FFloat | FDouble -> true | _ -> false in
+  match desc with Tint ik -> is_csharp_int ik | Tfloat fk -> is_csharp_float fk | _ -> false
+
+
+let rec is_csharp_type t =
+  match t.desc with
+  | Tvoid ->
+      true
+  | Tint _ | Tfloat _ ->
+      is_csharp_primitive_type t
+  | Tptr ({desc= Tstruct (CSharpClass _)}, Pk_pointer) ->
+      true
+  | Tptr ({desc= Tarray {elt}}, Pk_pointer) ->
+      is_csharp_type elt
+  | _ ->
+      false
 
 
 let is_java_primitive_type {desc} =

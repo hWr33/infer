@@ -62,7 +62,7 @@ module T = struct
   [@@deriving compare, equal, hash, sexp]
 
   type t =
-    | Reg of {name: string; typ: Typ.t}
+    | Reg of {id: int; name: string; typ: Typ.t}
     | Global of {name: string; typ: Typ.t [@ignore]}
     | Function of {name: string; typ: Typ.t [@ignore]}
     | Label of {parent: string; name: string}
@@ -118,7 +118,7 @@ module T = struct
       Format.kfprintf (fun fs -> Format.pp_close_box fs ()) fs fmt
     in
     match exp with
-    | Reg {name} -> pf "%%%s" name
+    | Reg {name; id} -> pf "%%%s!%i" name id
     | Global {name} -> pf "%@%s%a" name pp_demangled name
     | Function {name} -> pf "&%s%a" name pp_demangled name
     | Label {name} -> pf "%s" name
@@ -295,6 +295,7 @@ module Reg = struct
     let@ () = Invariant.invariant [%here] x [%sexp_of: t] in
     match x with Reg _ -> invariant x | _ -> assert false
 
+  let id = function Reg x -> x.id | r -> violates invariant r
   let name = function Reg x -> x.name | r -> violates invariant r
   let typ = function Reg x -> x.typ | r -> violates invariant r
 
@@ -302,7 +303,7 @@ module Reg = struct
     | Reg _ as e -> Some (e |> check invariant)
     | _ -> None
 
-  let mk typ name = Reg {name; typ} |> check invariant
+  let mk typ id name = Reg {id; name; typ} |> check invariant
 end
 
 (** Globals are the expressions constructed by [Global] *)
@@ -430,8 +431,7 @@ let ashr = binary Ashr
 
 (* if-then-else *)
 
-let conditional ?typ ~cnd ~thn ~els =
-  let typ = match typ with Some typ -> typ | None -> typ_of thn in
+let conditional typ ~cnd ~thn ~els =
   Ap3 (Conditional, typ, cnd, thn, els) |> check invariant
 
 (* sequences *)

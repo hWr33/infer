@@ -9,6 +9,8 @@ Activate with `--inefficient-keyset-iterator`.
 
 Supported languages:
 - C/C++/ObjC: No
+- C#/.Net: Yes
+- Erlang: No
 - Java: Yes
 
 

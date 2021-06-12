@@ -4,32 +4,37 @@
 # LICENSE file in the root directory of this source tree.
 
 # additional arguments to pass to clang
-CLANG_ARGS?=-O0
+CLANG_ARGS?=-O0 -Xclang -disable-O0-optnone
 
 # executable to test
 SLEDGE_DBG=$(CURDIR)/../_build/debug/cli/sledge_cli.exe
 SLEDGE_OPT=$(CURDIR)/../_build/release/cli/sledge_cli.exe
 
-# additional arguments to pass to sledge translate, disassemble, analyze, and smt
+# additional arguments to pass to sledge translate, disassemble, analyze, smt, and report
 SLEDGE_T_ARGS?=
 SLEDGE_D_ARGS?=
 SLEDGE_A_ARGS?=-bound 5
 SLEDGE_S_ARGS?=
+SLEDGE_R_ARGS?=
 
 # limits for each test run
 TIMEOUT?=300
-MEMOUT?=4096
+MEMOUT?=6
 
 sledge_dbg=./wrap.sh $(TIMEOUT) $(MEMOUT) $(SLEDGE_DBG)
 sledge_opt=./wrap.sh $(TIMEOUT) $(MEMOUT) $(SLEDGE_OPT)
 
 sledge_report=$(CURDIR)/../_build/debug/report/sledge_report.exe
 
+.PHONY: sledge_report_exe
+sledge_report_exe:
+	$(MAKE) -C .. report
+
 # which utilities to use
 diff?=patdiff
 
-# configure the non-host llvm and clang
-export PATH := $(CURDIR)/../.llvm_install/sledge/bin:$(PATH)
+# select llvm and clang used by opam
+export PATH := $(shell $$(opam config var conf-llvm:config) --bindir):$(PATH)
 
 # configure sort
 export LANG := C
@@ -97,10 +102,10 @@ translate.sexp:
 baseline/translate.sexp: translate.sexp
 	cp translate.sexp $@
 
-translate.html: translate.sexp
-	$(sledge_report) html -baseline baseline/translate.sexp translate.sexp -output $@
+translate.html: translate.sexp sledge_report_exe
+	$(sledge_report) html $(SLEDGE_R_ARGS) -baseline baseline/translate.sexp translate.sexp -output $@
 
-translate-status: translate.sexp
+translate-status: translate.sexp sledge_report_exe
 	$(sledge_report) status -baseline baseline/translate.sexp translate.sexp | column -ts$$'\t'
 
 #
@@ -133,10 +138,10 @@ analyze.sexp:
 baseline/analyze.sexp: analyze.sexp
 	cp analyze.sexp $@
 
-analyze.html: analyze.sexp
+analyze.html: analyze.sexp sledge_report_exe
 	$(sledge_report) html $(SLEDGE_R_ARGS) -baseline baseline/analyze.sexp analyze.sexp -output $@
 
-analyze-status: analyze.sexp
+analyze-status: analyze.sexp sledge_report_exe
 	$(sledge_report) status -baseline baseline/analyze.sexp analyze.sexp | column -ts$$'\t'
 
 #
@@ -150,19 +155,19 @@ SmtTests:=$(shell find smt -name '*.smt2' 2>/dev/null)
 smt:
 	-parallel --bar $(sledge_dbg) smt $(SLEDGE_S_ARGS) ::: $(SmtTests)
 
-parallel_sledge_opt_smt=parallel --shuf --bar $(sledge_opt) smt -append-report $(SLEDGE_S_ARGS) :::
+parallel_sledge_opt_smt=parallel --use-cores-instead-of-threads --shuf --bar $(sledge_opt) smt -append-report $(SLEDGE_S_ARGS) :::
 
 smt-perf1:
-	@$(parallel_sledge_opt_smt) $(SmtTests)
+	-@$(parallel_sledge_opt_smt) $(SmtTests)
 
 smt-perf3:
-	@$(parallel_sledge_opt_smt) $(SmtTests) $(SmtTests) $(SmtTests)
+	-@$(parallel_sledge_opt_smt) $(SmtTests) $(SmtTests) $(SmtTests)
 
 smt-perf5:
-	@$(parallel_sledge_opt_smt) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests)
+	-@$(parallel_sledge_opt_smt) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests)
 
 smt-perf7:
-	@$(parallel_sledge_opt_smt) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests)
+	-@$(parallel_sledge_opt_smt) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests) $(SmtTests)
 
 .PHONY: smt.sexp
 smt.sexp:
@@ -171,10 +176,10 @@ smt.sexp:
 baseline/smt.sexp: smt.sexp
 	cp smt.sexp $@
 
-smt.html: smt.sexp
-	$(sledge_report) html -baseline baseline/smt.sexp smt.sexp -output $@
+smt.html: smt.sexp sledge_report_exe
+	$(sledge_report) html $(SLEDGE_R_ARGS) -baseline baseline/smt.sexp smt.sexp -output $@
 
-smt-status: smt.sexp
+smt-status: smt.sexp sledge_report_exe
 	$(sledge_report) status -baseline baseline/smt.sexp smt.sexp | column -ts$$'\t'
 
 #
@@ -184,7 +189,7 @@ smt-status: smt.sexp
 # run sledge llvm translate tests
 .PHONY: llvm
 llvm:
-	-find -L llvm -name '*.ll' -or -name '*.bc' 2>/dev/null | parallel --bar $(sledge_dbg) llvm translate -no-models -no-internalize $(SLEDGE_T_ARGS)
+	-find -L llvm -name '*.ll' -or -name '*.bc' 2>/dev/null | parallel --bar $(sledge_dbg) llvm translate -no-internalize $(SLEDGE_T_ARGS)
 
 .PHONY: llvm.sexp
 llvm.sexp:
@@ -193,10 +198,10 @@ llvm.sexp:
 baseline/llvm.sexp: llvm.sexp
 	cp llvm.sexp $@
 
-llvm.html: llvm.sexp
-	$(sledge_report) html -baseline baseline/llvm.sexp llvm.sexp -output $@
+llvm.html: llvm.sexp sledge_report_exe
+	$(sledge_report) html $(SLEDGE_R_ARGS) -baseline baseline/llvm.sexp llvm.sexp -output $@
 
-llvm-status: llvm.sexp
+llvm-status: llvm.sexp sledge_report_exe
 	$(sledge_report) status -baseline baseline/llvm.sexp llvm.sexp | column -ts$$'\t'
 
 #

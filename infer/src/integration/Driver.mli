@@ -13,12 +13,11 @@ open! IStd
 (** based on the build_system and options passed to infer, we run in different driver modes *)
 type mode =
   | Analyze
+  | AnalyzeJson
   | Ant of {prog: string; args: string list}
   | BuckClangFlavor of {build_cmd: string list}
-  | BuckCombinedGenrule of {build_cmd: string list}
   | BuckCompilationDB of {deps: BuckMode.clang_compilation_db_deps; prog: string; args: string list}
   | BuckGenrule of {prog: string}
-  | BuckGenruleMaster of {build_cmd: string list}
   | BuckJavaFlavor of {build_cmd: string list}
   | Clang of {compiler: Clang.compiler; prog: string; args: string list}
   | ClangCompilationDB of {db_files: [`Escaped of string | `Raw of string] list}
@@ -26,6 +25,7 @@ type mode =
   | Javac of {compiler: Javac.compiler; prog: string; args: string list}
   | Maven of {prog: string; args: string list}
   | NdkBuild of {build_cmd: string list}
+  | Rebar3 of {args: string list}
   | XcodeBuild of {prog: string; args: string list}
   | XcodeXcpretty of {prog: string; args: string list}
 
@@ -46,7 +46,3 @@ val analyze_and_report :
 
 val run_epilogue : unit -> unit
 (** cleanup infer-out/ for Buck, generate stats, and generally post-process the results of a run *)
-
-val read_config_changed_files : unit -> SourceFile.Set.t option
-(** return the list of changed files as read from Config.changed_files_index and passed to
-    SourceFile.changed_sources_from_changed_files *)

@@ -330,7 +330,7 @@ end = struct
     let path_pos_at_path p =
       try
         match curr_node p with Some node -> Option.is_some pos_opt && filter node | None -> false
-      with exn when SymOp.exn_not_failure exn -> false
+      with exn when Exception.exn_not_failure exn -> false
     in
     let position_seen = ref false in
     let inverse_sequence =
@@ -503,6 +503,10 @@ end = struct
                     "Switch condition is true. Entering switch case"
                 | false, Sil.Ik_switch ->
                     "Switch condition is false. Skipping switch case"
+                | true, Sil.Ik_compexch ->
+                    "Pointer contains expected value. Writing desired to pointer"
+                | false, Sil.Ik_compexch ->
+                    "Pointer does not contain expected value. Writing to expected"
                 | true, (Sil.Ik_bexp | Sil.Ik_land_lor) ->
                     "Condition is true"
                 | false, (Sil.Ik_bexp | Sil.Ik_land_lor) ->

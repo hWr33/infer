@@ -13,6 +13,7 @@ type t =
   | BufferOverrunAnalysis
   | BufferOverrunChecker
   | ConfigChecksBetweenMarkers
+  | ConfigImpactAnalysis
   | Cost
   | Eradicate
   | FragmentRetainsView
@@ -31,11 +32,11 @@ type t =
   | Quandary
   | RacerD
   | ResourceLeakLabExercise
+  | DOTNETResourceLeaks
   | SIOF
   | SelfInBlock
   | Starvation
-  | ToplOnBiabduction
-  | ToplOnPulse
+  | Topl
   | Uninit
 [@@deriving equal, enumerate]
 

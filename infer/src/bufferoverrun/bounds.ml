@@ -88,7 +88,7 @@ module SymLinear = struct
 
   let pp : markup:bool -> is_beginning:bool -> F.formatter -> t -> unit =
    fun ~markup ~is_beginning f x ->
-    if M.is_empty x then if is_beginning then F.pp_print_string f "0" else ()
+    if M.is_empty x then (if is_beginning then F.pp_print_string f "0")
     else
       ( M.fold
           (fun s c is_beginning ->
@@ -348,9 +348,7 @@ module Bound = struct
     of_path (Symb.SymbolPath.length ~is_void) ~unsigned:true ~non_int:false
 
 
-  let of_modeled_path ~is_expensive =
-    of_path (Symb.SymbolPath.modeled ~is_expensive) ~unsigned:true ~non_int:false
-
+  let of_modeled_path = of_path Symb.SymbolPath.modeled ~unsigned:true ~non_int:false
 
   let is_path_of ~f = function
     | Linear (n, se) when Z.(equal n zero) ->

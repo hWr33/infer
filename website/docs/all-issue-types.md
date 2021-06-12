@@ -5,6 +5,35 @@ title: List of all issue types
 Here is an overview of the issue types currently reported by Infer.
 
 
+## ARBITRARY_CODE_EXECUTION_UNDER_LOCK
+
+Reported as "Arbitrary Code Execution Under lock" by [starvation](/docs/next/checker-starvation).
+
+A call which may execute arbitrary code (such as registered, or chained, callbacks) is made while a lock is held.
+This code may deadlock whenever the callbacks obtain locks themselves, so it is an unsafe pattern.
+This warning is issued only at the innermost lock acquisition around the final call.
+
+Example:
+```java
+public class NotUnderLock {
+  SettableFuture future = null;
+
+  public void callFutureSetOk() {
+    future.set(null);
+  }
+
+  public synchronized void firstAcquisitionBad() {
+    callFutureSetOk();
+  }
+
+  public void secondAcquisitionOk(Object o) {
+    synchronized (o) {
+      firstAcquisitionBad();
+    }
+  }
+}
+```
+
 ## ASSIGN_POINTER_WARNING
 
 Reported as "Assign Pointer Warning" by [linters](/docs/next/checker-linters).
@@ -268,6 +297,11 @@ A condition expression is **always** evaluated to true.
 Reported as "Config Checks Between Markers" by [config-checks-between-markers](/docs/next/checker-config-checks-between-markers).
 
 A config checking is done between a marker's start and end
+## CONFIG_IMPACT
+
+Reported as "Config Impact" by [config-impact-analysis](/docs/next/checker-config-impact-analysis).
+
+A function is called without a config check
 ## CONSTANT_ADDRESS_DEREFERENCE
 
 Reported as "Constant Address Dereference" by [pulse](/docs/next/checker-pulse).
@@ -469,6 +503,11 @@ Note that the custom setter was only invoked once.
 Reported as "Divide By Zero" by [biabduction](/docs/next/checker-biabduction).
 
 
+## DOTNET_RESOURCE_LEAK
+
+Reported as "Dotnet Resource Leak" by [dotnet-resource-leak](/docs/next/checker-dotnet-resource-leak).
+
+Resource leak checker for .NET.
 ## EMPTY_VECTOR_ACCESS
 
 Reported as "Empty Vector Access" by [biabduction](/docs/next/checker-biabduction).
@@ -478,7 +517,7 @@ This error type is reported only in C++, in versions >= C++11.
 The code is trying to access an element of a vector that Infer believes to be
 empty. Such an access will cause undefined behavior at runtime.
 
-```c++
+```cpp
 #include <vector>
 int foo(){
   const std::vector<int> vec;
@@ -826,6 +865,20 @@ void infeasible_path_unreachable() {
 }
 ```
 
+## EXPENSIVE_AUTORELEASEPOOL_SIZE
+
+Reported as "Expensive Autoreleasepool Size" by [cost](/docs/next/checker-cost).
+
+\[EXPERIMENTAL\] This warning indicates that non-constant and non-top ObjC autoreleasepool's size in
+the procedure.  By default, this issue type is disabled.
+
+## EXPENSIVE_EXECUTION_TIME
+
+Reported as "Expensive Execution Time" by [cost](/docs/next/checker-cost).
+
+\[EXPERIMENTAL\] This warning indicates that non-constant and non-top execution time complexity of
+the procedure.  By default, this issue type is disabled.
+
 ## EXPENSIVE_LOOP_INVARIANT_CALL
 
 Reported as "Expensive Loop Invariant Call" by [loop-hoisting](/docs/next/checker-loop-hoisting).
@@ -870,6 +923,27 @@ these initializations can slow down the start-up time of an app.
 ## GUARDEDBY_VIOLATION
 
 Reported as "GuardedBy Violation" by [racerd](/docs/next/checker-racerd).
+
+A field annotated with `@GuardedBy` is being accessed by a call-chain that starts at a non-private method without synchronization.
+
+Example:
+
+```java
+class C {
+  @GuardedBy("this")
+  String f;
+
+  void foo(String s) {
+    f = s; // unprotected access here
+  }
+}
+```
+
+Action: Protect the offending access by acquiring the lock indicated by the `@GuardedBy(...)`.
+
+## GUARDEDBY_VIOLATION_NULLSAFE
+
+Reported as "GuardedBy Violation in `@Nullsafe` Class" by [racerd](/docs/next/checker-racerd).
 
 A field annotated with `@GuardedBy` is being accessed by a call-chain that starts at a non-private method without synchronization.
 
@@ -1064,6 +1138,11 @@ void invariant_hoist(int size) {
   }
 ```
 
+## IPC_ON_UI_THREAD
+
+Reported as "Ipc On Ui Thread" by [starvation](/docs/next/checker-starvation).
+
+A blocking `Binder` IPC call occurs on the UI thread.
 ## IVAR_NOT_NULL_CHECKED
 
 Reported as "Ivar Not Null Checked" by [biabduction](/docs/next/checker-biabduction).
@@ -1120,12 +1199,11 @@ class C implements I {
 
 Reported as "Lock Consistency Violation" by [racerd](/docs/next/checker-racerd).
 
-This is a C++ and Objective C error reported whenever:
+This is an error reported on C++ and Objective C classes whenever:
 
-- A class contains a member `lock` used for synchronization (most often a
-  `std::mutex`).
-- It has a public method which writes to some member `x` while holding `lock`.
-- It has a public method which reads `x` without holding `lock`.
+- Some class method directly uses locking primitives (not transitively).
+- It has a public method which writes to some member `x` while holding a lock.
+- It has a public method which reads `x` without holding a lock.
 
 The above may happen through a chain of calls. Above, `x` may also be a
 container (an array, a vector, etc).
@@ -1189,6 +1267,24 @@ weak pointer to `self`. Possibly the developer meant to capture only `weakSelf`
 to avoid a retain cycle, but made a typo and used `self` as well in the block,
 instead of `strongSelf`. In this case, this could cause a retain cycle.
 
+## MODIFIES_IMMUTABLE
+
+Reported as "Modifies Immutable" by [impurity](/docs/next/checker-impurity).
+
+This issue type indicates modifications to fields marked as @Immutable. For instance, below function `mutateArray` would be marked as modifying immutable field `testArray`:
+```java
+  @Immutable int[] testArray = new int[]{0, 1, 2, 4};
+  
+  int[] getTestArray() {
+    return testArray;
+  }                
+          
+  void mutateArray() {
+    int[] array = getTestArray();
+    array[2] = 7;
+  }
+```
+
 ## MULTIPLE_WEAKSELF
 
 Reported as "Multiple WeakSelf Use" by [self-in-block](/docs/next/checker-self-in-block).
@@ -1205,18 +1301,95 @@ Reported as "Mutable Local Variable In Component File" by [linters](/docs/next/c
 
 [Doc in ComponentKit page](http://componentkit.org/docs/avoid-local-variables)
 
+## NIL_BLOCK_CALL
+
+Reported as "Nil Block Call" by [pulse](/docs/next/checker-pulse).
+
+Calling a nil block is an error in Objective-C.
+## NIL_INSERTION_INTO_COLLECTION
+
+Reported as "Nil Insertion Into Collection" by [pulse](/docs/next/checker-pulse).
+
+Inserting nil into a collection is an error in Objective-C.
+## NIL_MESSAGING_TO_NON_POD
+
+Reported as "Nil Messaging To Non Pod" by [pulse](/docs/next/checker-pulse).
+
+In Objective-C, calling a method on `nil` (or in Objective-C terms, sending a message to `nil`) does not crash,
+it simply returns a falsy value (nil/0/false). However, sending a message that returns
+a non-POD C++ type (POD being ["Plain Old Data"](https://en.cppreference.com/w/cpp/named_req/PODType), essentially
+anything that cannot be compiled as a C-style struct) to `nil` causes undefined behaviour.
+
+```objectivec
+std::shared_ptr<int> callMethodReturnsnonPOD() {
+  SomeObject* obj = getObjectOrNil();
+  std::shared_ptr<int> d = [obj returnsnonPOD]; // UB
+  return d;
+}
+```
+
+To fix the above issue, we need to check if `obj` is
+not `nil` before calling the `returnsnonPOD` method:
+
+```objectivec
+std::shared_ptr<int> callMethodReturnsnonPOD(bool b) {
+  SomeObject* obj = getObjectOrNil(b);
+  if (obj == nil) { return std::make_shared<int>(0); }
+  std::shared_ptr<int> d = [obj returnsnonPOD];
+  return d;
+}
+```
+
 ## NULLPTR_DEREFERENCE
 
 Reported as "Nullptr Dereference" by [pulse](/docs/next/checker-pulse).
 
-See [NULL_DEREFERENCE](#null_dereference).
-## NULL_DEREFERENCE
+Infer reports null dereference bugs in Java, C, C++, and Objective-C
+when it is possible that the null pointer is dereferenced, leading to
+a crash.
 
-Reported as "Null Dereference" by [biabduction](/docs/next/checker-biabduction).
+### Null dereference in Java
 
-Infer reports null dereference bugs in C, Objective-C and Java. The issue is
-about a pointer that can be `null` and it is dereferenced. This leads to a crash
-in all the above languages.
+Many of Infer's reports of potential Null Pointer Exceptions (NPE) come from code of the form
+
+```java
+  p = foo(); // foo() might return null
+  stuff();
+  p.goo();   // dereferencing p, potential NPE
+```
+
+If you see code of this form, then you have several options.
+
+**If you are unsure whether or not `foo()` will return null**, you should
+ideally either
+
+1. Change the code to ensure that `foo()` can not return null, or
+
+2. Add a check that `p` is not `null` before dereferencing `p`.
+
+Sometimes, in case (2) it is not obvious what you should do when `p`
+is `null`. One possibility is to throw an exception, failing early but
+explicitly. This can be done using `checkNotNull` as in the following
+code:
+
+```java
+// code idiom for failing early
+import static com.google.common.base.Preconditions.checkNotNull;
+
+  //... intervening code
+
+  p = checkNotNull(foo()); // foo() might return null
+  stuff();
+  p.goo(); // p cannot be null here
+```
+
+The call `checkNotNull(foo())` will never return `null`: if `foo()`
+returns `null` then it fails early by throwing a Null Pointer
+Exception.
+
+Facebook NOTE: **If you are absolutely sure that foo() will not be
+null**, then if you land your diff this case will no longer be
+reported after your diff makes it to master.
 
 ### Null dereference in C
 
@@ -1242,7 +1415,7 @@ int null_pointer_interproc() {
 In Objective-C, null dereferences are less common than in Java, but they still
 happen and their cause can be hidden. In general, passing a message to nil does
 not cause a crash and returns `nil`, but dereferencing a pointer directly does
-cause a crash as well as calling a `nil` block.C
+cause a crash as well as calling a `nil` block.
 
 ```objectivec
 -(void) foo:(void (^)())callback {
@@ -1270,48 +1443,11 @@ passed as argument. Here are some examples:
 }
 ```
 
-### Null dereference in Java
+## NULL_DEREFERENCE
 
-Many of Infer's reports of potential NPE's come from code of the form
+Reported as "Null Dereference" by [biabduction](/docs/next/checker-biabduction).
 
-```java
-  p = foo(); // foo() might return null
-  stuff();
-  p.goo();   // dereferencing p, potential NPE
-```
-
-If you see code of this form, then you have several options.
-
-<b> If you are unsure whether or not foo() will return null </b>, you should
-ideally i. Change the code to ensure that foo() can not return null ii. Add a
-check for whether p is null, and do something other than dereferencing p when it
-is null.
-
-Sometimes, in case ii it is not obvious what you should do when p is null. One
-possibility (a last option) is to throw an exception, failing early. This can be
-done using checkNotNull as in the following code:
-
-```java
-  // code idiom for failing early
-
-  import static com.google.common.base.Preconditions.checkNotNull;
-
-  //... intervening code
-
-  p = checkNotNull(foo()); // foo() might return null
-  stuff();
-  p.goo();   // dereferencing p, potential NPE
-```
-
-The call checkNotNull(foo()) will never return null; in case foo() returns null
-it fails early by throwing an NPE.
-
-<b> If you are absolutely sure that foo() will not be null </b>, then if you
-land your diff this case will no longer be reported after your diff makes it to
-master. In the future we might include analysis directives (hey, analyzer, p is
-not null!) like in Hack that tell the analyzer the information that you know,
-but that is for later.
-
+See [NULLPTR_DEREFERENCE](#nullptr_dereference).
 ## OPTIONAL_EMPTY_ACCESS
 
 Reported as "Optional Empty Access" by [pulse](/docs/next/checker-pulse).
@@ -1426,6 +1562,11 @@ An example of such variadic methods is
 In this example, if `str` is `nil` then an array `@[@"aaa"]` of size 1 will be
 created, and not an array `@[@"aaa", str, @"bbb"]` of size 3 as expected.
 
+## PULSE_UNINITIALIZED_VALUE
+
+Reported as "Uninitialized Value" by [pulse](/docs/next/checker-pulse).
+
+See [UNINITIALIZED_VALUE](#uninitialized_value). Re-implemented using Pulse.
 ## PURE_FUNCTION
 
 Reported as "Pure Function" by [purity](/docs/next/checker-purity).
@@ -1920,7 +2061,7 @@ Reported as "StrongSelf Not Checked" by [self-in-block](/docs/next/checker-self-
 
 When a block captures `weakSelf` in the following pattern:
 
-```
+```objectivec
 __weak __typeof(self) weakSelf = self;
   int (^my_block)() = ^() {
     __strong __typeof(weakSelf) strongSelf = weakSelf;
@@ -2027,23 +2168,23 @@ These annotations can be found at `com.facebook.infer.annotation.*`.
   other threads. The main utility of this annotation is in interfaces, where
   Infer cannot look up the implementation and decide for itself.
 
-## TOPL_BIABD_ERROR
+## THREAD_SAFETY_VIOLATION_NULLSAFE
 
-Reported as "Topl Biabd Error" by [topl-biabd](/docs/next/checker-topl-biabd).
+Reported as "Thread Safety Violation in `@Nullsafe` Class" by [racerd](/docs/next/checker-racerd).
 
-Experimental.
-## TOPL_PULSE_ERROR
+A [Thread Safety Violation](#thread_safety_violation) in a `@Nullsafe` class.
+## TOPL_ERROR
 
-Reported as "Topl Pulse Error" by [topl-pulse](/docs/next/checker-topl-pulse).
+Reported as "Topl Error" by [topl](/docs/next/checker-topl).
 
-Experimental.
+A violation of a Topl property (user-specified).
 ## UNINITIALIZED_VALUE
 
 Reported as "Uninitialized Value" by [uninit](/docs/next/checker-uninit).
 
 A value is read before it has been initialized. For example, in C:
 
-```C
+```c
 struct coordinates {
   int x;
   int y;
@@ -2141,7 +2282,7 @@ The lifetime of an object has ended but that object is being
 accessed. For example, the address of a variable holding a C++ object
 is accessed after the variable has gone out of scope:
 
-```C++
+```cpp
 void foo() {
      X* p;
      { // new scope
@@ -2165,7 +2306,7 @@ pointers into the previous location of the contents).
 
 For example:
 
-```C++
+```cpp
 void deref_vector_element_after_push_back_bad(std::vector<int>& vec) {
   int* elt = &vec[1];
   vec.push_back(42); // if the array backing the vector was full already, this

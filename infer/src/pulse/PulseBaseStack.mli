@@ -15,10 +15,14 @@ include
      different type *)
 val compare : t -> t -> int [@@warning "-32"]
 
+val equal : t -> t -> bool
+
 val pp : F.formatter -> t -> unit
 
 val yojson_of_t : t -> Yojson.Safe.t
 
-val canonicalize : get_var_repr:(AbstractValue.t -> AbstractValue.t) -> t -> t
+val canonicalize : get_var_repr:(AbstractValue.t -> AbstractValue.t) -> t -> t SatUnsat.t
 (** replace each address in the stack by its canonical representative according to the current
     equality relation, represented by [get_var_repr] *)
+
+val subst_var : AbstractValue.t * AbstractValue.t -> t -> t SatUnsat.t

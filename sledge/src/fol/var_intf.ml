@@ -5,19 +5,10 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
-module type REPR = sig
+(** Variables *)
+module type S = sig
   type t [@@deriving compare, equal, sexp]
-
-  val make : id:int -> name:string -> t
-  val id : t -> int
-  val name : t -> string
-end
-
-type 'a strength = 'a -> [`Universal | `Existential | `Anonymous] option
-
-module type VAR = sig
-  type t [@@deriving compare, equal, sexp]
-  type nonrec strength = t strength
+  type strength = t -> [`Universal | `Existential | `Anonymous] option
 
   val ppx : strength -> t pp
   val pp : t pp
@@ -31,7 +22,6 @@ module type VAR = sig
   module Set : sig
     include NS.Set.S with type elt := t
 
-    val sexp_of_t : t -> Sexp.t
     val t_of_sexp : Sexp.t -> t
     val ppx : strength -> t pp
     val pp : t pp
@@ -41,35 +31,12 @@ module type VAR = sig
 
   val id : t -> int
   val name : t -> string
-  val program : name:string -> t
   val fresh : string -> wrt:Set.t -> t * Set.t
 
   val identified : name:string -> id:int -> t
-  (** Variable with the given [id]. Variables are compared by [id] alone,
-      [name] is used only for printing. The only way to ensure [identified]
-      variables do not clash with [fresh] variables is to pass the
-      [identified] variables to [fresh] in [wrt]:
-      [Var.fresh name ~wrt:(Var.Set.of_ (Var.identified ~name ~id))]. *)
+  (** Create a variable identified by [id]. The [id] uniquely identifies the
+      variable, and must be positive. *)
 
   (** Variable renaming substitutions *)
-  module Subst : sig
-    type var := t
-    type t [@@deriving compare, equal, sexp]
-    type x = {sub: t; dom: Set.t; rng: Set.t}
-
-    val pp : t pp
-    val empty : t
-    val freshen : Set.t -> wrt:Set.t -> x * Set.t
-    val invert : t -> t
-
-    val restrict_dom : t -> Set.t -> x
-    (** restrict the domain of a substitution to a set, and yield the range
-        of the unrestricted substitution *)
-
-    val is_empty : t -> bool
-    val domain : t -> Set.t
-    val range : t -> Set.t
-    val fold : t -> 's -> f:(var -> var -> 's -> 's) -> 's
-    val apply : t -> var -> var
-  end
+  module Subst : Subst.S with type var := t with type set := Set.t
 end

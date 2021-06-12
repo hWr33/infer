@@ -5,45 +5,27 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
-(** Arithmetic terms *)
-
-module type S = sig
-  type var
+(** Arithmetic terms, e.g. polynomials [t] over indeterminate terms [trm] *)
+module type S0 = sig
   type trm
-  type t [@@deriving compare, equal, sexp]
+  type t [@@deriving compare, equal]
 
-  val ppx : var Var_intf.strength -> t pp
+  val ppx : trm pp -> t pp
 
-  (** Construct and Destruct atomic terms *)
-
-  val const : Q.t -> t
-  (** [const q] represents the constant [q] *)
-
-  val get_const : t -> Q.t option
-  (** [get_const a] is [Some q] iff [equal a (const q)] *)
+  (** Construct *)
 
   val trm : trm -> t
   (** [trm x] represents the indeterminate term [x] *)
 
-  val get_trm : t -> trm option
-  (** [get_trm a] is [Some x] iff [equal a (trm x)] *)
+  val const : Q.t -> t
+  (** [const q] represents the rational constant [q] *)
 
-  type kind = Trm of trm | Const of Q.t | Interpreted | Uninterpreted
-
-  val classify : t -> kind
-  (** [classify a] is [Trm x] iff [get_trm a] is [Some x], [Const q] iff
-      [get_const a] is [Some q], [Interpreted] if the principal operation of
-      [a] is interpreted, and [Uninterpreted] otherwise *)
-
-  (** Construct compound terms *)
-
+  val zero : t
+  val one : t
   val neg : t -> t
   val add : t -> t -> t
   val sub : t -> t -> t
   val mulc : Q.t -> t -> t
-  val mul : trm -> trm -> t
-  val div : trm -> trm -> t
-  val pow : trm -> int -> t
 
   (** Transform *)
 
@@ -56,14 +38,89 @@ module type S = sig
   (** [partition_sign a] is [(p, n)] such that [a] = [p - n] and all
       coefficients in [p] and [n] are non-negative. *)
 
-  val map : t -> f:(trm -> trm) -> t
-  (** [map ~f a] is [a] with each maximal non-interpreted subterm
-      transformed by [f]. *)
+  (** Destruct and Query *)
+
+  val get_trm : t -> trm option
+  (** [get_trm a] is [Some x] iff [equal a (trm x)] *)
+
+  val get_const : t -> Q.t option
+  (** [get_const a] is [Some q] iff [equal a (const q)] *)
+
+  type kind = Trm of trm | Const of Q.t | Interpreted | Uninterpreted
+
+  val classify : t -> kind
+  (** [classify a] is [Trm x] iff [get_trm a] is [Some x], [Const q] iff
+      [get_const a] is [Some q], [Interpreted] if the principal operation of
+      [a] is interpreted, and [Uninterpreted] otherwise. *)
+
+  val is_uninterpreted : t -> bool
+  (** [is_uninterpreted a] iff [classify a = Uninterpreted] *)
 
   (** Traverse *)
 
   val trms : t -> trm iter
-  (** [trms a] enumerates the indeterminate terms appearing in [a] *)
+  (** [trms a] enumerates the indeterminate terms appearing in [a].
+      Considering an arithmetic term as a polynomial,
+      [trms (c × (Σᵢ₌₁ⁿ cᵢ × Πⱼ₌₁ᵐᵢ
+      Xᵢⱼ^pᵢⱼ))] is the sequence of terms [Xᵢⱼ] for each [i] and
+      [j]. *)
+end
+
+(** An embedding of arithmetic terms [t] into indeterminates [trm]. *)
+module type EMBEDDING = sig
+  type t
+  type trm
+
+  val to_trm : t -> trm
+  (** Embedding from [t] to [trm]: [to_trm a] is arithmetic term [a]
+      embedded into an indeterminate term. *)
+
+  val get_arith : trm -> t option
+  (** Partial projection from [trm] to [t]: [get_arith x] is [Some a] iff
+      [x = to_trm a]. *)
+end
+
+(** Indeterminate terms, treated as atomic / variables except when they can
+    be flattened using {!EMBEDDING.get_arith}. *)
+module type TRM = sig
+  include Comparer.S
+
+  val pp : t pp
+
+  type var
+
+  val vars : t -> var iter
+end
+
+(** Arithmetic terms, where an embedding {!EMBEDDING.get_arith} into
+    indeterminate terms is used to implicitly flatten arithmetic terms that
+    are embedded into general terms to the underlying arithmetic term. *)
+module type S = sig
+  include S0
+
+  (** Construct nonlinear arithmetic terms using the embedding, enabling
+      interpreting associativity, commutatitivity, and unit laws, but not
+      the full nonlinear arithmetic theory. *)
+
+  val mul : trm -> trm -> t
+  val div : trm -> trm -> t
+  val pow : trm -> int -> t
+
+  (** Traverse *)
+
+  val trms : t -> trm iter
+  (** [trms a] enumerates the maximal foreign or noninterpreted proper
+      subterms of [a]. Considering an arithmetic term as a polynomial,
+      [trms (c × (Σᵢ₌₁ⁿ cᵢ × Πⱼ₌₁ᵐᵢ
+      Xᵢⱼ^pᵢⱼ))] is the sequence of monomials
+      [Πⱼ₌₁ᵐᵢ Xᵢⱼ^pᵢⱼ] for each [i]. If the arithmetic
+      term is a monomial, [trms (Πⱼ₌₁ᵐ Xⱼ^pⱼ)] is the sequence
+      of factors [Xⱼ] for each [j]. *)
+
+  (** Transform *)
+
+  val map : t -> f:(trm -> trm) -> t
+  (** Map over the {!trms}. *)
 
   (** Solve *)
 
@@ -71,44 +128,4 @@ module type S = sig
   (** [solve_zero_eq d] is [Some (e, f)] if [0 = d] can be equivalently
       expressed as [e = f] for some monomial subterm [e] of [d]. If [for_]
       is passed, then the subterm [e] must be [for_]. *)
-end
-
-(** Indeterminate terms, treated as atomic / variables except when they can
-    be flattened using [EMBEDDING.get_arith]. *)
-module type INDETERMINATE = sig
-  type trm [@@deriving compare, equal, sexp]
-  type var
-
-  val ppx : var Var_intf.strength -> trm pp
-  val pp : trm pp
-  val vars : trm -> var iter
-end
-
-(** An embedding of arithmetic terms [t] into indeterminates [trm]. *)
-module type EMBEDDING = sig
-  type trm
-  type t
-
-  val to_trm : t -> trm
-  (** Embedding from [t] to [trm]: [to_trm a] is arithmetic term [a]
-      embedded in an indeterminate term. *)
-
-  val get_arith : trm -> t option
-  (** Partial projection from [trm] to [t]: [get_arith x] is [Some a] if
-      [x = to_trm a]. This is used to flatten indeterminates that are
-      actually arithmetic for the client, thereby enabling arithmetic
-      operations to be interpreted more often. *)
-end
-
-(** A type [t] representing arithmetic terms over indeterminates [trm]
-    together with a functor [Make] that takes an [EMBEDDING] of arithmetic
-    terms [t] into indeterminates [trm] and produces an implementation of
-    the primary interface [S]. *)
-module type REPRESENTATION = sig
-  type t [@@deriving compare, equal, sexp]
-  type var
-  type trm
-
-  module Make (_ : EMBEDDING with type trm := trm and type t := t) :
-    S with type var := var with type trm := trm with type t := t
 end

@@ -6,50 +6,76 @@
 .PHONY: default
 default: exes
 
-EXES = cli/sledge_cli report/sledge_report
-INSTALLS = sledge
+RELEASE_TARGETS = _build/release/cli/sledge_cli.exe _build/release/sledge.install
+REPORT_TARGETS = _build/debug/report/sledge_report.exe
 
-DEBUG_TARGETS = $(patsubst %,_build/debug/%.exe,$(EXES)) $(patsubst %,_build/debug/%.install,$(INSTALLS))
+TARGETS = $(subst release,debug,$(RELEASE_TARGETS)) $(subst release,trace,$(RELEASE_TARGETS)) $(RELEASE_TARGETS) $(REPORT_TARGETS) _build/release/sledge-help.txt
 
-TARGETS = $(DEBUG_TARGETS) $(subst debug,trace,$(DEBUG_TARGETS)) $(subst debug,release,$(DEBUG_TARGETS)) _build/release/sledge-help.txt
+dune_build_release = dune build $(RELEASE_TARGETS)
+dune_install_release = dune install --context=release --prefix=_build/_install/release sledge 2>/dev/null
 
-dune_build_debug = dune build $(DEBUG_TARGETS)
-dune_install_debug = dune install --context=debug --prefix=_build/_install/debug sledge 2>/dev/null
+dune_build_trace = $(subst release,trace,$(dune_build_release))
+dune_install_trace = $(subst release,trace,$(dune_install_release))
 
-dune_build_debug_release = $(subst debug,trace,$(dune_build_debug))
-dune_install_debug_release = $(subst debug,trace,$(dune_install_debug))
+dune_build_debug = $(subst release,debug,$(dune_build_release))
+dune_install_debug = $(subst release,debug,$(dune_install_release))
 
-dune_build_release = $(subst debug,release,$(dune_build_debug))
-dune_install_release = $(subst debug,release,$(dune_install_debug))
+export PATH := ../facebook/dependencies/bin:$(PATH)
+
+LLVM_OCAML_SRC = $(shell git ls-files -- vendor/llvm-dune)
+
+# file to use as a sentinel indicating llvm ocaml bindings are up-to-date
+LLVM_OCAML_SENTINEL=vendor/llvm-dune/src/llvm/common/dune
+
+# Note that this does not correctly detect llvm shared libraries on
+# macos since llvm-config is broken. A filthy workaround seems to be
+# to create the libLLVM-11.dylib file llvm-config looks for as a
+# symbolic link to libLLVM.dylib. That is, to manually in the shell
+# execute:
+# (LLVMLIB=$($(opam config var conf-llvm:config) --libdir);
+#  ln -s $LLVMLIB/libLLVM.dylib $LLVMLIB/libLLVM-11.dylib)
+
+$(LLVM_OCAML_SENTINEL): $(LLVM_OCAML_SRC)
+	cd vendor/llvm-dune; ./setup.sh $$(opam config var conf-llvm:config) &>/dev/null
+
+clean_llvm:
+	rm -rf vendor/llvm-dune/{src,llvm_*.opam}
+
+.PHONY: setup
+setup: $(LLVM_OCAML_SENTINEL)
 
 .PHONY: check
-check:
+check: setup
 	dune build @check
 
 .PHONY: exes
-exes:
+exes: setup
 	dune build $(TARGETS)
 	$(dune_install_debug)
-	$(dune_install_debug_release)
+	$(dune_install_trace)
 	$(dune_install_release)
 
 .PHONY: debug
-debug:
+debug: setup
 	$(dune_build_debug)
 	$(dune_install_debug)
 
 .PHONY: trace
-trace:
-	$(dune_build_debug_release)
-	$(dune_install_debug_release)
+trace: setup
+	$(dune_build_trace)
+	$(dune_install_trace)
 
 .PHONY: release
-release:
+release: setup
 	$(dune_build_release)
 	$(dune_install_release)
 
+.PHONY: report
+report: setup
+	dune build $(REPORT_TARGETS)
+
 .PHONY: watch
-watch:
+watch: setup
 	dune build --watch --terminal-persistence=clear-on-rebuild $(TARGETS)
 
 .PHONY: test
@@ -59,7 +85,7 @@ test:
 
 .PHONY: ci-test
 ci-test:
-	dune build @_build/debug/runtest
+	dune build @_build/debug/fmt @_build/debug/runtest
 
 .PHONY: clean
 clean:
@@ -78,7 +104,7 @@ OCAMLFORMAT_ARGS =
 
 .PHONY: fmt_all
 fmt_all:
-	parallel $(OCAMLFORMAT_EXE) $(OCAMLFORMAT_ARGS) -i ::: $(shell find * \( -name _build -or -name llvm \) -not -prune -or \( -name '*'.ml -or -name '*'.mli \) -print 2>/dev/null)
+	parallel $(OCAMLFORMAT_EXE) $(OCAMLFORMAT_ARGS) -i ::: $(shell find * \( -name _build -or -name vendor \) -prune -or \( -name '*'.ml -or -name '*'.mli \) -print 2>/dev/null)
 
 # print any variable for Makefile debugging
 print-%:

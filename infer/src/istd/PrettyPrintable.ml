@@ -83,6 +83,8 @@ module type MonoMap = sig
 
   val filter : (key -> value -> bool) -> t -> t
 
+  val filter_map : (key -> value -> value option) -> t -> t
+
   val partition : (key -> value -> bool) -> t -> t * t
 
   val cardinal : t -> int
@@ -123,13 +125,19 @@ module type MonoMap = sig
 
   val fold_map : t -> init:'a -> f:('a -> value -> 'a * value) -> 'a * t
 
+  val fold_mapi : t -> init:'a -> f:(key -> 'a -> value -> 'a * value) -> 'a * t
+
   val of_seq : (key * value) Seq.t -> t
+
+  val to_seq : t -> (key * value) Seq.t
 end
 
 module type PPMap = sig
   include Caml.Map.S
 
   val fold_map : 'a t -> init:'b -> f:('b -> 'a -> 'b * 'c) -> 'b * 'c t
+
+  val fold_mapi : 'a t -> init:'b -> f:(key -> 'b -> 'a -> 'b * 'c) -> 'b * 'c t
 
   val is_singleton_or_more : 'a t -> (key * 'a) IContainer.singleton_or_more
 
@@ -158,6 +166,19 @@ end
 
 module MakePPMap (Ord : PrintableOrderedType) = struct
   include Caml.Map.Make (Ord)
+
+  let fold_mapi m ~init ~f =
+    let acc = ref init in
+    let new_map =
+      mapi
+        (fun key value ->
+          let acc', res = f key !acc value in
+          acc := acc' ;
+          res )
+        m
+    in
+    (!acc, new_map)
+
 
   let fold_map m ~init ~f =
     let acc = ref init in
@@ -221,7 +242,7 @@ module type PrintableRankedType = sig
 end
 
 module type PPUniqRankSet = sig
-  type t
+  type t [@@deriving compare, equal]
 
   type rank
 
@@ -231,13 +252,13 @@ module type PPUniqRankSet = sig
 
   val empty : t
 
-  val equal : t -> t -> bool
-
   val find_rank : t -> rank -> elt option
 
   val fold : t -> init:'accum -> f:('accum -> elt -> 'accum) -> 'accum
 
   val fold_map : t -> init:'accum -> f:('accum -> elt -> 'accum * elt) -> 'accum * t
+
+  val for_all : f:(elt -> bool) -> t -> bool
 
   val is_empty : t -> bool
 
@@ -272,15 +293,22 @@ module MakePPUniqRankSet
 
   type elt = Val.t
 
-  let add map value = Map.add (Val.to_rank value) value map
+  let add map value =
+    let rank = Val.to_rank value in
+    if Map.mem rank map then map else Map.add rank value map
+
 
   let empty = Map.empty
+
+  let compare = Map.compare Val.compare
 
   let equal = Map.equal Val.equal
 
   let find_rank m rank = Map.find_opt rank m
 
   let fold map ~init ~f = Map.fold (fun _key value accum -> f accum value) map init
+
+  let for_all ~f map = Map.for_all (fun _rank value -> f value) map
 
   let is_empty = Map.is_empty
 

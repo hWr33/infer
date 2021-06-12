@@ -81,10 +81,10 @@ let fold_vars ?ignore_ctx ?ignore_pure fold_vars q s ~f =
 
 let rec var_strength_ xs m q =
   let add v m =
-    match Var.Map.find v m with
-    | None -> Var.Map.add ~key:v ~data:`Anonymous m
-    | Some `Anonymous -> Var.Map.add ~key:v ~data:`Existential m
-    | Some _ -> m
+    Var.Map.update v m ~f:(function
+      | None -> Some `Anonymous
+      | Some `Anonymous -> Some `Existential
+      | o -> o )
   in
   let xs = Var.Set.union xs q.xs in
   let m_stem =
@@ -296,7 +296,7 @@ let rec invariant q =
             invariant sjn ) )
   with exc ->
     let bt = Printexc.get_raw_backtrace () in
-    [%Trace.info "%a" pp_raw q] ;
+    [%Trace.info " %a" pp_raw q] ;
     Printexc.raise_with_backtrace exc bt
 
 (** Query *)
@@ -555,7 +555,13 @@ let pure (p : Formula.t) =
     invariant q]
 
 let and_ b q =
-  star (pure (Formula.map_terms ~f:(Context.normalize q.ctx) b)) q
+  [%trace]
+    ~call:(fun {pf} -> pf "@ (%a)@ (%a)" Formula.pp b pp q)
+    ~retn:(fun {pf} -> pf "%a" pp)
+  @@ fun () ->
+  let xs, q = bind_exists q ~wrt:(Formula.fv b) in
+  let b = Formula.map_terms ~f:(Context.normalize q.ctx) b in
+  exists xs (star (pure b) q)
 
 let and_subst subst q =
   [%Trace.call fun {pf} -> pf "@ %a@ %a" Context.Subst.pp subst pp q]
@@ -831,13 +837,11 @@ let rec simplify_ us rev_xss survived ancestor_subst q =
       let survived =
         Var.Set.union survived (fv (elim_exists stem.xs stem))
       in
-      let q =
-        starN
-          ( stem
-          :: List.map q.djns ~f:(fun djn ->
-                 orN (List.map ~f:(simplify_ us rev_xss survived subst) djn) )
-          )
+      let djns =
+        List.map q.djns ~f:(fun djn ->
+            orN (List.map ~f:(simplify_ us rev_xss survived subst) djn) )
       in
+      let q = starN (stem :: djns) in
       if is_false q then false_ q.us
       else
         let removed = Var.Set.diff removed survived in

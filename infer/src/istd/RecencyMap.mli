@@ -16,13 +16,13 @@ end
 (** A functional map interface where only the [N] most recently-accessed elements are guaranteed to
     be persisted, similarly to an LRU cache. The map stores at most [2*N] elements. *)
 module type S = sig
-  type t
+  (** Note that the derived [compare] and [equal] functions are sensitive to the underlying
+      implementation and in particular won't equate some objects that denote the same map. *)
+  type t [@@deriving compare, equal]
 
   type key
 
   type value
-
-  val equal : t -> t -> bool
 
   val pp : F.formatter -> t -> unit
 
@@ -31,6 +31,8 @@ module type S = sig
   val add : key -> value -> t -> t
 
   val bindings : t -> (key * value) list
+
+  val exists : t -> f:(key * value -> bool) -> bool
 
   val filter : t -> f:(key * value -> bool) -> t
 
@@ -42,9 +44,13 @@ module type S = sig
 
   val is_empty : t -> bool
 
+  val map : t -> f:(value -> value) -> t
+
   val mem : t -> key -> bool
 
   val union_left_biased : t -> t -> t
+
+  val to_seq : t -> (key * value) Seq.t
 end
 
 module Make

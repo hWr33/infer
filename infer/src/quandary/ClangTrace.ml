@@ -122,8 +122,8 @@ module SourceKind = struct
 
 
   let get_tainted_formals pdesc tenv =
-    if PredSymb.equal_access (Procdesc.get_attributes pdesc).ProcAttributes.access PredSymb.Private
-    then Source.all_formals_untainted pdesc
+    if ProcAttributes.equal_access (Procdesc.get_access pdesc) Private then
+      Source.all_formals_untainted pdesc
     else
       let overrides_service_method pname tenv =
         PatternMatch.override_exists
@@ -459,7 +459,7 @@ include TaintTrace.Make (struct
     (not is_escaped)
     &&
     match typ with
-    | Some (Typ.Tint _ | Tfloat _ | Tvoid) ->
+    | Some Typ.(Tint _ | Tfloat _ | Tvoid) ->
         false
     | _ ->
         (* possible a string/object/struct type; assume injection possible *)

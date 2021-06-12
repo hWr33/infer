@@ -13,16 +13,18 @@ module ValueHistory = PulseValueHistory
 
 type access_to_invalid_address =
   { calling_context: (CallEvent.t * Location.t) list
-        (** the list of function calls leading to the issue being realised, which is an additional
-            common prefix to the traces in the record *)
+        (** the list of function calls leading to the issue being realised, in
+            outermost-to-innermost order, which is an additional common prefix to the traces in the
+            record *)
   ; invalidation: Invalidation.t
   ; invalidation_trace: Trace.t
         (** assuming we are in the calling context, the trace leads to [invalidation] without
             further assumptions *)
   ; access_trace: Trace.t
         (** assuming we are in the calling context, the trace leads to an access to the value
-            invalidated in [invalidation_trace] without further assumptions *) }
-[@@deriving equal, yojson_of]
+            invalidated in [invalidation_trace] without further assumptions *)
+  ; must_be_valid_reason: Invalidation.must_be_valid_reason option }
+[@@deriving compare, equal, yojson_of]
 
 type read_uninitialized_value =
   { calling_context: (CallEvent.t * Location.t) list
@@ -31,7 +33,7 @@ type read_uninitialized_value =
   ; trace: Trace.t
         (** assuming we are in the calling context, the trace leads to read of the uninitialized
             value *) }
-[@@deriving equal, yojson_of]
+[@@deriving compare, equal, yojson_of]
 
 (** an error to report to the user *)
 type t =

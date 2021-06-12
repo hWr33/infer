@@ -92,6 +92,13 @@ val map3 :
 
 val mapN : ('a -> 'a) -> 'b -> ('a array -> 'b) -> 'a array -> 'b
 
+val fold_map_from_map :
+     ('a -> f:('b -> 'c) -> 'd)
+  -> 'a
+  -> 's
+  -> f:('b -> 's -> 'c * 's)
+  -> 'd * 's
+
 (** Pretty-printing *)
 
 (** Pretty-printer for argument type. *)
@@ -139,23 +146,21 @@ include module type of Iter.Import
 
 (** Containers *)
 
+module Comparer = Comparer
 module Option = Option
 include module type of Option.Import
 
-module Either : sig
-  type ('a, 'b) t = Left of 'a | Right of 'b
-
-  val left : 'a -> ('a, 'b) t
-  val right : 'a -> ('b, 'a) t
-end
+type 'a zero_one_many = Zero | One of 'a | Many
+type ('a, 'b) zero_one_many2 = Zero2 | One2 of 'a * 'b | Many2
 
 module Pair = Containers.Pair
 module List = List
+module RAL = Ral
 module Array = Array
 module IArray = IArray
 include module type of IArray.Import
-module Set = Set
-module Map = Map
+module Set = NSSet
+module Map = NSMap
 module Multiset = Multiset
 module Bijection = CCBijection [@@warning "-49"]
 

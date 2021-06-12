@@ -18,7 +18,7 @@ let%test_module _ =
      *     ~config:
      *       (Result.get_ok
      *          (Trace.parse
-     *             "+Context-Context.canon-Context.canon_f-Context.norm"))
+     *             "+Context-Context.canon-Context.canon_f-Context.norm-Context.find_extend_"))
      *     () *)
 
     [@@@warning "-32"]
@@ -61,19 +61,30 @@ let%test_module _ =
       pp r3 ;
       [%expect
         {|
-        %t_1 = g(%y_6, %z_7) = g(%y_6, %v_3) = %z_7 = %x_5 = %w_4 = %v_3
-        = %u_2
+        %t_1 = %u_2 = %v_3 = %w_4 = %x_5 = %z_7 = g(%y_6, %t_1)
+        = g(%y_6, %u_2) = g(%y_6, %v_3) = g(%y_6, %z_7)
     
-      {sat= true;
-       rep= [[%t_1 ↦ ];
-             [%u_2 ↦ %t_1];
-             [%v_3 ↦ %t_1];
-             [%w_4 ↦ %t_1];
-             [%x_5 ↦ %t_1];
-             [%y_6 ↦ ];
-             [%z_7 ↦ %t_1];
-             [g(%y_6, %v_3) ↦ %t_1];
-             [g(%y_6, %z_7) ↦ %t_1]]} |}]
+      { sat= true;
+        rep= [[%t_1 ↦ ];
+              [%u_2 ↦ %t_1];
+              [%v_3 ↦ %t_1];
+              [%w_4 ↦ %t_1];
+              [%x_5 ↦ %t_1];
+              [%y_6 ↦ ];
+              [%z_7 ↦ %t_1];
+              [g(%y_6, %t_1) ↦ %t_1];
+              [g(%y_6, %u_2) ↦ %t_1];
+              [g(%y_6, %v_3) ↦ %t_1];
+              [g(%y_6, %z_7) ↦ %t_1]];
+        cls= [[%t_1
+               ↦ {%u_2, %v_3, %w_4, %x_5, %z_7, g(%y_6, %t_1),
+                  g(%y_6, %u_2), g(%y_6, %v_3), g(%y_6, %z_7)}]];
+        use= [[%t_1 ↦ g(%y_6, %t_1)];
+              [%u_2 ↦ g(%y_6, %u_2)];
+              [%v_3 ↦ g(%y_6, %v_3)];
+              [%y_6 ↦ g(%y_6, %t_1), g(%y_6, %u_2), g(%y_6, %v_3),
+               g(%y_6, %z_7)];
+              [%z_7 ↦ g(%y_6, %z_7)]] } |}]
 
     let%test _ = implies_eq r3 t z
 
@@ -82,32 +93,24 @@ let%test_module _ =
 
     let%expect_test _ =
       pp r15 ;
-      [%expect {|
-          {sat= true; rep= [[%x_5 ↦ 1]]} |}]
+      [%expect
+        {|
+          { sat= true; rep= [[%x_5 ↦ 1]]; cls= [[1 ↦ {%x_5}]]; use= [] } |}]
 
     let%test _ = implies_eq r15 (Term.neg b) (Term.apply (Signed 1) [|!1|])
     let%test _ = implies_eq r15 (Term.apply (Unsigned 1) [|b|]) !1
 
     let%expect_test _ =
       replay
-        {|(Solve_for_vars
-            (((Var (id 0) (name 2)) (Var (id 0) (name 6)) (Var (id 0) (name 8)))
-              ((Var (id 5) (name a0)) (Var (id 6) (name b)) (Var (id 7) (name m))
-                (Var (id 8) (name a)) (Var (id 9) (name a0))))
-            ((xs ()) (sat true)
-              (rep
-                (((Var (id 9) (name a0)) (Var (id 5) (name a0)))
-                  ((Var (id 8) (name a))
-                    (Concat
-                      ((Sized (seq (Var (id 5) (name a0))) (siz (Z 4)))
-                        (Sized (seq (Z 0)) (siz (Z 4))))))
-                  ((Var (id 7) (name m)) (Z 8))
-                  ((Var (id 6) (name b)) (Var (id 0) (name 2)))
-                  ((Var (id 5) (name a0)) (Var (id 5) (name a0)))
-                  ((Var (id 0) (name 6))
-                    (Concat
-                      ((Sized (seq (Var (id 5) (name a0))) (siz (Z 4)))
-                        (Sized (seq (Z 0)) (siz (Z 4))))))
-                  ((Var (id 0) (name 2)) (Var (id 0) (name 2)))))))|} ;
+        {|(Dnf
+            (Eq (Sized (seq (Var (id 1) (name a))) (siz (Z 8)))
+              (Concat
+                ((Sized (seq (Var (id 3) (name c))) (siz (Z 4)))
+                  (Sized (seq (Var (id 2) (name b))) (siz (Z 4)))))))|} ;
       [%expect {| |}]
+
+    (* let%expect_test _ =
+     *   replay
+     *     {||} ;
+     *   [%expect {| |}] *)
   end )

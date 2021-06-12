@@ -12,7 +12,9 @@ open PulseBasicInterface
 (* {3 Heap domain } *)
 
 module Access = struct
-  type t = AbstractValue.t HilExp.Access.t [@@deriving compare, yojson_of]
+  type t = AbstractValue.t HilExp.Access.t [@@deriving yojson_of]
+
+  let compare = HilExp.Access.loose_compare AbstractValue.compare
 
   let equal = [%compare.equal: t]
 
@@ -21,7 +23,8 @@ module Access = struct
   let canonicalize ~get_var_repr (access : t) =
     match access with
     | ArrayAccess (typ, addr) ->
-        HilExp.Access.ArrayAccess (typ, get_var_repr addr)
+        let addr' = get_var_repr addr in
+        if AbstractValue.equal addr addr' then access else HilExp.Access.ArrayAccess (typ, addr')
     | FieldAccess _ | TakeAddress | Dereference ->
         access
 end
@@ -47,10 +50,21 @@ module Edges = struct
   let yojson_of_t edges = [%yojson_of: (Access.t * AddrTrace.t) list] (M.bindings edges)
 
   let canonicalize ~get_var_repr edges =
-    M.fold ~init:M.empty edges ~f:(fun edges' (access, (addr, hist)) ->
-        let addr' = get_var_repr addr in
-        let access' = Access.canonicalize ~get_var_repr access in
-        M.add access' (addr', hist) edges' )
+    let edges', changed =
+      M.fold edges ~init:(M.empty, false) ~f:(fun (edges', changed) (access, (addr, hist)) ->
+          let addr' = get_var_repr addr in
+          let access' = Access.canonicalize ~get_var_repr access in
+          let changed =
+            changed || not (AbstractValue.equal addr addr' && phys_equal access access')
+          in
+          (M.add access' (addr', hist) edges', changed) )
+    in
+    if changed then edges' else edges
+
+
+  let subst_var (v, v') edges =
+    M.map edges ~f:(fun ((addr, hist) as addr_hist) ->
+        if AbstractValue.equal addr v then (v', hist) else addr_hist )
 
 
   include M
@@ -73,6 +87,8 @@ let find_edge_opt addr access memory =
   Graph.find_opt addr memory >>= Edges.find_opt access
 
 
+let has_edge addr access memory = find_edge_opt addr access memory |> Option.is_some
+
 let yojson_of_t g = [%yojson_of: (AbstractValue.t * Edges.t) list] (Graph.bindings g)
 
 let is_allocated memory v =
@@ -82,10 +98,10 @@ let is_allocated memory v =
 let canonicalize ~get_var_repr memory =
   let exception AliasingContradiction in
   try
-    let memory =
+    let memory', changed =
       Graph.fold
-        (fun addr edges g ->
-          if Edges.is_empty edges then g
+        (fun addr edges (g, changed) ->
+          if Edges.is_empty edges then (g, true)
           else
             let addr' = get_var_repr addr in
             if is_allocated g addr' then (
@@ -94,11 +110,48 @@ let canonicalize ~get_var_repr memory =
               raise_notrace AliasingContradiction )
             else
               let edges' = Edges.canonicalize ~get_var_repr edges in
-              Graph.add addr' edges' g )
-        memory Graph.empty
+              let changed =
+                changed || not (AbstractValue.equal addr addr' && phys_equal edges edges')
+              in
+              (Graph.add addr' edges' g, changed) )
+        memory (Graph.empty, false)
     in
-    Sat memory
+    if changed then Sat memory' else Sat memory
   with AliasingContradiction -> Unsat
 
 
+let subst_var (v, v') memory =
+  (* subst in edges *)
+  let memory =
+    let v_appears_in_edges =
+      Graph.exists
+        (fun _ edges -> Edges.exists ~f:(fun (_, (dest, _)) -> AbstractValue.equal v dest) edges)
+        memory
+    in
+    if v_appears_in_edges then Graph.map (Edges.subst_var (v, v')) memory else memory
+  in
+  (* subst in the domain of the graph, already substituted in edges above *)
+  match Graph.find_opt v memory with
+  | None ->
+      Sat memory
+  | Some edges -> (
+      let memory = Graph.remove v memory in
+      match Graph.find_opt v' memory with
+      | None ->
+          Sat (Graph.add v' edges memory)
+      | Some edges' ->
+          if Edges.is_empty edges then Sat memory
+          else if Edges.is_empty edges' then Sat (Graph.add v' edges memory)
+          else (
+            (* both set of edges being non-empty means that [v] and [v'] have been treated as
+               disjoint memory locations until now, contradicting the fact they are equal *)
+            L.d_printfln "CONTRADICTION: %a = %a, which is already allocated in %a@\n"
+              AbstractValue.pp v AbstractValue.pp v' Graph.pp memory ;
+            Unsat ) )
+
+
 include Graph
+
+let compare = Graph.compare Edges.compare
+
+let equal = Graph.equal Edges.equal

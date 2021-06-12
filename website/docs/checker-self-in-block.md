@@ -9,6 +9,8 @@ Activate with `--self-in-block`.
 
 Supported languages:
 - C/C++/ObjC: Yes
+- C#/.Net: No
+- Erlang: No
 - Java: No
 
 

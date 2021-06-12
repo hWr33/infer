@@ -45,16 +45,13 @@ let proc_name_of_uid =
 
 let analyze_target : (TaskSchedulerTypes.target, string) Tasks.doer =
   let analyze_source_file exe_env source_file =
-    if Topl.is_shallow_active () then DB.Results_dir.init (Topl.sourcefile ()) ;
     DB.Results_dir.init source_file ;
     L.task_progress SourceFile.pp source_file ~f:(fun () ->
         try
           Ondemand.analyze_file exe_env source_file ;
-          if Topl.is_shallow_active () && Config.debug_mode then
-            DotCfg.emit_frontend_cfg (Topl.sourcefile ()) (Topl.cfg ()) ;
           if Config.write_html then Printer.write_all_html_files source_file ;
           None
-        with TaskSchedulerTypes.ProcnameAlreadyLocked {dependency_filename} ->
+        with RestartSchedulerException.ProcnameAlreadyLocked {dependency_filename} ->
           Some dependency_filename )
   in
   (* In call-graph scheduling, log progress every [per_procedure_logging_granularity] procedures.
@@ -71,7 +68,7 @@ let analyze_target : (TaskSchedulerTypes.target, string) Tasks.doer =
     try
       Ondemand.analyze_proc_name_toplevel exe_env proc_name ;
       None
-    with TaskSchedulerTypes.ProcnameAlreadyLocked {dependency_filename} ->
+    with RestartSchedulerException.ProcnameAlreadyLocked {dependency_filename} ->
       Some dependency_filename
   in
   fun target ->
@@ -120,8 +117,8 @@ let get_source_files_to_analyze ~changed_files =
     if result then incr n_source_files_to_analyze ;
     result
   in
-  ScubaLogging.log_count ~label:"source_files_to_analyze" ~value:!n_source_files_to_analyze ;
   let source_files_to_analyze = SourceFiles.get_all ~filter () in
+  ScubaLogging.log_count ~label:"source_files_to_analyze" ~value:!n_source_files_to_analyze ;
   let pp_n_source_files ~n_total fmt n_to_analyze =
     let pp_total_if_not_all fmt n_total =
       if Config.reactive_mode || Option.is_some changed_files then

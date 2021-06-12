@@ -15,13 +15,19 @@ let yojson_of_typ_ = [%yojson_of: _]
 
 let compare_typ_ _ _ = 0
 
+let equal_typ_ = [%compare.equal: typ_]
+
 module Access = struct
-  type 'array_index t =
-    | FieldAccess of Fieldname.t
+  type ('fieldname, 'array_index) t_ =
+    | FieldAccess of 'fieldname
     | ArrayAccess of typ_ * 'array_index
     | TakeAddress
     | Dereference
-  [@@deriving compare, yojson_of]
+  [@@deriving compare, equal, yojson_of]
+
+  type 'array_index t = (Fieldname.t, 'array_index) t_ [@@deriving compare, yojson_of]
+
+  let loose_compare compare_array_index = compare_t_ Fieldname.loose_compare compare_array_index
 
   let pp pp_array_index fmt = function
     | FieldAccess field_name ->
@@ -426,8 +432,8 @@ let rec array_index_of_exp ~include_array_indexes ~f_resolve_id ~add_deref exp t
 and access_exprs_of_exp ~include_array_indexes ~f_resolve_id ~add_deref exp0 typ0 =
   let rec of_exp_ exp typ (add_accesses : AccessExpression.t -> AccessExpression.t) acc :
       AccessExpression.t list =
-    match exp with
-    | Exp.Var id -> (
+    match (exp : Exp.t) with
+    | Var id -> (
       match f_resolve_id (Var.of_id id) with
       | Some access_expr ->
           let access_expr' =
@@ -440,7 +446,7 @@ and access_exprs_of_exp ~include_array_indexes ~f_resolve_id ~add_deref exp0 typ
             if add_deref then AccessExpression.dereference access_expr else access_expr
           in
           add_accesses access_expr' :: acc )
-    | Exp.Lvar pvar when Pvar.is_ssa_frontend_tmp pvar -> (
+    | Lvar pvar when Pvar.is_ssa_frontend_tmp pvar -> (
       match f_resolve_id (Var.of_pvar pvar) with
       | Some access_expr ->
           (* do not need to add deref here as it was added implicitly in the binding *)
@@ -456,18 +462,18 @@ and access_exprs_of_exp ~include_array_indexes ~f_resolve_id ~add_deref exp0 typ
             if add_deref then AccessExpression.dereference access_expr else access_expr
           in
           add_accesses access_expr' :: acc )
-    | Exp.Lvar pvar ->
+    | Lvar pvar ->
         let access_expr = AccessExpression.of_pvar pvar typ in
         let access_expr' =
           if add_deref then AccessExpression.dereference access_expr else access_expr
         in
         add_accesses access_expr' :: acc
-    | Exp.Lfield (root_exp, fld, root_exp_typ) ->
+    | Lfield (root_exp, fld, root_exp_typ) ->
         let add_field_access_expr access_expr =
           add_accesses (AccessExpression.field_offset access_expr fld)
         in
         of_exp_ root_exp root_exp_typ add_field_access_expr acc
-    | Exp.Lindex (root_exp, index_exp) ->
+    | Lindex (root_exp, index_exp) ->
         let index =
           let index_typ = (* TODO: bogus *) StdTyp.void in
           array_index_of_exp ~include_array_indexes ~f_resolve_id ~add_deref index_exp index_typ
@@ -477,28 +483,28 @@ and access_exprs_of_exp ~include_array_indexes ~f_resolve_id ~add_deref exp0 typ
         in
         let array_typ = Typ.mk_array typ in
         of_exp_ root_exp array_typ add_array_access_expr acc
-    | Exp.Cast (cast_typ, cast_exp) ->
+    | Cast (cast_typ, cast_exp) ->
         of_exp_ cast_exp cast_typ Fn.id acc
-    | Exp.UnOp (_, unop_exp, _) ->
+    | UnOp (_, unop_exp, _) ->
         of_exp_ unop_exp typ Fn.id acc
-    | Exp.Exn exn_exp ->
+    | Exn exn_exp ->
         of_exp_ exn_exp typ Fn.id acc
-    | Exp.BinOp (_, exp1, exp2) ->
+    | BinOp (_, exp1, exp2) ->
         of_exp_ exp1 typ Fn.id acc |> of_exp_ exp2 typ Fn.id
-    | Exp.Const _ | Closure _ | Sizeof _ ->
+    | Const _ | Closure _ | Sizeof _ ->
         acc
   in
   of_exp_ exp0 typ0 Fn.id []
 
 
 and access_expr_of_lhs_exp ~include_array_indexes ~f_resolve_id ~add_deref lhs_exp typ =
-  match lhs_exp with
-  | Exp.Lfield _ when not add_deref -> (
+  match (lhs_exp : Exp.t) with
+  | Lfield _ when not add_deref -> (
       let res =
         access_exprs_of_exp ~include_array_indexes ~f_resolve_id ~add_deref:true lhs_exp typ
       in
       match res with [lhs_ae] -> AccessExpression.address_of lhs_ae | _ -> None )
-  | Exp.Lindex _ when not add_deref -> (
+  | Lindex _ when not add_deref -> (
       let res =
         let typ' =
           match typ.Typ.desc with

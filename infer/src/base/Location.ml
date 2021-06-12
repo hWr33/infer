@@ -12,7 +12,7 @@ type t =
   { line: int  (** The line number. -1 means "do not know" *)
   ; col: int  (** The column number. -1 means "do not know" *)
   ; file: SourceFile.t  (** The name of the source file *) }
-[@@deriving compare]
+[@@deriving compare, sexp_of]
 
 let equal = [%compare.equal: t]
 
@@ -40,8 +40,8 @@ let pp_file_pos f (loc : t) = F.fprintf f "%a:%a" SourceFile.pp loc.file pp_shor
 
 let pp_range f (loc_start, loc_end) =
   let pp_end loc_start f loc_end =
-    if Int.equal loc_end.line loc_start.line then
-      if Int.equal loc_end.col loc_start.col then () else F.fprintf f "-%d" loc_end.col
+    if Int.equal loc_end.line loc_start.line then (
+      if not (Int.equal loc_end.col loc_start.col) then F.fprintf f "-%d" loc_end.col )
     else F.fprintf f "-%a" pp_short loc_end
   in
   F.fprintf f "%a%a" pp_file_pos loc_start (pp_end loc_start) loc_end

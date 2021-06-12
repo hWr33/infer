@@ -72,13 +72,6 @@ Breakpoint 1 at 9409684: file backend/InferAnalyze.ml, line 99, characters 18-78
   initialized with `ResultsDir.assert_results_dir ""`.
 
 
-## Hacking on the Code in facebook-clang-plugins
-
-Infer uses `ASTExporter` from the [facebook-clang-plugins](https://github.com/facebook/facebook-clang-plugins)
-repository. To change that part of the code:
-1. Create a [pull request](https://github.com/facebook/facebook-clang-plugins/pulls) in `facebook-clang-plugins` with the changes.
-2. Create a pull request in this repository updating the version of the git submodule.
-
 ## Contributor License Agreement
 
 We require contributors to sign our Contributor License Agreement. In
@@ -225,13 +218,13 @@ $ infer --debug -- clang -c examples/hello.c
 $ firefox infer-out/captured/hello.c.*.html
 ```
 
-## Updating opam and opam.locked
+## Updating infer.opam and infer.opam.locked
 
-tl; dr: Run `make opam.locked`.
+tl; dr: Run `make opam/infer.opam.locked`.
 
-opam.locked records fixed versions of the opam dependencies known to work with infer and to respect
+infer.opam.locked records fixed versions of the opam dependencies known to work with infer and to respect
 the constraints in opam. This prevents unpredictable breakages of infer or its dependencies,
 especially for infer releases, for which it is more difficult to change their package constraints
 after the fact.
 
-To add an opam package or update its version constraints, edit 'opam' then run `make opam.locked`.
+To add an opam package or update its version constraints, edit 'infer.opam' then run `make infer.opam.locked`.

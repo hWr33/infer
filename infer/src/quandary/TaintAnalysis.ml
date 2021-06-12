@@ -430,15 +430,13 @@ module Make (TaintSpecification : TaintSpec.S) = struct
        existing machinery for adding function call sinks *)
     let add_sinks_for_access_path ({analysis_data= {tenv}} as analysis_data) access_expr loc astate
         =
-      let rec add_sinks_for_access astate_acc = function
-        | HilExp.AccessExpression.Base _ ->
+      let rec add_sinks_for_access astate_acc (access_expr : HilExp.AccessExpression.t) =
+        match access_expr with
+        | Base _ ->
             astate_acc
-        | HilExp.AccessExpression.FieldOffset (ae, _)
-        | ArrayOffset (ae, _, None)
-        | AddressOf ae
-        | Dereference ae ->
+        | FieldOffset (ae, _) | ArrayOffset (ae, _, None) | AddressOf ae | Dereference ae ->
             add_sinks_for_access astate_acc ae
-        | HilExp.AccessExpression.ArrayOffset (ae, _, Some index) ->
+        | ArrayOffset (ae, _, Some index) ->
             let dummy_call_site = CallSite.make BuiltinDecl.__array_access loc in
             let dummy_actuals =
               List.map
@@ -671,7 +669,7 @@ module Make (TaintSpecification : TaintSpec.S) = struct
 
 
     let exec_instr (astate : Domain.t) ({analysis_data= {proc_desc}; formal_map} as analysis_data) _
-        (instr : HilInstr.t) =
+        _ (instr : HilInstr.t) =
       match instr with
       | Assign (Base (Var.ProgramVar pvar, _), HilExp.Exception _, _) when Pvar.is_return pvar ->
           (* the Java frontend translates `throw Exception` as `return Exception`, which is a bit

@@ -14,7 +14,8 @@ module AddressAttributes = PulseBaseAddressAttributes
 
 (* {2 Abstract domain description } *)
 
-type t = {heap: Memory.t; stack: Stack.t; attrs: AddressAttributes.t} [@@deriving yojson_of]
+type t = {heap: Memory.t; stack: Stack.t; attrs: AddressAttributes.t}
+[@@deriving compare, equal, yojson_of]
 
 let empty =
   { heap=
@@ -124,7 +125,7 @@ module GraphComparison = struct
             IsomorphicUpTo mapping
         | Some _, None | None, Some _ ->
             NotIsomorphic
-        | Some (edges_rhs, attrs_rhs), Some (edges_lhs, attrs_lhs) ->
+        | Some (edges_lhs, attrs_lhs), Some (edges_rhs, attrs_rhs) ->
             (* continue the comparison recursively on all edges and attributes *)
             if Attributes.equal attrs_rhs attrs_lhs then
               let bindings_lhs = Memory.Edges.bindings edges_lhs in
@@ -204,7 +205,7 @@ module GraphVisit : sig
       reached and the access path from that variable to the address. *)
 
   val fold_from_addresses :
-       AbstractValue.t list
+       AbstractValue.t Seq.t
     -> t
     -> init:'accum
     -> f:
@@ -283,20 +284,26 @@ end = struct
 
 
   let fold_from_addresses from astate =
-    fold_common from astate ~fold:List.fold ~filter:(fun _ -> true) ~visit:visit_address
+    let seq_fold seq ~init ~f = Seq.fold_left f init seq in
+    fold_common from astate ~fold:seq_fold ~filter:(fun _ -> true) ~visit:visit_address
 end
 
 include GraphComparison
 
-let reachable_addresses astate =
-  GraphVisit.fold astate
-    ~var_filter:(fun _ -> true)
-    ~init:() ~finish:Fn.id
-    ~f:(fun _ () _ _ -> Continue ())
-  |> fst
+let reachable_addresses ?(var_filter = fun _ -> true) astate =
+  GraphVisit.fold astate ~var_filter ~init:() ~finish:Fn.id ~f:(fun _ () _ _ -> Continue ()) |> fst
 
 
 let reachable_addresses_from addresses astate =
   GraphVisit.fold_from_addresses addresses astate ~init:() ~finish:Fn.id ~f:(fun () _ _ ->
       Continue () )
   |> fst
+
+
+let subst_var subst ({heap; stack; attrs} as astate) =
+  let open SatUnsat.Import in
+  let* stack' = Stack.subst_var subst stack in
+  let+ heap' = Memory.subst_var subst heap in
+  let attrs' = AddressAttributes.subst_var subst attrs in
+  if phys_equal heap heap' && phys_equal stack stack' && phys_equal attrs attrs' then astate
+  else {heap= heap'; stack= stack'; attrs= attrs'}

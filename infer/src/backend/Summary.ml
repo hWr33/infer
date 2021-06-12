@@ -12,7 +12,7 @@ module L = Logging
 
 module Stats = struct
   type t =
-    { failure_kind: SymOp.failure_kind option
+    { failure_kind: Exception.failure_kind option
           (** what type of failure stopped the analysis (if any) *)
     ; symops: int  (** Number of SymOp's throughout the whole analysis of the function *)
     ; mutable nodes_visited: IntSet.t  (** Nodes visited *) }
@@ -32,7 +32,7 @@ module Stats = struct
   let pp_failure_kind_opt fmt failure_kind_opt =
     match failure_kind_opt with
     | Some failure_kind ->
-        SymOp.pp_failure_kind fmt failure_kind
+        Exception.pp_failure_kind fmt failure_kind
     | None ->
         F.pp_print_string fmt "NONE"
 
@@ -124,10 +124,18 @@ let pp_html source fmt summary =
 
 
 module ReportSummary = struct
-  type t = {loc: Location.t; cost_opt: CostDomain.summary option; err_log: Errlog.t}
+  type t =
+    { loc: Location.t
+    ; cost_opt: CostDomain.summary option
+    ; config_impact_opt: ConfigImpactAnalysis.Summary.t option
+    ; err_log: Errlog.t }
 
   let of_full_summary (f : full_summary) =
-    ({loc= get_loc f; cost_opt= f.payloads.Payloads.cost; err_log= f.err_log} : t)
+    ( { loc= get_loc f
+      ; cost_opt= f.payloads.Payloads.cost
+      ; config_impact_opt= f.payloads.Payloads.config_impact_analysis
+      ; err_log= f.err_log }
+      : t )
 
 
   module SQLite = SqliteUtils.MarshalledDataNOTForComparison (struct
@@ -333,10 +341,10 @@ module OnDisk = struct
          ~f:(fun stmt ->
            let proc_name = Sqlite3.column stmt 0 |> Procname.SQLite.deserialize in
            if filter dummy_source_file proc_name then
-             let ({loc; cost_opt; err_log} : ReportSummary.t) =
+             let ({loc; cost_opt; config_impact_opt; err_log} : ReportSummary.t) =
                Sqlite3.column stmt 1 |> ReportSummary.SQLite.deserialize
              in
-             f proc_name loc cost_opt err_log )
+             f proc_name loc cost_opt config_impact_opt err_log )
 
 
   let make_filtered_iterator_from_config ~iter ~f =

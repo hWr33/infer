@@ -242,7 +242,7 @@ let mk_rule_lsls_ls tenv k1 k2 impl_ok1 impl_ok2 para =
 
 
 let mk_rules_for_sll tenv (para : Predicates.hpara) : rule list =
-  if not Config.nelseg then
+  if not Config.biabduction_nelseg then
     let pts_pts = mk_rule_ptspts_ls tenv true true para in
     let pts_pels = mk_rule_ptsls_ls tenv Lseg_PE true false para in
     let pels_pts = mk_rule_lspts_ls tenv Lseg_PE false true para in
@@ -450,7 +450,7 @@ let mk_rule_dlldll_dll tenv k1 k2 impl_ok1 impl_ok2 para =
 
 
 let mk_rules_for_dll tenv (para : Predicates.hpara_dll) : rule list =
-  if not Config.nelseg then
+  if not Config.biabduction_nelseg then
     let pts_pts = mk_rule_ptspts_dll tenv true true para in
     let pts_pedll = mk_rule_ptsdll_dll tenv Lseg_PE true false para in
     let pedll_pts = mk_rule_dllpts_dll tenv Lseg_PE false true para in
@@ -935,7 +935,7 @@ let abstract_gc tenv p =
   let strong_filter = function
     | Predicates.Aeq (e1, e2) | Predicates.Aneq (e1, e2) ->
         check (Exp.free_vars e1) && check (Exp.free_vars e2)
-    | (Predicates.Apred _ | Anpred _) as a ->
+    | Predicates.(Apred _ | Anpred _) as a ->
         check (Predicates.atom_free_vars a)
   in
   let new_pi = List.filter ~f:strong_filter pi in
@@ -1108,7 +1108,7 @@ let check_junk {InterproceduralAnalysis.proc_desc; err_log; tenv} prop =
                 when Language.curr_language_is Clang ->
                   (is_none ml_bucket_opt, exn_leak)
               | Some _, Rmemory _ ->
-                  (Language.curr_language_is Java, exn_leak)
+                  (Language.curr_language_is Java || Language.curr_language_is CIL, exn_leak)
               | Some _, Rignore ->
                   (true, exn_leak)
               | Some _, Rfile ->
@@ -1116,7 +1116,7 @@ let check_junk {InterproceduralAnalysis.proc_desc; err_log; tenv} prop =
               | Some _, Rlock ->
                   (false, exn_leak)
               | _ ->
-                  (Language.curr_language_is Java, exn_leak)
+                  (Language.curr_language_is Java || Language.curr_language_is CIL, exn_leak)
             in
             let already_reported () =
               let attr_opt_equal ao1 ao2 =
@@ -1137,7 +1137,8 @@ let check_junk {InterproceduralAnalysis.proc_desc; err_log; tenv} prop =
               || already_reported ()
             in
             let report_and_continue =
-              Language.curr_language_is Java || !BiabductionConfig.footprint
+              Language.curr_language_is Java || Language.curr_language_is CIL
+              || !BiabductionConfig.footprint
             in
             let report_leak () =
               if not report_and_continue then raise exn

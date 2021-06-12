@@ -87,7 +87,8 @@ let pp pe name f
      exported_obj_methods: {@[<v>%a@]}@,\
      annots: {@[<v>%a@]}@,\
      java_class_info: {@[<v>%a@]}@,\
-     dummy: %b@]@,"
+     dummy: %b@,\
+     @]"
     Typ.Name.pp name
     (seq (pp_field pe))
     fields
@@ -275,7 +276,7 @@ let full_merge ~newer ~current =
 
 let merge typename ~newer ~current =
   match (typename : Typ.Name.t) with
-  | CStruct _ | CUnion _ | ObjcClass _ | ObjcProtocol _ | CppClass _ ->
+  | CStruct _ | CUnion _ | ErlangType _ | ObjcClass _ | ObjcProtocol _ | CppClass _ ->
       if not (is_dummy newer) then newer else current
   | JavaClass _ when is_dummy newer ->
       current
@@ -284,6 +285,14 @@ let merge typename ~newer ~current =
   | JavaClass _ when equal newer current ->
       newer
   | JavaClass _ ->
+      full_merge ~newer ~current
+  | CSharpClass _ when is_dummy newer ->
+      current
+  | CSharpClass _ when is_dummy current ->
+      newer
+  | CSharpClass _ when equal newer current ->
+      newer
+  | CSharpClass _ ->
       full_merge ~newer ~current
 
 

@@ -69,6 +69,8 @@ val set_enabled : t -> bool -> unit
 
 val abduction_case_not_implemented : t
 
+val arbitrary_code_execution_under_lock : t
+
 val array_of_pointsto : t
 
 val array_out_of_bounds_l1 : t
@@ -132,6 +134,8 @@ val condition_always_false : t
 val condition_always_true : t
 
 val config_checks_between_markers : t
+
+val config_impact_analysis : t
 
 val constant_address_dereference : t
 
@@ -198,7 +202,9 @@ val failure_exe : t
 
 val field_not_null_checked : t
 
-val guardedby_violation_racerd : t
+val guardedby_violation : t
+
+val guardedby_violation_nullsafe : t
 
 val impure_function : t
 
@@ -234,9 +240,13 @@ val internal_error : t
 
 val invariant_call : t
 
+val ipc_on_ui_thread : t
+
 val javascript_injection : t
 
 val lab_resource_leak : t
+
+val dotnet_resource_leak : t
 
 val leak_after_array_abstraction : t
 
@@ -265,6 +275,12 @@ val modifies_immutable : t
 val multiple_weakself : t
 
 val mutable_local_variable_in_component_file : t
+
+val nil_block_call : t
+
+val nil_insertion_into_collection : t
+
+val nil_messaging_to_non_pod : t
 
 val null_dereference : t
 
@@ -314,9 +330,9 @@ val symexec_memory_error : t
 
 val thread_safety_violation : t
 
-val topl_biabd_error : t
+val thread_safety_violation_nullsafe : t
 
-val topl_pulse_error : t
+val topl_error : t
 
 val uninitialized_value : t
 
@@ -361,3 +377,5 @@ val wrong_argument_number : t
 val unreachable_cost_call : kind:CostKind.t -> t
 
 val is_autoreleasepool_size_issue : t -> bool
+
+module Map : PrettyPrintable.PPMap with type key = t

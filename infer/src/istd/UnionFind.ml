@@ -26,7 +26,7 @@ struct
     (** to get a little bit of type safety *)
     type repr = private X.t
 
-    type t
+    type t [@@deriving compare, equal]
 
     val empty : t
 
@@ -43,7 +43,7 @@ struct
   end = struct
     type repr = X.t
 
-    type t = X.t XMap.t
+    type t = X.t XMap.t [@@deriving compare, equal]
 
     let empty = XMap.empty
 
@@ -82,7 +82,7 @@ struct
       UF.Map.remove x1 classes |> UF.Map.add x2 new_class
   end
 
-  type t = {reprs: UF.t; classes: XSet.t UF.Map.t}
+  type t = {reprs: UF.t; classes: XSet.t UF.Map.t} [@@deriving compare, equal]
 
   let empty = {reprs= UF.empty; classes= UF.Map.empty}
 
@@ -167,11 +167,10 @@ struct
     of_classes classes_keep
 
 
-  let reorient ~keep uf =
-    let should_keep x = XSet.mem x keep in
+  let reorient ~should_keep uf =
     fold_congruences uf ~init:XMap.empty ~f:(fun subst (repr, clazz) ->
-        (* map every variable in [repr::clazz] to either [repr] if [repr ∈ keep], or to the smallest
-           representative of [clazz] that's in [keep], if any *)
+        (* map every variable in [repr::clazz] to either [repr] if [should_keep repr], or to the
+           smallest representative of [clazz] that satisfies [should_keep], if any *)
         if should_keep (repr :> X.t) then
           XSet.fold
             (fun x subst -> if should_keep x then subst else XMap.add x (repr :> X.t) subst)
@@ -190,14 +189,13 @@ struct
                 clazz subst )
 
 
-  let filter_not_in_closed_set ~keep uf =
+  let filter_morphism ~f uf =
     let classes =
       UF.Map.filter
         (fun x _ ->
-          (* here we take advantage of the fact [keep] is transitively closed already to drop
-             entire classes at once iff their representative is not in [keep]: if the class
-             contains *one* item in [keep] then *all* of its items are in [keep] *)
-          XSet.mem (x :> X.t) keep )
+          (* here we take advantage of the fact [f] is transitively closed already to drop
+             entire classes at once iff their representative does not satisfy [f] *)
+          f (x :> X.t) )
         uf.classes
     in
     (* rebuild [reprs] directly from [classes]: does path compression and garbage collection on the

@@ -152,7 +152,7 @@ let rec eval : Typ.IntegerWidths.t -> Exp.t -> Mem.t -> Val.t =
         Mem.find_stack (Var.of_id id |> Loc.of_var) mem
     | Exp.Lvar pvar ->
         let loc = Loc.of_pvar pvar in
-        if Mem.is_stack_loc loc mem then Mem.find loc mem else Val.of_loc loc
+        if Mem.is_stack_loc loc mem || Loc.is_global loc then Mem.find loc mem else Val.of_loc loc
     | Exp.UnOp (uop, e, _) ->
         eval_unop integer_type_widths uop e mem
     | Exp.BinOp (bop, e1, e2) -> (
@@ -378,12 +378,12 @@ type eval_mode = EvalNormal | EvalPOCond | EvalPOReachability | EvalCost
 
 let is_cost_mode = function EvalCost -> true | _ -> false
 
-let eval_sympath_modeled_partial ~mode ~is_expensive p =
+let eval_sympath_modeled_partial ~mode p =
   match (mode, p) with
   | (EvalNormal | EvalCost), BoField.Prim (Symb.SymbolPath.Callsite _) ->
-      Itv.of_modeled_path ~is_expensive p |> Val.of_itv
+      Itv.of_modeled_path p |> Val.of_itv
   | _, _ ->
-      (* We only have modeled modeled function calls created in costModels. *)
+      (* We only have modeled function calls created in costModels. *)
       assert false
 
 
@@ -441,8 +441,8 @@ and eval_locpath ~mode params p mem =
 
 let eval_sympath ~mode params sympath mem =
   match sympath with
-  | Symb.SymbolPath.Modeled {p; is_expensive} ->
-      let v = eval_sympath_modeled_partial ~mode ~is_expensive p in
+  | Symb.SymbolPath.Modeled p ->
+      let v = eval_sympath_modeled_partial ~mode p in
       (Val.get_itv v, Val.get_traces v)
   | Symb.SymbolPath.Normal p ->
       let v = eval_sympath_partial ~mode params p mem in
@@ -455,11 +455,11 @@ let eval_sympath ~mode params sympath mem =
       (ArrayBlk.get_size ~cost_mode:(is_cost_mode mode) (Val.get_array_blk v), Val.get_traces v)
 
 
-let mk_eval_sym_trace ?(is_params_ref = false) integer_type_widths
+let mk_eval_sym_trace ?(is_args_ref = false) integer_type_widths
     (callee_formals : (Pvar.t * Typ.t) list) (actual_exps : (Exp.t * Typ.t) list) caller_mem =
-  let params =
+  let args =
     let actuals =
-      if is_params_ref then
+      if is_args_ref then
         match actual_exps with
         | [] ->
             []
@@ -482,17 +482,17 @@ let mk_eval_sym_trace ?(is_params_ref = false) integer_type_widths
   in
   let eval_sym ~mode s bound_end =
     let sympath = Symb.Symbol.path s in
-    let itv, _ = eval_sympath ~mode params sympath caller_mem in
+    let itv, _ = eval_sympath ~mode args sympath caller_mem in
     Symb.Symbol.check_bound_end s bound_end ;
     Itv.get_bound itv bound_end
   in
-  let eval_locpath ~mode partial = eval_locpath ~mode params partial caller_mem in
+  let eval_locpath ~mode partial = eval_locpath ~mode args partial caller_mem in
   let eval_func_ptrs ~mode partial =
-    eval_sympath_partial ~mode params partial caller_mem |> Val.get_func_ptrs
+    eval_sympath_partial ~mode args partial caller_mem |> Val.get_func_ptrs
   in
   let trace_of_sym s =
     let sympath = Symb.Symbol.path s in
-    let itv, traces = eval_sympath ~mode:EvalNormal params sympath caller_mem in
+    let itv, traces = eval_sympath ~mode:EvalNormal args sympath caller_mem in
     if Itv.eq itv Itv.bot then TraceSet.bottom else traces
   in
   fun ~mode ->

@@ -15,6 +15,90 @@ type detail_level = Verbose | Non_verbose | Simple
 
 let is_verbose v = match v with Verbose -> true | _ -> false
 
+module CSharp = struct
+  type kind = Non_Static | Static [@@deriving compare, equal, yojson_of]
+
+  type t =
+    { method_name: string
+    ; parameters: Typ.t list
+    ; class_name: Typ.Name.t
+    ; return_type: Typ.t option (* option because constructors have no return type *)
+    ; kind: kind }
+  [@@deriving compare, equal, yojson_of]
+
+  let ensure_csharp_type t =
+    if not (Typ.is_csharp_type t) then
+      L.die InternalError "Expected csharp type but got %a@." (Typ.pp_full Pp.text) t
+
+
+  let make ~class_name ~return_type ~method_name ~parameters ~kind () =
+    Option.iter return_type ~f:ensure_csharp_type ;
+    {class_name; return_type; method_name; parameters; kind}
+
+
+  let pp_return_type ~verbose fmt j = Option.iter j.return_type ~f:(Typ.pp_cs ~verbose fmt)
+
+  let constructor_method_name = ".ctor"
+
+  let get_class_name cs = Typ.Name.name cs.class_name
+
+  let get_class_type_name cs = cs.class_name
+
+  let get_csharp_class_name_exn cs =
+    match cs.class_name with
+    | Typ.CSharpClass csharp_class_name ->
+        csharp_class_name
+    | _ ->
+        L.die InternalError "Asked for csharp class name but got something else"
+
+
+  let get_simple_class_name cs = CSharpClassName.classname (get_csharp_class_name_exn cs)
+
+  let get_method cs = cs.method_name
+
+  let get_return_typ pname_csharp = Option.value ~default:StdTyp.void pname_csharp.return_type
+
+  let replace_parameters parameters cs = {cs with parameters}
+
+  let get_parameters cs = cs.parameters
+
+  let is_generated {method_name} = String.is_prefix ~prefix:"$" method_name
+
+  (** Prints a string of a csharp procname with the given level of verbosity *)
+  let pp ?(withclass = false) verbosity fmt cs =
+    let verbose = is_verbose verbosity in
+    let pp_class_name_dot fmt cs =
+      CSharpClassName.pp_with_verbosity ~verbose fmt (get_csharp_class_name_exn cs) ;
+      F.pp_print_char fmt '.'
+    in
+    let pp_package_method_and_params fmt cs =
+      let pp_param_list fmt params = Pp.seq ~sep:"," (Typ.pp_cs ~verbose) fmt params in
+      F.fprintf fmt "%a%s(%a)" pp_class_name_dot cs cs.method_name pp_param_list cs.parameters
+    in
+    match verbosity with
+    | Verbose ->
+        (* [package.class.method(params): rtype], used for example to create unique filenames *)
+        let separator = if Option.is_none cs.return_type then "" else ":" in
+        pp_package_method_and_params fmt cs ;
+        F.fprintf fmt "%s%a" separator (pp_return_type ~verbose) cs
+    | Non_verbose ->
+        (* [rtype package.class.method(params)], for creating reports *)
+        let separator = if Option.is_none cs.return_type then "" else " " in
+        F.fprintf fmt "%a%s" (pp_return_type ~verbose) cs separator ;
+        pp_package_method_and_params fmt cs
+    | Simple ->
+        (* [methodname(...)] or without ... if there are no parameters *)
+        let params = match cs.parameters with [] -> "" | _ -> "..." in
+        let pp_method_name fmt cs =
+          if String.equal cs.method_name constructor_method_name then
+            F.pp_print_string fmt (get_simple_class_name cs)
+          else (
+            if withclass then pp_class_name_dot fmt cs ;
+            F.pp_print_string fmt cs.method_name )
+        in
+        F.fprintf fmt "%a(%s)" pp_method_name cs params
+end
+
 module Java = struct
   type kind =
     | Non_Static
@@ -202,7 +286,12 @@ module Parameter = struct
   type clang_parameter = Typ.Name.t option [@@deriving compare, equal, yojson_of]
 
   (** Type for parameters in procnames, for java and clang. *)
-  type t = JavaParameter of Typ.t | ClangParameter of clang_parameter [@@deriving compare, equal]
+  type t =
+    | JavaParameter of Typ.t
+    | ClangParameter of clang_parameter
+    | CSharpParameter of Typ.t
+    | ErlangParameter
+  [@@deriving compare, equal]
 
   let of_typ typ =
     match typ.Typ.desc with Typ.Tptr ({desc= Tstruct name}, Pk_pointer) -> Some name | _ -> None
@@ -235,7 +324,7 @@ end
 module ObjC_Cpp = struct
   type kind =
     | CPPMethod of {mangled: string option}
-    | CPPConstructor of {mangled: string option; is_constexpr: bool}
+    | CPPConstructor of {mangled: string option}
     | CPPDestructor of {mangled: string option}
     | ObjCClassMethod
     | ObjCInstanceMethod
@@ -272,9 +361,9 @@ module ObjC_Cpp = struct
     if is_instance then ObjCInstanceMethod else ObjCClassMethod
 
 
-  let is_objc_constructor method_name =
-    String.equal method_name "new" || String.is_prefix ~prefix:"init" method_name
+  let is_prefix_init s = String.is_prefix ~prefix:"init" s
 
+  let is_objc_constructor method_name = String.equal method_name "new" || is_prefix_init method_name
 
   let is_objc_kind = function
     | ObjCClassMethod | ObjCInstanceMethod | ObjCInternalMethod ->
@@ -298,17 +387,13 @@ module ObjC_Cpp = struct
     is_destructor pname && String.is_prefix ~prefix:Config.clang_inner_destructor_prefix method_name
 
 
-  let is_constexpr = function {kind= CPPConstructor {is_constexpr= true}} -> true | _ -> false
-
   let is_cpp_lambda {method_name} = String.is_substring ~substring:"operator()" method_name
 
   let pp_verbose_kind fmt = function
     | CPPMethod {mangled} | CPPDestructor {mangled} ->
         F.fprintf fmt "(%s)" (Option.value ~default:"" mangled)
-    | CPPConstructor {mangled; is_constexpr} ->
-        F.fprintf fmt "{%s%s}"
-          (Option.value ~default:"" mangled)
-          (if is_constexpr then "|constexpr" else "")
+    | CPPConstructor {mangled} ->
+        F.fprintf fmt "{%s}" (Option.value ~default:"" mangled)
     | ObjCClassMethod ->
         F.pp_print_string fmt "class"
     | ObjCInstanceMethod ->
@@ -379,23 +464,60 @@ module C = struct
         false
 end
 
+module Erlang = struct
+  type t = {module_name: string; function_name: string; arity: int} [@@deriving compare, yojson_of]
+
+  let pp verbosity fmt {module_name; function_name; arity} =
+    match verbosity with
+    | Simple | Non_verbose ->
+        F.fprintf fmt "%s/%d" function_name arity
+    | Verbose ->
+        F.fprintf fmt "%s:%s/%d" module_name function_name arity
+
+
+  let set_arity arity name = {name with arity}
+end
+
 module Block = struct
   (** Type of Objective C block names. *)
-  type block_name = string [@@deriving compare, yojson_of]
-
-  type t = {name: block_name; parameters: Parameter.clang_parameter list}
+  type block_type =
+    | InOuterScope of {outer_scope: block_type; block_index: int}
+    | SurroundingProc of {name: string}
   [@@deriving compare, yojson_of]
 
-  let make name parameters = {name; parameters}
+  type t = {block_type: block_type; parameters: Parameter.clang_parameter list}
+  [@@deriving compare, yojson_of]
+
+  let make_surrounding name parameters = {block_type= SurroundingProc {name}; parameters}
+
+  let make_in_outer_scope outer_scope block_index parameters =
+    {block_type= InOuterScope {outer_scope; block_index}; parameters}
+
+
+  let pp_block_type fmt ~with_prefix_and_index =
+    let prefix = if with_prefix_and_index then Config.anonymous_block_prefix else "^" in
+    let pp_index fmt index =
+      if with_prefix_and_index then F.fprintf fmt "%s%d" Config.anonymous_block_num_sep index
+    in
+    let rec aux fmt proc =
+      match proc with
+      | SurroundingProc {name} ->
+          F.pp_print_string fmt name
+      | InOuterScope {outer_scope; block_index} ->
+          F.fprintf fmt "%s%a%a" prefix aux outer_scope pp_index block_index
+    in
+    aux fmt
+
 
   let pp verbosity fmt bsig =
+    let pp_block = pp_block_type ~with_prefix_and_index:true in
     match verbosity with
     | Simple ->
         F.pp_print_string fmt "block"
     | Non_verbose ->
-        F.pp_print_string fmt bsig.name
+        pp_block fmt bsig.block_type
     | Verbose ->
-        F.fprintf fmt "%s%a" bsig.name Parameter.pp_parameters bsig.parameters
+        F.fprintf fmt "%a%a" pp_block bsig.block_type Parameter.pp_parameters bsig.parameters
 
 
   let get_parameters block = block.parameters
@@ -405,8 +527,10 @@ end
 
 (** Type of procedure names. *)
 type t =
+  | CSharp of CSharp.t
   | Java of Java.t
   | C of C.t
+  | Erlang of Erlang.t
   | Linters_dummy_method
   | Block of Block.t
   | ObjC_Cpp of ObjC_Cpp.t
@@ -415,12 +539,65 @@ type t =
 
 let equal = [%compare.equal: t]
 
+let rec compare_name x y =
+  let open ICompare in
+  match (x, y) with
+  | ( CSharp {class_name= class_name1; method_name= method_name1}
+    , CSharp {class_name= class_name2; method_name= method_name2} )
+  | ( Java {class_name= class_name1; method_name= method_name1}
+    , Java {class_name= class_name2; method_name= method_name2} )
+  | ( ObjC_Cpp {class_name= class_name1; method_name= method_name1}
+    , ObjC_Cpp {class_name= class_name2; method_name= method_name2} ) ->
+      Typ.Name.compare_name class_name1 class_name2
+      <*> fun () -> String.compare method_name1 method_name2
+  | CSharp _, _ ->
+      -1
+  | _, CSharp _ ->
+      1
+  | Java _, _ ->
+      -1
+  | _, Java _ ->
+      1
+  | C {name= name1}, C {name= name2} ->
+      QualifiedCppName.compare_name name1 name2
+  | C _, _ ->
+      -1
+  | _, C _ ->
+      1
+  | Erlang name1, Erlang name2 ->
+      Erlang.compare name1 name2
+  | Erlang _, _ ->
+      -1
+  | _, Erlang _ ->
+      1
+  | Linters_dummy_method, Linters_dummy_method ->
+      0
+  | Linters_dummy_method, _ ->
+      -1
+  | _, Linters_dummy_method ->
+      1
+  | Block _, Block _ ->
+      0
+  | Block _, _ ->
+      -1
+  | _, Block _ ->
+      1
+  | ObjC_Cpp _, _ ->
+      -1
+  | _, ObjC_Cpp _ ->
+      1
+  | WithBlockParameters (x, _), WithBlockParameters (y, _) ->
+      compare_name x y
+
+
 (** hash function for procname *)
 let hash = Hashtbl.hash
 
 let with_block_parameters base blocks = WithBlockParameters (base, blocks)
 
 let is_java = function Java _ -> true | _ -> false
+
+let is_csharp = function CSharp _ -> true | _ -> false
 
 let as_java_exn ~explanation t =
   match t with
@@ -453,6 +630,12 @@ let is_objc_dealloc procname =
   match procname with ObjC_Cpp {method_name} -> ObjC_Cpp.is_objc_dealloc method_name | _ -> false
 
 
+let is_objc_init procname =
+  is_objc_method procname
+  &&
+  match procname with ObjC_Cpp {method_name} -> ObjC_Cpp.is_prefix_init method_name | _ -> false
+
+
 let block_of_procname procname =
   match procname with
   | Block block ->
@@ -461,7 +644,7 @@ let block_of_procname procname =
       Logging.die InternalError "Only to be called with Objective-C block names"
 
 
-let empty_block = Block {name= ""; parameters= []}
+let empty_block = Block (Block.make_surrounding "" [])
 
 (** Replace the class name component of a procedure name. In case of Java, replace package and class
     name. *)
@@ -469,17 +652,21 @@ let rec replace_class t (new_class : Typ.Name.t) =
   match t with
   | Java j ->
       Java {j with class_name= new_class}
+  | CSharp cs ->
+      CSharp {cs with class_name= new_class}
   | ObjC_Cpp osig ->
       ObjC_Cpp {osig with class_name= new_class}
   | WithBlockParameters (base, blocks) ->
       WithBlockParameters (replace_class base new_class, blocks)
-  | C _ | Block _ | Linters_dummy_method ->
+  | C _ | Block _ | Erlang _ | Linters_dummy_method ->
       t
 
 
 let get_class_type_name = function
   | Java java_pname ->
       Some (Java.get_class_type_name java_pname)
+  | CSharp cs_pname ->
+      Some (CSharp.get_class_type_name cs_pname)
   | ObjC_Cpp objc_pname ->
       Some (ObjC_Cpp.get_class_type_name objc_pname)
   | _ ->
@@ -489,6 +676,8 @@ let get_class_type_name = function
 let get_class_name = function
   | Java java_pname ->
       Some (Java.get_class_name java_pname)
+  | CSharp cs_pname ->
+      Some (CSharp.get_class_name cs_pname)
   | ObjC_Cpp objc_pname ->
       Some (ObjC_Cpp.get_class_name objc_pname)
   | _ ->
@@ -505,11 +694,12 @@ let rec objc_cpp_replace_method_name t (new_method_name : string) =
       ObjC_Cpp {osig with method_name= new_method_name}
   | WithBlockParameters (base, blocks) ->
       WithBlockParameters (objc_cpp_replace_method_name base new_method_name, blocks)
-  | C _ | Block _ | Linters_dummy_method | Java _ ->
+  | C _ | CSharp _ | Block _ | Erlang _ | Linters_dummy_method | Java _ ->
       t
 
 
-(** Return the method/function of a procname. *)
+(** Return the method/function of a procname. For Blocks, we don't display objc_block prefix or
+    block index suffix. *)
 let rec get_method = function
   | ObjC_Cpp name ->
       name.method_name
@@ -517,10 +707,14 @@ let rec get_method = function
       get_method base
   | C {name} ->
       QualifiedCppName.to_qual_string name
-  | Block {name} ->
-      name
+  | Erlang name ->
+      name.function_name
+  | Block {block_type} ->
+      F.asprintf "%a" (Block.pp_block_type ~with_prefix_and_index:false) block_type
   | Java j ->
       j.method_name
+  | CSharp cs ->
+      cs.method_name
   | Linters_dummy_method ->
       "Linters_dummy_method"
 
@@ -528,12 +722,22 @@ let rec get_method = function
 (** Return whether the procname is a block procname. *)
 let is_objc_block = function Block _ -> true | _ -> false
 
+(** Return whether the procname is a cpp lambda procname. *)
+let is_cpp_lambda = function
+  | ObjC_Cpp cpp_pname when ObjC_Cpp.is_cpp_lambda cpp_pname ->
+      true
+  | _ ->
+      false
+
+
 (** Return the language of the procedure. *)
 let get_language = function
   | ObjC_Cpp _ ->
       Language.Clang
   | C _ ->
       Language.Clang
+  | Erlang _ ->
+      Language.Erlang
   | Block _ ->
       Language.Clang
   | Linters_dummy_method ->
@@ -542,10 +746,14 @@ let get_language = function
       Language.Clang
   | Java _ ->
       Language.Java
+  | CSharp _ ->
+      Language.CIL
 
 
 (** [is_constructor pname] returns true if [pname] is a constructor *)
 let is_constructor = function
+  | CSharp c ->
+      String.equal c.method_name CSharp.constructor_method_name
   | Java js ->
       String.equal js.method_name Java.constructor_method_name
   | ObjC_Cpp {kind= CPPConstructor _} ->
@@ -589,8 +797,12 @@ let pp_with_block_parameters verbose pp fmt base blocks =
 let rec pp_unique_id fmt = function
   | Java j ->
       Java.pp Verbose fmt j
+  | CSharp cs ->
+      CSharp.pp Verbose fmt cs
   | C osig ->
       C.pp Verbose fmt osig
+  | Erlang e ->
+      Erlang.pp Verbose fmt e
   | ObjC_Cpp osig ->
       ObjC_Cpp.pp Verbose fmt osig
   | Block bsig ->
@@ -609,8 +821,12 @@ let to_unique_id proc_name = F.asprintf "%a" pp_unique_id proc_name
 let rec pp fmt = function
   | Java j ->
       Java.pp Non_verbose fmt j
+  | CSharp cs ->
+      CSharp.pp Non_verbose fmt cs
   | C osig ->
       C.pp Non_verbose fmt osig
+  | Erlang e ->
+      Erlang.pp Non_verbose fmt e
   | ObjC_Cpp osig ->
       ObjC_Cpp.pp Non_verbose fmt osig
   | Block bsig ->
@@ -625,12 +841,24 @@ let rec pp fmt = function
 
 let to_string proc_name = F.asprintf "%a" pp proc_name
 
+let get_block_type proc =
+  match proc with
+  | Block {block_type} ->
+      block_type
+  | _ ->
+      Block.SurroundingProc {name= to_string proc}
+
+
 (** Convenient representation of a procname for external tools (e.g. eclipse plugin) *)
 let rec pp_simplified_string ?(withclass = false) fmt = function
   | Java j ->
       Java.pp ~withclass Simple fmt j
+  | CSharp cs ->
+      CSharp.pp ~withclass Simple fmt cs
   | C osig ->
       C.pp Simple fmt osig
+  | Erlang e ->
+      Erlang.pp Simple fmt e
   | ObjC_Cpp osig ->
       ObjC_Cpp.pp (if withclass then Non_verbose else Simple) fmt osig
   | Block bsig ->
@@ -649,17 +877,30 @@ let from_string_c_fun func = C (C.from_string func)
 
 let java_inner_class_prefix_regex = Str.regexp "\\$[0-9]+"
 
+let csharp_inner_class_prefix_regex = Str.regexp "\\$[0-9]+"
+
+let replace_regex regex tgt name =
+  match Str.search_forward regex name 0 with
+  | _ ->
+      Str.global_replace regex tgt name
+  | exception Caml.Not_found ->
+      name
+
+
+let replace_java_inner_class_prefix_regex = replace_regex java_inner_class_prefix_regex "$_"
+
+let replace_csharp_inner_class_prefix_regex = replace_regex csharp_inner_class_prefix_regex "$_"
+
 let hashable_name proc_name =
   match proc_name with
-  | Java pname -> (
+  | Java pname ->
       (* Strip autogenerated anonymous inner class numbers in order to keep the bug hash
          invariant when introducing new anonymous classes *)
       let name = F.asprintf "%a" (Java.pp ~withclass:true Simple) pname in
-      match Str.search_forward java_inner_class_prefix_regex name 0 with
-      | _ ->
-          Str.global_replace java_inner_class_prefix_regex "$_" name
-      | exception Caml.Not_found ->
-          name )
+      replace_java_inner_class_prefix_regex name
+  | CSharp pname ->
+      let name = F.asprintf "%a" (CSharp.pp ~withclass:true Simple) pname in
+      replace_csharp_inner_class_prefix_regex name
   | ObjC_Cpp osig when ObjC_Cpp.is_objc_method osig ->
       (* In Objective C, the list of parameters is part of the method name. To prevent the bug
          hash to change when a parameter is introduced or removed, only the part of the name
@@ -681,8 +922,12 @@ let rec get_parameters procname =
   match procname with
   | Java j ->
       List.map ~f:(fun par -> Parameter.JavaParameter par) (Java.get_parameters j)
+  | CSharp cs ->
+      List.map ~f:(fun par -> Parameter.CSharpParameter par) (CSharp.get_parameters cs)
   | C osig ->
       clang_param_to_param (C.get_parameters osig)
+  | Erlang e ->
+      List.init e.arity ~f:(fun _ -> Parameter.ErlangParameter)
   | ObjC_Cpp osig ->
       clang_param_to_param (ObjC_Cpp.get_parameters osig)
   | Block bsig ->
@@ -716,11 +961,39 @@ let rec replace_parameters new_parameters procname =
               "Expected Clang parameters in Clang procname, but got Java parameters" params )
       params
   in
+  let params_to_csharp_params params =
+    List.map
+      ~f:(fun param ->
+        match param with
+        | Parameter.CSharpParameter par ->
+            par
+        | _ ->
+            Logging.(die InternalError)
+              "Expected CSharp parameters in CSharp procname, but got parameters of another \
+               language"
+              params )
+      params
+  in
+  let params_to_erlang_arity params =
+    let check = function
+      | Parameter.ErlangParameter ->
+          ()
+      | _ ->
+          L.die InternalError
+            "Expected Erlang parameters in Erlang procname, but got parameters of another language"
+    in
+    List.iter ~f:check params ;
+    List.length params
+  in
   match procname with
   | Java j ->
       Java (Java.replace_parameters (params_to_java_params new_parameters) j)
+  | CSharp cs ->
+      CSharp (CSharp.replace_parameters (params_to_csharp_params new_parameters) cs)
   | C osig ->
       C (C.replace_parameters (params_to_clang_params new_parameters) osig)
+  | Erlang e ->
+      Erlang (Erlang.set_arity (params_to_erlang_arity new_parameters) e)
   | ObjC_Cpp osig ->
       ObjC_Cpp (ObjC_Cpp.replace_parameters (params_to_clang_params new_parameters) osig)
   | Block bsig ->
@@ -735,6 +1008,8 @@ let parameter_of_name procname class_name =
   match procname with
   | Java _ ->
       Parameter.JavaParameter Typ.(mk_ptr (mk_struct class_name))
+  | CSharp _ ->
+      Parameter.CSharpParameter Typ.(mk_ptr (mk_struct class_name))
   | _ ->
       Parameter.ClangParameter (Parameter.clang_param_of_name class_name)
 
@@ -748,9 +1023,15 @@ let describe f pn =
       F.pp_print_string f name
 
 
-let make_java ~class_name ~return_type ~method_name ~parameters ~kind () =
+let make_java ~class_name ~return_type ~method_name ~parameters ~kind =
   Java (Java.make ~class_name ~return_type ~method_name ~parameters ~kind ())
 
+
+let make_csharp ~class_name ~return_type ~method_name ~parameters ~kind =
+  CSharp (CSharp.make ~class_name ~return_type ~method_name ~parameters ~kind ())
+
+
+let make_erlang ~module_name ~function_name ~arity = Erlang {module_name; function_name; arity}
 
 let make_objc_dealloc name = ObjC_Cpp (ObjC_Cpp.make_dealloc name)
 

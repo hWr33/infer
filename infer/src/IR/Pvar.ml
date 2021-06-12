@@ -28,7 +28,8 @@ type pvar_kind =
       ; is_pod: bool
       ; is_static_local: bool
       ; is_static_global: bool
-      ; is_constant_array: bool }  (** global variable *)
+      ; is_constant_array: bool
+      ; is_const: bool }  (** global variable *)
   | Seed_var  (** variable used to store the initial value of formal parameters *)
 [@@deriving compare]
 
@@ -112,6 +113,8 @@ let is_static_local pv =
 let is_constant_array pv =
   match pv.pv_kind with Global_var {is_constant_array} -> is_constant_array | _ -> false
 
+
+let is_const pv = match pv.pv_kind with Global_var {is_const} -> is_const | _ -> false
 
 (** Check if a pvar is the special "this" var *)
 let is_this pvar = Mangled.is_this (get_name pvar)
@@ -233,7 +236,7 @@ let mk (name : Mangled.t) (proc_name : Procname.t) : t =
 
 let get_ret_pvar pname = mk Ident.name_return pname
 
-let get_ret_param_pvar pname = mk Ident.name_return_param pname
+let get_ret_param_pvar pname = mk Mangled.return_param pname
 
 (** [mk_callee name proc_name] creates a program var for a callee function with the given function
     name *)
@@ -243,8 +246,8 @@ let mk_callee (name : Mangled.t) (proc_name : Procname.t) : t =
 
 (** create a global variable with the given name *)
 let mk_global ?(is_constexpr = false) ?(is_ice = false) ?(is_pod = true) ?(is_static_local = false)
-    ?(is_static_global = false) ?(is_constant_array = false) ?translation_unit (name : Mangled.t) :
-    t =
+    ?(is_static_global = false) ?(is_constant_array = false) ?(is_const = false) ?translation_unit
+    (name : Mangled.t) : t =
   { pv_hash= name_hash name
   ; pv_name= name
   ; pv_kind=
@@ -255,7 +258,8 @@ let mk_global ?(is_constexpr = false) ?(is_ice = false) ?(is_pod = true) ?(is_st
         ; is_pod
         ; is_static_local
         ; is_static_global
-        ; is_constant_array } }
+        ; is_constant_array
+        ; is_const } }
 
 
 (** create a fresh temporary variable local to procedure [pname]. for use in the frontends only! *)
@@ -314,12 +318,6 @@ let swap_proc_in_local_pvar pvar proc_name =
   match pvar.pv_kind with Local_var _ -> {pvar with pv_kind= Local_var proc_name} | _ -> pvar
 
 
-let rename ~f {pv_name; pv_kind} =
-  let pv_name = Mangled.rename ~f pv_name in
-  let pv_hash = name_hash pv_name in
-  {pv_hash; pv_name; pv_kind}
-
-
 let is_objc_static_local_of_proc_name pname pvar =
   (* local static name is of the form procname_varname *)
   let var_name = Mangled.to_string (get_name pvar) in
@@ -334,6 +332,10 @@ module Set = PrettyPrintable.MakePPSet (struct
   let pp = pp Pp.text
 end)
 
-type capture_mode = ByReference | ByValue [@@deriving compare, equal]
+let get_pvar_formals (attributes : ProcAttributes.t) =
+  let pname = attributes.proc_name in
+  List.map attributes.formals ~f:(fun (name, typ) -> (mk name pname, typ))
 
-let string_of_capture_mode = function ByReference -> "by ref" | ByValue -> "by value"
+
+let is_local_to_procedure proc_name pvar =
+  get_declaring_function pvar |> Option.exists ~f:(Procname.equal proc_name)

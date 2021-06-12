@@ -51,7 +51,7 @@ module NodeVisitSet = Caml.Set.Make (struct
 
   let compare x1 x2 =
     if !BiabductionConfig.footprint then
-      match Config.worklist_mode with
+      match Config.biabduction_worklist_mode with
       | 0 ->
           compare_ids x1.node x2.node
       | 1 ->
@@ -342,7 +342,7 @@ let check_prop_size_ p _ =
 
 (* Check prop size and filter out possible unabstracted lists *)
 let check_prop_size edgeset_todo =
-  if Config.monitor_prop_size then Paths.PathSet.iter check_prop_size_ edgeset_todo
+  if Config.biabduction_monitor_prop_size then Paths.PathSet.iter check_prop_size_ edgeset_todo
 
 
 let reset_prop_metrics () =
@@ -626,8 +626,10 @@ let prop_init_formals_seed tenv new_formals (prop : 'a Prop.t) : Prop.exposed Pr
         match !Language.curr_language with
         | Clang ->
             Exp.Sizeof {typ; nbytes= None; dynamic_length= None; subtype= Subtype.exact}
-        | Java ->
+        | Java | CIL ->
             Exp.Sizeof {typ; nbytes= None; dynamic_length= None; subtype= Subtype.subtypes}
+        | Erlang ->
+            L.die InternalError "Erlang not supported"
       in
       Prop.mk_ptsto_lvar tenv Prop.Fld_init Predicates.inst_formal (pv, texp, None)
     in
@@ -819,7 +821,7 @@ let perform_analysis_phase ({InterproceduralAnalysis.proc_desc; err_log; tenv} a
         DB.Results_dir.path_to_filename (DB.Results_dir.Abs_source_dir source)
           [Procname.to_filename pname]
       in
-      if Config.write_dotty then DotBiabduction.emit_specs_to_file filename specs ;
+      if Config.biabduction_write_dotty then DotBiabduction.emit_specs_to_file filename specs ;
       (specs, BiabductionSummary.RE_EXECUTION)
     in
     (go, get_results)
@@ -867,7 +869,7 @@ let custom_error_preconditions summary =
 let remove_this_not_null tenv prop =
   let collect_hpred (var_option, hpreds) = function
     | Predicates.Hpointsto (Exp.Lvar pvar, Eexp (Exp.Var var, _), _)
-      when Language.curr_language_is Java && Pvar.is_this pvar ->
+      when (Language.curr_language_is Java || Language.curr_language_is CIL) && Pvar.is_this pvar ->
         (Some var, hpreds)
     | hpred ->
         (var_option, hpred :: hpreds)
@@ -946,7 +948,6 @@ let update_specs analysis_data prev_summary_opt phase
     then (
       changed := true ;
       current_specs := SpecMap.remove old_spec.BiabductionSummary.pre !current_specs )
-    else ()
   in
   let add_spec spec =
     (* add a new spec by doing union of the posts *)
@@ -1016,7 +1017,7 @@ let analyze_proc analysis_data summary_opt proc_cfg : BiabductionSummary.t =
 
 (** Perform the transition from [FOOTPRINT] to [RE_EXECUTION] in spec table *)
 let transition_footprint_re_exe summary tenv joined_pres : BiabductionSummary.t =
-  if Config.only_footprint then
+  if Config.biabduction_only_footprint then
     if BiabductionSummary.equal_phase summary.BiabductionSummary.phase FOOTPRINT then
       {summary with BiabductionSummary.phase= RE_EXECUTION}
     else summary
@@ -1044,7 +1045,7 @@ let perform_transition ({InterproceduralAnalysis.tenv; _} as analysis_data) proc
         match ProcCfg.Exceptional.start_node proc_cfg with
         | start_node ->
             AnalysisCallbacks.html_debug_new_node_session ~pp_name start_node ~f
-        | exception exn when SymOp.exn_not_failure exn ->
+        | exception exn when Exception.exn_not_failure exn ->
             f ()
       in
       with_start_node_session ~f:(fun () ->
@@ -1053,7 +1054,7 @@ let perform_transition ({InterproceduralAnalysis.tenv; _} as analysis_data) proc
             let res = collect_preconditions analysis_data summary in
             BiabductionConfig.allow_leak := allow_leak ;
             res
-          with exn when SymOp.exn_not_failure exn ->
+          with exn when Exception.exn_not_failure exn ->
             BiabductionConfig.allow_leak := allow_leak ;
             L.debug Analysis Medium "Error in collect_preconditions for %a@." Procname.pp proc_name ;
             let error = Exceptions.recognize_exception exn in

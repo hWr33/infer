@@ -66,21 +66,15 @@ val lit : Predsym.t -> Trm.t array -> t
 
 val map_vars : t -> f:(Var.t -> Var.t) -> t
 val map_trms : t -> f:(Trm.t -> Trm.t) -> t
-
-val map_pos_neg :
-  (t -> t) -> 'a -> (pos:set -> neg:set -> 'a) -> pos:set -> neg:set -> 'a
+val map_and : t -> pos:set -> neg:set -> (t -> t) -> t
+val map_or : t -> pos:set -> neg:set -> (t -> t) -> t
 
 (** Traverse *)
 
 val fold_pos_neg : pos:set -> neg:set -> 'a -> f:(t -> 'a -> 'a) -> 'a
 
-val fold_dnf :
-     meet1:(t -> 'conjunction -> 'conjunction)
-  -> join1:('conjunction -> 'disjunction -> 'disjunction)
-  -> top:'conjunction
-  -> bot:'disjunction
-  -> t
-  -> 'disjunction
+val iter_dnf :
+  meet1:(t -> 'a -> 'a) -> top:'a -> t -> f:('a -> unit) -> unit
 
 val vars : t -> Var.t iter
 val trms : t -> Trm.t iter

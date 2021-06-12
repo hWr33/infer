@@ -310,22 +310,22 @@ let write_html ranges rows chan =
           <th>Test</th>
           <th>elapsed<br>(sec)</th>
           <th>&Delta;<br></th>
-          <th>&Delta;%%<br></th>
+          <th><math><mrow><mfrac><mi>prev</mi><mi>curr</mi></mfrac></mrow></math></th>
           <th>user<br>(sec)</th>
           <th>&Delta;<br></th>
-          <th>&Delta;%%<br></th>
+          <th><math><mrow><mfrac><mi>prev</mi><mi>curr</mi></mfrac></mrow></math></th>
           <th>system<br>(sec)</th>
           <th>&Delta;<br></th>
-          <th>&Delta;%%<br></th>
+          <th><math><mrow><mfrac><mi>prev</mi><mi>curr</mi></mfrac></mrow></math></th>
           <th>alloc<br>(bytes)</th>
           <th>&Delta;<br></th>
-          <th>&Delta;%%<br></th>
+          <th><math><mrow><mfrac><mi>prev</mi><mi>curr</mi></mfrac></mrow></math></th>
           <th>promo<br>(bytes)</th>
           <th>&Delta;<br></th>
-          <th>&Delta;%%<br></th>
+          <th><math><mrow><mfrac><mi>prev</mi><mi>curr</mi></mfrac></mrow></math></th>
           <th>peak<br>(bytes)</th>
           <th>&Delta;<br></th>
-          <th>&Delta;%%<br></th>
+          <th><math><mrow><mfrac><mi>prev</mi><mi>curr</mi></mfrac></mrow></math></th>
           <th>Status</th>
           <th>&Delta;<br></th>
           <th>Steps</th>
@@ -333,7 +333,7 @@ let write_html ranges rows chan =
           <th>Cover</th>
           <th>%%</th>
           <th>&Delta;<br></th>
-          <th>&Delta;%%<br></th>
+          <th><math><mrow><mfrac><mi>prev</mi><mi>curr</mi></mfrac></mrow></math></th>
           <th>Solver<br>Steps</th>
           <th>&Delta;<br></th>
         </tr>|} ;
@@ -378,21 +378,23 @@ let write_html ranges rows chan =
       in
       let delta max pct t ppf d =
         let r = 100. *. d /. t in
+        let x = (t -. d) /. t in
         Printf.fprintf ppf
           "<td align=\"right\" bgcolor=\"%s\">%12.3f</td>\n\
-           <td align=\"right\" bgcolor=\"%s\">%12.0f%%</td>\n"
+           <td align=\"right\" bgcolor=\"%s\">%12.2fx</td>\n"
           (color max d) d (color pct r)
-          (Base.Float.round_decimal ~decimal_digits:2 r)
+          (Base.Float.round_decimal ~decimal_digits:2 x)
       in
       let delta_mem max pct w ppf d =
         let r = if Float.(abs d < 0.000001) then 0. else 100. *. d /. w in
+        let x = (w -. d) /. w in
         Printf.fprintf ppf
           "<td align=\"right\" bgcolor=\"%s\">%s</td>\n\
-           <td align=\"right\" bgcolor=\"%s\">%12.0f%%</td>\n"
+           <td align=\"right\" bgcolor=\"%s\">%12.2fx</td>\n"
           (color max d)
           Core_kernel.Byte_units.(to_string_short (of_megabytes d))
           (color pct r)
-          (Base.Float.round_decimal ~decimal_digits:2 r)
+          (Base.Float.round_decimal ~decimal_digits:2 x)
       in
       let timed = delta ranges.max_time ranges.pct_time in
       let allocd = delta_mem ranges.max_alloc ranges.pct_alloc in
@@ -661,7 +663,8 @@ let cmp perf x y =
       if o <> 0 then o
       else
         match (List.hd x.status, List.hd y.status) with
-        | Some (Safe _ | Unsafe _ | Ok), Some (Safe _ | Unsafe _ | Ok)
+        | ( Some (Safe _ | Unsafe _ | Ok | Unsound | Incomplete)
+          , Some (Safe _ | Unsafe _ | Ok | Unsound | Incomplete) )
           when perf -> (
           match (x.times_deltas, y.times_deltas) with
           | Some xtd, Some ytd ->
@@ -670,7 +673,8 @@ let cmp perf x y =
           | Some _, None -> 1
           | None, Some _ -> -1
           | None, None -> String.compare x.name y.name )
-        | Some (Safe _ | Unsafe _ | Ok), Some (Safe _ | Unsafe _ | Ok) -> (
+        | ( Some (Safe _ | Unsafe _ | Ok | Unsound | Incomplete)
+          , Some (Safe _ | Unsafe _ | Ok | Unsound | Incomplete) ) -> (
           match (x.gcs_deltas, y.gcs_deltas) with
           | Some xgc, Some ygc ->
               -Float.(
@@ -681,8 +685,8 @@ let cmp perf x y =
           | Some _, None -> 1
           | None, Some _ -> -1
           | None, None -> String.compare x.name y.name )
-        | _, Some (Safe _ | Unsafe _ | Ok) -> -1
-        | Some (Safe _ | Unsafe _ | Ok), _ -> 1
+        | _, Some (Safe _ | Unsafe _ | Ok | Unsound | Incomplete) -> -1
+        | Some (Safe _ | Unsafe _ | Ok | Unsound | Incomplete), _ -> 1
         | s, t ->
             Option.compare (Ord.opp Report.compare_status) s t
             |> fun o -> if o <> 0 then o else String.compare x.name y.name )

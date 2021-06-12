@@ -19,6 +19,12 @@ module Graph = PrettyPrintable.MakePPMonoMap (AbstractValue) (AttributesNoRank)
 
 type t = Graph.t
 
+let compare = Graph.compare AttributesNoRank.compare
+
+let equal = Graph.equal AttributesNoRank.equal
+
+let for_all = Graph.for_all
+
 let yojson_of_t = [%yojson_of: _]
 
 let add_one addr attribute attrs =
@@ -72,8 +78,6 @@ let allocate procname (address, history) location memory =
   add_one address (Attribute.Allocated (procname, Immediate {location; history})) memory
 
 
-let add_dynamic_type typ address memory = add_one address (Attribute.DynamicType typ) memory
-
 let mark_as_end_of_collection address memory = add_one address Attribute.EndOfCollection memory
 
 let check_valid address attrs =
@@ -104,11 +108,29 @@ let remove_allocation_attr address memory =
       memory
 
 
+let remove_isl_abduced_attr address memory =
+  match get_attribute Attributes.get_isl_abduced address memory with
+  | Some trace ->
+      remove_one address (Attribute.ISLAbduced trace) memory
+  | None ->
+      memory
+
+
+let remove_must_be_valid_attr address memory =
+  match get_attribute Attributes.get_must_be_valid address memory with
+  | Some (timestamp, trace, reason) ->
+      remove_one address (Attribute.MustBeValid (timestamp, trace, reason)) memory
+  | None ->
+      memory
+
+
 let initialize address attrs =
   if Graph.find_opt address attrs |> Option.exists ~f:Attributes.is_uninitialized then
     remove_one address Attribute.Uninitialized attrs
   else attrs
 
+
+let get_allocation = get_attribute Attributes.get_allocation
 
 let get_closure_proc_name = get_attribute Attributes.get_closure_proc_name
 
@@ -116,29 +138,28 @@ let get_invalid = get_attribute Attributes.get_invalid
 
 let get_must_be_valid = get_attribute Attributes.get_must_be_valid
 
-let get_must_be_valid_or_allocated_isl address attrs =
-  match get_must_be_valid address attrs with
-  | Some trace ->
-      Some trace
-  | None -> (
-    match get_attribute Attributes.get_allocation address attrs with
-    | Some (_, trace) ->
-        Some trace
-    | None ->
-        get_attribute Attributes.get_isl_abduced address attrs )
+let is_must_be_valid_or_allocated_isl address attrs =
+  Option.is_some (get_must_be_valid address attrs)
+  || Option.is_some (get_attribute Attributes.get_allocation address attrs)
+  || Option.is_some (get_attribute Attributes.get_isl_abduced address attrs)
 
 
 let get_must_be_initialized = get_attribute Attributes.get_must_be_initialized
 
+let add_dynamic_type typ address memory = add_one address (Attribute.DynamicType typ) memory
+
+let get_dynamic_type attrs v = get_attribute Attributes.get_dynamic_type v attrs
+
 let std_vector_reserve address memory = add_one address Attribute.StdVectorReserve memory
 
+let add_unreachable_at address location memory = add_one address (UnreachableAt location) memory
+
 let is_end_of_collection address attrs =
-  Graph.find_opt address attrs |> Option.value_map ~default:false ~f:Attributes.is_end_of_collection
+  Graph.find_opt address attrs |> Option.exists ~f:Attributes.is_end_of_collection
 
 
 let is_std_vector_reserved address attrs =
-  Graph.find_opt address attrs
-  |> Option.value_map ~default:false ~f:Attributes.is_std_vector_reserved
+  Graph.find_opt address attrs |> Option.exists ~f:Attributes.is_std_vector_reserved
 
 
 let canonicalize ~get_var_repr attrs_map =
@@ -151,5 +172,20 @@ let canonicalize ~get_var_repr attrs_map =
       if Attributes.is_empty attrs then g
       else
         let addr' = get_var_repr addr in
-        add addr' attrs g )
+        let attrs' =
+          Graph.find_opt addr' g
+          |> Option.fold ~init:attrs ~f:(fun attrs attrs' ->
+                 (* "merge" attributes if two different values ([addr] and [addr']) are found to be
+                    equal after attributes of the same kind were recorded for them. This arbitrarily
+                    keeps one of them, with unclear but likely benign consequences. *)
+                 Attributes.union_prefer_left attrs' attrs )
+        in
+        add addr' attrs' g )
     attrs_map Graph.empty
+
+
+let subst_var (v, v') attrs_map =
+  if Graph.mem v attrs_map then
+    canonicalize attrs_map ~get_var_repr:(fun addr ->
+        if AbstractValue.equal addr v then v' else addr )
+  else attrs_map

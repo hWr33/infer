@@ -53,12 +53,11 @@ module BuildMethodSignature = struct
         raise CFrontend_errors.Invalid_declaration
 
 
-  let should_add_return_param return_type ~is_objc_method =
-    match return_type.Typ.desc with Tstruct _ -> not is_objc_method | _ -> false
+  let should_add_return_param return_type =
+    match return_type.Typ.desc with Tstruct _ -> true | _ -> false
 
 
   let get_return_param qual_type_to_sil_type tenv ~block_return_type method_decl =
-    let is_objc_method = CMethodProperties.is_objc_method method_decl in
     let return_qual_type =
       match block_return_type with
       | Some return_type ->
@@ -67,7 +66,7 @@ module BuildMethodSignature = struct
           CMethodProperties.get_return_type method_decl
     in
     let return_typ = qual_type_to_sil_type tenv return_qual_type in
-    if should_add_return_param return_typ ~is_objc_method then
+    if should_add_return_param return_typ then
       let name = Mangled.from_string CFrontend_config.return_param in
       let return_qual_type = Ast_expressions.create_pointer_qual_type return_qual_type in
       param_type_of_qual_type qual_type_to_sil_type tenv name return_qual_type
@@ -149,19 +148,24 @@ module BuildMethodSignature = struct
     in
     let return_typ = qual_type_to_sil_type tenv return_qual_type in
     let return_typ_annot = CAst_utils.sil_annot_of_type return_qual_type in
-    let is_objc_method = CMethodProperties.is_objc_method method_decl in
-    if should_add_return_param return_typ ~is_objc_method then
-      (StdTyp.void, Some (CType.add_pointer_to_typ return_typ), Annot.Item.empty, true)
-    else (return_typ, None, return_typ_annot, false)
+    let is_ret_typ_pod = CGeneral_utils.is_type_pod return_qual_type in
+    if should_add_return_param return_typ then
+      ( StdTyp.void
+      , Some (CType.add_pointer_to_typ return_typ)
+      , Annot.Item.empty
+      , true
+      , is_ret_typ_pod )
+    else (return_typ, None, return_typ_annot, false, is_ret_typ_pod)
 
 
   let method_signature_of_decl qual_type_to_sil_type tenv method_decl ?block_return_type
       ?(passed_as_noescape_block_to = None) procname =
     let decl_info = Clang_ast_proj.get_decl_tuple method_decl in
     let loc = decl_info.Clang_ast_t.di_source_range in
-    let ret_type, return_param_typ, ret_typ_annot, has_added_return_param =
+    let ret_type, return_param_typ, ret_typ_annot, has_added_return_param, is_ret_type_pod =
       get_return_val_and_param_types qual_type_to_sil_type tenv ~block_return_type method_decl
     in
+    let is_ret_constexpr = CMethodProperties.is_constexpr method_decl in
     let method_kind = CMethodProperties.get_method_kind method_decl in
     let pointer_to_parent = decl_info.di_parent_pointer in
     let class_param = get_class_param qual_type_to_sil_type tenv method_decl in
@@ -177,6 +181,8 @@ module BuildMethodSignature = struct
     ; class_param
     ; params
     ; ret_type= (ret_type, ret_typ_annot)
+    ; is_ret_type_pod
+    ; is_ret_constexpr
     ; has_added_return_param
     ; attributes
     ; loc
@@ -205,8 +211,8 @@ let get_struct_decls decl =
   let open Clang_ast_t in
   match decl with
   | CapturedDecl (_, decl_list, _)
-  | ClassTemplateSpecializationDecl (_, _, _, decl_list, _, _, _, _, _, _)
   | ClassTemplatePartialSpecializationDecl (_, _, _, decl_list, _, _, _, _, _, _)
+  | ClassTemplateSpecializationDecl (_, _, _, decl_list, _, _, _, _, _, _)
   | CXXRecordDecl (_, _, _, decl_list, _, _, _, _)
   | EnumDecl (_, _, _, decl_list, _, _, _)
   | LinkageSpecDecl (_, decl_list, _)
@@ -220,70 +226,71 @@ let get_struct_decls decl =
   | TranslationUnitDecl (_, decl_list, _, _) ->
       decl_list
   | AccessSpecDecl _
+  | BindingDecl _
   | BlockDecl _
-  | ConceptDecl _
-  | OMPDeclareMapperDecl _
-  | OMPAllocateDecl _
+  | BuiltinTemplateDecl _
   | ClassScopeFunctionSpecializationDecl _
+  | ClassTemplateDecl _
+  | ConceptDecl _
+  | ConstructorUsingShadowDecl _
+  | CXXConstructorDecl _
+  | CXXConversionDecl _
+  | CXXDeductionGuideDecl _
+  | CXXDestructorDecl _
+  | CXXMethodDecl _
+  | DecompositionDecl _
   | EmptyDecl _
+  | EnumConstantDecl _
   | ExportDecl _
   | ExternCContextDecl _
+  | FieldDecl _
   | FileScopeAsmDecl _
   | FriendDecl _
   | FriendTemplateDecl _
+  | FunctionDecl _
+  | FunctionTemplateDecl _
+  | ImplicitParamDecl _
   | ImportDecl _
+  | IndirectFieldDecl _
   | LabelDecl _
+  | LifetimeExtendedTemporaryDecl _
+  | MSGuidDecl _
+  | MSPropertyDecl _
   | NamespaceAliasDecl _
+  | NonTypeTemplateParmDecl _
+  | ObjCAtDefsFieldDecl _
   | ObjCCompatibleAliasDecl _
+  | ObjCIvarDecl _
   | ObjCMethodDecl _
   | ObjCPropertyDecl _
-  | BuiltinTemplateDecl _
-  | ClassTemplateDecl _
-  | FunctionTemplateDecl _
-  | TypeAliasTemplateDecl _
-  | VarTemplateDecl _
+  | ObjCPropertyImplDecl _
+  | ObjCTypeParamDecl _
+  | OMPAllocateDecl _
+  | OMPCapturedExprDecl _
+  | OMPDeclareMapperDecl _
+  | OMPDeclareReductionDecl _
+  | OMPRequiresDecl _
+  | OMPThreadPrivateDecl _
+  | ParmVarDecl _
+  | PragmaCommentDecl _
+  | PragmaDetectMismatchDecl _
+  | RequiresExprBodyDecl _
+  | StaticAssertDecl _
   | TemplateTemplateParmDecl _
   | TemplateTypeParmDecl _
-  | ObjCTypeParamDecl _
   | TypeAliasDecl _
+  | TypeAliasTemplateDecl _
   | TypedefDecl _
   | UnresolvedUsingTypenameDecl _
+  | UnresolvedUsingValueDecl _
   | UsingDecl _
   | UsingDirectiveDecl _
   | UsingPackDecl _
   | UsingShadowDecl _
-  | ConstructorUsingShadowDecl _
-  | BindingDecl _
-  | FieldDecl _
-  | ObjCAtDefsFieldDecl _
-  | ObjCIvarDecl _
-  | FunctionDecl _
-  | CXXDeductionGuideDecl _
-  | CXXMethodDecl _
-  | CXXConstructorDecl _
-  | CXXConversionDecl _
-  | CXXDestructorDecl _
-  | MSPropertyDecl _
-  | NonTypeTemplateParmDecl _
   | VarDecl _
-  | DecompositionDecl _
-  | ImplicitParamDecl _
-  | OMPCapturedExprDecl _
-  | ParmVarDecl _
-  | VarTemplateSpecializationDecl _
+  | VarTemplateDecl _
   | VarTemplatePartialSpecializationDecl _
-  | EnumConstantDecl _
-  | IndirectFieldDecl _
-  | OMPDeclareReductionDecl _
-  | UnresolvedUsingValueDecl _
-  | OMPRequiresDecl _
-  | OMPThreadPrivateDecl _
-  | ObjCPropertyImplDecl _
-  | PragmaCommentDecl _
-  | PragmaDetectMismatchDecl _
-  | StaticAssertDecl _
-  | LifetimeExtendedTemporaryDecl _
-  | RequiresExprBodyDecl _ ->
+  | VarTemplateSpecializationDecl _ ->
       []
 
 
@@ -301,7 +308,7 @@ let create_c_record_typename (tag_kind : Clang_ast_t.tag_kind) =
   | `TTK_Union ->
       Typ.Name.C.union_from_qual_name
   | `TTK_Class ->
-      Typ.Name.Cpp.from_qual_name Typ.NoTemplate
+      Typ.Name.Cpp.from_qual_name Typ.NoTemplate ~is_union:false
 
 
 let get_class_template_name = function
@@ -451,10 +458,12 @@ and get_record_friend_decl_type tenv definition_decl =
 and get_record_typename ?tenv decl =
   let open Clang_ast_t in
   let linters_mode = match tenv with Some _ -> false | None -> true in
+  let is_union_tag tag_kind = match tag_kind with `TTK_Union -> true | _ -> false in
   match (decl, tenv) with
   | RecordDecl (_, name_info, _, _, _, tag_kind, _), _ ->
       CAst_utils.get_qualified_name ~linters_mode name_info |> create_c_record_typename tag_kind
-  | ClassTemplateSpecializationDecl (_, _, _, _, _, _, _, _, mangling, spec_info), Some tenv ->
+  | ClassTemplateSpecializationDecl (_, _, _, _, _, tag_kind, _, _, mangling, spec_info), Some tenv
+    ->
       let tname =
         match CAst_utils.get_decl spec_info.tsi_template_decl with
         | Some dec ->
@@ -464,15 +473,17 @@ and get_record_typename ?tenv decl =
       in
       let args = get_template_args tenv spec_info in
       let mangled = if String.equal "" mangling then None else Some mangling in
-      Typ.Name.Cpp.from_qual_name (Typ.Template {mangled; args}) tname
+      Typ.Name.Cpp.from_qual_name
+        (Typ.Template {mangled; args})
+        ~is_union:(is_union_tag tag_kind) tname
   | CXXRecordDecl (_, name_info, _, _, _, `TTK_Union, _, _), _ ->
       Typ.CUnion (CAst_utils.get_qualified_name ~linters_mode name_info)
-  | CXXRecordDecl (_, name_info, _, _, _, _, _, _), _
-  | ClassTemplatePartialSpecializationDecl (_, name_info, _, _, _, _, _, _, _, _), _
-  | ClassTemplateSpecializationDecl (_, name_info, _, _, _, _, _, _, _, _), _ ->
+  | CXXRecordDecl (_, name_info, _, _, _, tag_kind, _, _), _
+  | ClassTemplatePartialSpecializationDecl (_, name_info, _, _, _, tag_kind, _, _, _, _), _
+  | ClassTemplateSpecializationDecl (_, name_info, _, _, _, tag_kind, _, _, _, _), _ ->
       (* we use Typ.CppClass for C++ because we expect Typ.CppClass from *)
       (* types that have methods. And in C++ struct/class/union can have methods *)
-      Typ.Name.Cpp.from_qual_name Typ.NoTemplate
+      Typ.Name.Cpp.from_qual_name Typ.NoTemplate ~is_union:(is_union_tag tag_kind)
         (CAst_utils.get_qualified_name ~linters_mode name_info)
   | ObjCInterfaceDecl (_, name_info, _, _, _), _ | ObjCImplementationDecl (_, name_info, _, _, _), _
     ->
@@ -592,8 +603,8 @@ and mk_cpp_method ?tenv class_name method_name ?meth_decl mangled parameters =
   let open Clang_ast_t in
   let method_kind =
     match meth_decl with
-    | Some (Clang_ast_t.CXXConstructorDecl (_, _, _, _, {xmdi_is_constexpr})) ->
-        Procname.ObjC_Cpp.CPPConstructor {mangled; is_constexpr= xmdi_is_constexpr}
+    | Some (Clang_ast_t.CXXConstructorDecl (_, _, _, _, _)) ->
+        Procname.ObjC_Cpp.CPPConstructor {mangled}
     | Some (Clang_ast_t.CXXDestructorDecl _) ->
         Procname.ObjC_Cpp.CPPDestructor {mangled}
     | _ ->
@@ -632,13 +643,13 @@ and objc_method_procname ?tenv decl_info method_name mdi =
 
 
 and objc_block_procname outer_proc_opt parameters =
-  let outer_proc_string = Option.value_map ~f:Procname.to_string outer_proc_opt ~default:"" in
-  let block_procname_with_index i =
-    Printf.sprintf "%s%s%s%d" Config.anonymous_block_prefix outer_proc_string
-      Config.anonymous_block_num_sep i
+  let block_type =
+    Option.value_map ~f:Procname.get_block_type outer_proc_opt
+      ~default:(Procname.Block.SurroundingProc {name= ""})
   in
-  let name = block_procname_with_index (CFrontend_config.get_fresh_block_index ()) in
-  Procname.Block (Procname.Block.make name parameters)
+  let block_index = CFrontend_config.get_fresh_block_index () in
+  let block = Procname.Block.make_in_outer_scope block_type block_index parameters in
+  Procname.Block block
 
 
 and procname_from_decl ?tenv ?block_return_type ?outer_proc meth_decl =
@@ -777,7 +788,7 @@ module CProcname = struct
         in
         objc_method_procname decl_info method_name mdi []
     | BlockDecl _ ->
-        Procname.Block (Procname.Block.make Config.anonymous_block_prefix [])
+        Procname.Block (Procname.Block.make_surrounding Config.anonymous_block_prefix [])
     | _ ->
         from_decl method_decl
 end

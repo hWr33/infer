@@ -16,13 +16,10 @@ module AbductiveDomain = PulseAbductiveDomain
 type t =
   | AccessToInvalidAddress of Diagnostic.access_to_invalid_address
   | ReadUninitializedValue of Diagnostic.read_uninitialized_value
-[@@deriving equal, yojson_of]
+[@@deriving compare, equal, yojson_of]
 
 val to_diagnostic : t -> Diagnostic.t
 
-val should_report : AbductiveDomain.summary -> bool
-
-val should_report_diagnostic :
-  AbductiveDomain.summary -> Diagnostic.t -> [`ReportNow | `DelayReport of t]
+val should_report : AbductiveDomain.summary -> Diagnostic.t -> [> `DelayReport of t | `ReportNow]
 
 val add_call : CallEvent.t * Location.t -> t -> t

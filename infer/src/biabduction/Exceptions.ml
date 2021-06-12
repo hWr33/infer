@@ -159,7 +159,7 @@ let recognize_exception exn : IssueToReport.t =
       {issue_type= IssueType.precondition_not_met; description= desc; ocaml_pos= Some ocaml_pos}
   | Retain_cycle (desc, ocaml_pos) ->
       {issue_type= IssueType.retain_cycle; description= desc; ocaml_pos= Some ocaml_pos}
-  | SymOp.Analysis_failure_exe _ ->
+  | Exception.Analysis_failure_exe _ ->
       {issue_type= IssueType.failure_exe; description= Localise.no_desc; ocaml_pos= None}
   | Skip_function desc ->
       {issue_type= IssueType.skip_function; description= desc; ocaml_pos= None}
@@ -194,6 +194,10 @@ let print_exception_html s exn =
 
 (** Return true if the exception is not serious and should be handled in timeout mode *)
 let handle_exception exn =
-  let error = recognize_exception exn in
-  IssueType.equal_visibility error.issue_type.visibility User
-  || IssueType.equal_visibility error.issue_type.visibility Developer
+  match exn with
+  | RestartSchedulerException.ProcnameAlreadyLocked _ ->
+      false
+  | _ ->
+      let error = recognize_exception exn in
+      IssueType.equal_visibility error.issue_type.visibility User
+      || IssueType.equal_visibility error.issue_type.visibility Developer

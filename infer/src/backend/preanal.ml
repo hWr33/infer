@@ -87,9 +87,9 @@ module ReplaceObjCCopy = struct
         && Option.exists class_name_opt ~f:(String.equal class_name) )
 
 
-  let get_replaced_instr {protocol; method_name; method_with_zone; is_mutable} pdesc tenv params
+  let get_replaced_instr {protocol; method_name; method_with_zone; is_mutable} pdesc tenv args
       ret_id_typ loc flags =
-    match objc_get_first_arg_typ params with
+    match objc_get_first_arg_typ args with
     | Some cl ->
         let class_name = Typ.Name.name cl in
         if
@@ -107,7 +107,7 @@ module ReplaceObjCCopy = struct
             (Sil.Call
                ( ret_id_typ
                , function_exp
-               , params @ [(Exp.null, StdTyp.Objc.pointer_to_nszone)]
+               , args @ [(Exp.null, StdTyp.Objc.pointer_to_nszone)]
                , loc
                , flags )) )
         else None
@@ -115,10 +115,10 @@ module ReplaceObjCCopy = struct
         None
 
 
-  let process tenv pdesc ret_id_typ callee params loc flags =
+  let process tenv pdesc ret_id_typ callee args loc flags =
     get_copy_kind_opt callee
     |> Option.bind ~f:(fun copy_kind ->
-           get_replaced_instr copy_kind pdesc tenv params ret_id_typ loc flags )
+           get_replaced_instr copy_kind pdesc tenv args ret_id_typ loc flags )
 end
 
 module ReplaceObjCOverridden = struct
@@ -126,10 +126,10 @@ module ReplaceObjCOverridden = struct
     Option.exists class_name_opt ~f:(Typ.Name.equal object_name)
 
 
-  let get_overridden_method_opt tenv ~caller_class_name ~callee params =
+  let get_overridden_method_opt tenv ~caller_class_name ~callee args =
     let open IOption.Let_syntax in
     let* sup_class_name = Procname.get_class_type_name callee in
-    let* sub_class_name = objc_get_first_arg_typ params in
+    let* sub_class_name = objc_get_first_arg_typ args in
     if
       PatternMatch.is_subtype tenv sub_class_name sup_class_name
       && not (may_be_super_call caller_class_name sub_class_name)
@@ -139,24 +139,24 @@ module ReplaceObjCOverridden = struct
     else None
 
 
-  let process tenv caller ret_id_typ callee params loc flags =
+  let process tenv caller ret_id_typ callee args loc flags =
     get_overridden_method_opt tenv
       ~caller_class_name:(Procname.get_class_type_name caller)
-      ~callee params
+      ~callee args
     |> Option.map ~f:(fun overridden_method ->
            Logging.d_printfln_escaped "Replace overridden method %a to %a" Procname.pp callee
              Procname.pp overridden_method ;
-           Sil.Call (ret_id_typ, Const (Cfun overridden_method), params, loc, flags) )
+           Sil.Call (ret_id_typ, Const (Cfun overridden_method), args, loc, flags) )
 end
 
 module ReplaceObjCMethodCall = struct
   let process tenv pdesc caller =
     let replace_method instr =
       match (instr : Sil.instr) with
-      | Call (ret_id_typ, Const (Cfun callee), params, loc, flags) ->
+      | Call (ret_id_typ, Const (Cfun callee), args, loc, flags) ->
           IOption.if_none_evalopt
-            (ReplaceObjCCopy.process tenv pdesc ret_id_typ callee params loc flags) ~f:(fun () ->
-              ReplaceObjCOverridden.process tenv caller ret_id_typ callee params loc flags )
+            (ReplaceObjCCopy.process tenv pdesc ret_id_typ callee args loc flags) ~f:(fun () ->
+              ReplaceObjCOverridden.process tenv caller ret_id_typ callee args loc flags )
           |> Option.value ~default:instr
       | _ ->
           instr
@@ -326,12 +326,12 @@ module Liveness = struct
 
     let is_last_instr_in_node instr node = phys_equal (last_instr_in_node node) instr
 
-    let exec_instr ((active_defs, to_nullify) as astate) extras node instr =
+    let exec_instr ((active_defs, to_nullify) as astate) extras node _ (instr : Sil.instr) =
       let astate' =
         match instr with
-        | Sil.Load {id= lhs_id} ->
+        | Load {id= lhs_id} ->
             (VarDomain.add (Var.of_id lhs_id) active_defs, to_nullify)
-        | Sil.Call ((id, _), _, actuals, _, {CallFlags.cf_assign_last_arg}) ->
+        | Call ((id, _), _, actuals, _, {CallFlags.cf_assign_last_arg}) ->
             let active_defs = VarDomain.add (Var.of_id id) active_defs in
             let active_defs =
               if cf_assign_last_arg then
@@ -343,13 +343,15 @@ module Liveness = struct
               else active_defs
             in
             (active_defs, to_nullify)
-        | Sil.Store {e1= Exp.Lvar lhs_pvar} ->
+        | Store {e1= Exp.Lvar lhs_pvar} ->
             (VarDomain.add (Var.of_pvar lhs_pvar) active_defs, to_nullify)
-        | Sil.Metadata (VariableLifetimeBegins (pvar, _, _)) ->
+        | Metadata (VariableLifetimeBegins (pvar, _, _)) ->
             (VarDomain.add (Var.of_pvar pvar) active_defs, to_nullify)
-        | Sil.Store _ | Prune _ | Metadata (Abstract _ | ExitScope _ | Skip) ->
+        | Store _
+        | Prune _
+        | Metadata (Abstract _ | CatchEntry _ | ExitScope _ | Skip | TryEntry _ | TryExit _) ->
             astate
-        | Sil.Metadata (Nullify _) ->
+        | Metadata (Nullify _) ->
             L.(die InternalError)
               "Should not add nullify instructions before running nullify analysis!"
       in
@@ -376,7 +378,7 @@ module Liveness = struct
     in
     let nullify_proc_cfg = ProcCfg.Exceptional.from_pdesc proc_desc in
     let nullify_proc_data = {ProcData.summary; tenv; extras= liveness_inv_map} in
-    let initial = (VarDomain.empty, VarDomain.empty) in
+    let initial = (VarDomain.bottom, VarDomain.bottom) in
     let nullify_inv_map = NullifyAnalysis.exec_cfg nullify_proc_cfg nullify_proc_data ~initial in
     (* only nullify pvars that are local; don't nullify those that can escape *)
     let is_local pvar = not (Liveness.is_always_in_scope proc_desc pvar) in
@@ -431,7 +433,7 @@ module Liveness = struct
   let process summary tenv =
     let proc_desc = Summary.get_proc_desc summary in
     let liveness_proc_cfg = BackwardCfg.from_pdesc proc_desc in
-    let initial = Liveness.Domain.empty in
+    let initial = Liveness.Domain.bottom in
     let liveness_inv_map = LivenessAnalysis.exec_cfg liveness_proc_cfg proc_desc ~initial in
     add_nullify_instrs summary tenv liveness_inv_map
 end
@@ -450,61 +452,27 @@ module NoReturn = struct
                false )
 
 
-  let has_throw_call node =
-    Procdesc.Node.get_instrs node
-    |> Instrs.exists ~f:(fun (instr : Sil.instr) ->
-           match instr with
-           | Call (_, Const (Cfun proc_name), _, _, _) ->
-               String.equal
-                 (Procname.get_method BuiltinDecl.objc_cpp_throw)
-                 (Procname.get_method proc_name)
-           | _ ->
-               false )
-
-
-  let get_all_reachable_catch_nodes start_node =
-    let rec worklist ~todo ~visited result =
-      if Procdesc.NodeSet.is_empty todo then result
-      else
-        let el = Procdesc.NodeSet.choose todo in
-        let todo = Procdesc.NodeSet.remove el todo in
-        if Procdesc.NodeSet.mem el visited then worklist ~todo ~visited result
-        else
-          let succs = Procdesc.Node.get_succs el |> Procdesc.NodeSet.of_list in
-          let visited = Procdesc.NodeSet.add el visited in
-          worklist
-            ~todo:(Procdesc.NodeSet.union succs todo)
-            ~visited
-            (Procdesc.Node.get_exn el @ result)
-    in
-    worklist ~todo:(Procdesc.NodeSet.singleton start_node) ~visited:Procdesc.NodeSet.empty []
-
-
   let process tenv proc_desc =
     let exit_node = Procdesc.get_exit_node proc_desc in
     Procdesc.iter_nodes
       (fun node ->
         if has_noreturn_call tenv node then
-          Procdesc.set_succs node ~normal:(Some [exit_node]) ~exn:None
-        else if has_throw_call node then
-          let catch_nodes = get_all_reachable_catch_nodes node in
-          let catch_or_exit_nodes =
-            if List.is_empty catch_nodes then (* throw with no catch *)
-              [exit_node] else catch_nodes
-          in
-          Procdesc.set_succs node ~normal:(Some catch_or_exit_nodes) ~exn:None )
+          Procdesc.set_succs node ~normal:(Some [exit_node]) ~exn:None )
       proc_desc
 end
 
 let do_preanalysis exe_env pdesc =
   let summary = Summary.OnDisk.reset pdesc in
-  let tenv = Exe_env.get_tenv exe_env (Procdesc.get_proc_name pdesc) in
+  let tenv = Exe_env.get_proc_tenv exe_env (Procdesc.get_proc_name pdesc) in
   let proc_name = Procdesc.get_proc_name pdesc in
-  if Procname.is_java proc_name then InlineJavaSyntheticMethods.process pdesc ;
-  if Config.function_pointer_specialization && not (Procname.is_java proc_name) then
-    FunctionPointers.substitute pdesc ;
+  if Procname.is_java proc_name || Procname.is_csharp proc_name then
+    InlineJavaSyntheticMethods.process pdesc ;
+  if
+    Config.function_pointer_specialization
+    && not (Procname.is_java proc_name || Procname.is_csharp proc_name)
+  then FunctionPointers.substitute pdesc ;
   (* NOTE: It is important that this preanalysis stays before Liveness *)
-  if not (Procname.is_java proc_name) then (
+  if not (Procname.is_java proc_name || Procname.is_csharp proc_name) then (
     ClosuresSubstitution.process_closure_call summary ;
     ClosureSubstSpecializedMethod.process summary ;
     ReplaceObjCMethodCall.process tenv pdesc proc_name ) ;

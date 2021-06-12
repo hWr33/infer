@@ -24,3 +24,49 @@ void double_free_global_bad() {
   free_global_pointer_ok();
   free_global_pointer_ok();
 }
+
+void free_null_then_deref_bad() {
+  int* x = NULL;
+  free(x);
+  *x = 1;
+}
+
+void assumed_aliasing_latent(int* x, int* y) {
+  if (x == y) {
+    free(x);
+    free(y);
+  }
+}
+
+void trigger_assumed_aliasing_bad(int* x) { assumed_aliasing_latent(x, x); }
+
+void assumed_aliasing2_latent(int* x, int* y) {
+  if (x == y)
+    ;
+  free(x);
+  free(y);
+}
+
+void trigger_assumed_aliasing2_bad(int* x) { assumed_aliasing2_latent(x, x); }
+
+void assumed_aliasing3_latent(int* x, int* y) {
+  free(x);
+  if (x == y)
+    ;
+  free(y);
+}
+
+void trigger_assumed_aliasing3_bad(int* x) { assumed_aliasing3_latent(x, x); }
+
+void FN_assumed_aliasing4_latent(int* x, int* y) {
+  free(x);
+  free(y);
+  // we create the x==y case too late: x|->- * y|->- is already in the
+  // state so adding x==y creates a contradition
+  if (x == y)
+    ;
+}
+
+void FN_trigger_assumed_aliasing4_bad(int* x) {
+  FN_assumed_aliasing4_latent(x, x);
+}

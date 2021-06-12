@@ -72,7 +72,7 @@ type opN = Record  (** Record (array / struct) constant *)
 [@@deriving compare, equal, hash, sexp]
 
 type t = private
-  | Reg of {name: string; typ: Typ.t}  (** Virtual register *)
+  | Reg of {id: int; name: string; typ: Typ.t}  (** Virtual register *)
   | Global of {name: string; typ: Typ.t [@ignore]}  (** Global constant *)
   | Function of {name: string; typ: Typ.t [@ignore]}  (** Function name *)
   | Label of {parent: string; name: string}
@@ -112,7 +112,8 @@ module Reg : sig
   include Invariant.S with type t := t
 
   val of_exp : exp -> t option
-  val mk : Typ.t -> string -> t
+  val mk : Typ.t -> int -> string -> t
+  val id : t -> int
   val name : t -> string
   val typ : t -> Typ.t
 end
@@ -222,7 +223,7 @@ val lshr : ?typ:Typ.t -> t -> t -> t
 val ashr : ?typ:Typ.t -> t -> t -> t
 
 (* if-then-else *)
-val conditional : ?typ:Typ.t -> cnd:t -> thn:t -> els:t -> t
+val conditional : Typ.t -> cnd:t -> thn:t -> els:t -> t
 
 (* sequences *)
 val splat : Typ.t -> t -> t

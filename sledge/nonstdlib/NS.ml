@@ -30,6 +30,7 @@ let mapN f e cons xs =
   let xs' = Array.map_endo ~f xs in
   if xs' == xs then e else cons xs'
 
+module Comparer = Comparer
 module Array = Array
 module Float = Float
 module HashSet = HashSet
@@ -38,13 +39,14 @@ module IArray = IArray
 include IArray.Import
 module Int = Int
 module List = List
-module Map = Map
+module Map = NSMap
 module Monad = Monad
 module Multiset = Multiset
 module Option = Option
 include Option.Import
 module Q = Q_ext
-module Set = Set
+module RAL = Ral
+module Set = NSSet
 module Sign = Sign
 module String = String
 module Sys = Sys

@@ -13,6 +13,8 @@ end
 
 let mem elt seq ~eq = mem ~eq ~x:elt seq
 let map seq ~f = map ~f seq
+let flat_map seq ~f = flat_map ~f seq
+let filter seq ~f = filter ~f seq
 let sort seq ~cmp = sort ~cmp seq
 let sort_uniq seq ~cmp = sort_uniq ~cmp seq
 let sorted seq ~cmp = sorted ~cmp seq
@@ -37,7 +39,7 @@ let pop seq =
 
 let find_map seq ~f = find_map ~f seq
 let find seq ~f = find (CCOpt.if_ f) seq
-let find_exn seq ~f = CCOpt.get_exn (find ~f seq)
+let find_exn seq ~f = CCOpt.get_exn_or "Iter.find_exn" (find ~f seq)
 let fold seq init ~f = fold ~f:(fun s x -> f x s) ~init seq
 
 let contains_dup (type elt) seq ~cmp =

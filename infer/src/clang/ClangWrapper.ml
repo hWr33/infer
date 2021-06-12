@@ -37,10 +37,7 @@ let check_for_existing_file args =
                  Create empty file empty file and pass that to clang. This is to enable compilation to continue *)
               match List.hd rest with
               | Some arg ->
-                  if
-                    Str.string_match clang_ignore_regex arg 0
-                    && PolyVariantEqual.(Sys.file_exists arg <> `Yes)
-                  then (
+                  if Str.string_match clang_ignore_regex arg 0 && not (ISys.file_exists arg) then (
                     Unix.mkdir_p (Filename.dirname arg) ;
                     let file = Unix.openfile ~mode:[Unix.O_CREAT; Unix.O_RDONLY] arg in
                     Unix.close file )
@@ -151,7 +148,7 @@ let exec_action_item ~prog ~args = function
       Capture.capture clang_cmd
   | DriverCommand clang_cmd ->
       if
-        Config.skip_analysis_in_path_skips_compilation
+        (not Config.skip_non_capture_clang_commands)
         || Option.exists Config.buck_mode ~f:BuckMode.is_clang_compilation_db
       then Capture.run_clang clang_cmd Utils.echo_in
       else

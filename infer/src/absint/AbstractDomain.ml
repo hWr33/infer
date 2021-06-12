@@ -175,13 +175,19 @@ module TopLifted (Domain : S) = struct
   let pp = TopLiftedUtils.pp ~pp:Domain.pp
 end
 
-module Pair (Domain1 : S) (Domain2 : S) = struct
+module PairNoJoin (Domain1 : NoJoin) (Domain2 : NoJoin) = struct
   type t = Domain1.t * Domain2.t
 
   let leq ~lhs ~rhs =
     if phys_equal lhs rhs then true
     else Domain1.leq ~lhs:(fst lhs) ~rhs:(fst rhs) && Domain2.leq ~lhs:(snd lhs) ~rhs:(snd rhs)
 
+
+  let pp fmt astate = Pp.pair ~fst:Domain1.pp ~snd:Domain2.pp fmt astate
+end
+
+module Pair (Domain1 : S) (Domain2 : S) = struct
+  include PairNoJoin (Domain1) (Domain2)
 
   let join astate1 astate2 =
     if phys_equal astate1 astate2 then astate1
@@ -199,9 +205,6 @@ module Pair (Domain1 : S) (Domain2 : S) = struct
           ( Domain1.widen ~prev:(fst prev) ~next:(fst next) ~num_iters
           , Domain2.widen ~prev:(snd prev) ~next:(snd next) ~num_iters )
         prev next
-
-
-  let pp fmt astate = Pp.pair ~fst:Domain1.pp ~snd:Domain2.pp fmt astate
 end
 
 module Flat (V : PrettyPrintable.PrintableEquatableType) = struct
@@ -607,6 +610,8 @@ module SafeInvertedMap (Key : PrettyPrintable.PrintableOrderedType) (ValueDomain
 
   let filter = M.filter
 
+  let filter_map f x = M.filter_map (fun k v -> f k v |> none_if_top_opt) x
+
   let partition = M.partition
 
   let cardinal = M.cardinal
@@ -641,7 +646,11 @@ module SafeInvertedMap (Key : PrettyPrintable.PrintableOrderedType) (ValueDomain
 
   let fold_map = M.fold_map
 
+  let fold_mapi = M.fold_mapi
+
   let of_seq = M.of_seq
+
+  let to_seq = M.to_seq
 
   let mapi f m =
     let tops = ref [] in

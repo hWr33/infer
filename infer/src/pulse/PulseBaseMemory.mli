@@ -24,11 +24,17 @@ module Edges : RecencyMap.S with type key = Access.t and type value = AddrTrace.
 
 include PrettyPrintable.PPMonoMap with type key = AbstractValue.t and type value = Edges.t
 
+val compare : t -> t -> int
+
+val equal : t -> t -> bool
+
 val register_address : AbstractValue.t -> t -> t
 
 val add_edge : AbstractValue.t -> Access.t -> AddrTrace.t -> t -> t
 
 val find_edge_opt : AbstractValue.t -> Access.t -> t -> AddrTrace.t option
+
+val has_edge : AbstractValue.t -> Access.t -> t -> bool
 
 val yojson_of_t : t -> Yojson.Safe.t
 
@@ -39,3 +45,5 @@ val canonicalize : get_var_repr:(AbstractValue.t -> AbstractValue.t) -> t -> t S
 (** replace each address in the heap by its canonical representative according to the current
     equality relation, represented by [get_var_repr]; also remove addresses that point to empty
     edges *)
+
+val subst_var : AbstractValue.t * AbstractValue.t -> t -> t SatUnsat.t

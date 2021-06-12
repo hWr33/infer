@@ -9,6 +9,8 @@ Activate with `--eradicate`.
 
 Supported languages:
 - C/C++/ObjC: No
+- C#/.Net: Yes
+- Erlang: No
 - Java: Yes
 
 > "I call it my billion-dollar mistake. It was the invention of the null

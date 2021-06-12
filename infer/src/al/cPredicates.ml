@@ -498,7 +498,7 @@ let is_extern_var an =
 
 
 let is_const_expr_var an =
-  match an with Ctl_parser_types.Decl d -> CAst_utils.is_const_expr_var d | _ -> false
+  match an with Ctl_parser_types.Decl d -> CAst_utils.is_constexpr_var d | _ -> false
 
 
 let is_init_integral_constant_expr an =
@@ -566,8 +566,7 @@ let has_init_list_const_expr an =
         | _ ->
             false )
     in
-    L.(debug Analysis Verbose)
-      "@\n\n[has_init_list_const_expr]  EVALUATE EXP '%a'  result = '%b'@\n"
+    L.debug Analysis Verbose "@\n\n[has_init_list_const_expr]  EVALUATE EXP '%a'  result = '%b'@\n"
       (Pp.of_string ~f:Clang_ast_proj.get_stmt_kind_string)
       exp res ;
     res
@@ -707,6 +706,22 @@ let is_ivar_atomic an =
       | Some d ->
           let attributes = get_ivar_attributes d in
           List.exists ~f:(PolyVariantEqual.( = ) `Atomic) attributes
+      | _ ->
+          false )
+  | _ ->
+      false
+
+
+(* checks if ivar is defined among a set of fields and if it is readonly *)
+let is_ivar_readonly an =
+  match an with
+  | Ctl_parser_types.Stmt (Clang_ast_t.ObjCIvarRefExpr (_, _, _, irei)) -> (
+      let dr_ref = irei.Clang_ast_t.ovrei_decl_ref in
+      let ivar_pointer = dr_ref.Clang_ast_t.dr_decl_pointer in
+      match CAst_utils.get_decl ivar_pointer with
+      | Some d ->
+          let attributes = get_ivar_attributes d in
+          List.exists ~f:(PolyVariantEqual.( = ) `Readonly) attributes
       | _ ->
           false )
   | _ ->

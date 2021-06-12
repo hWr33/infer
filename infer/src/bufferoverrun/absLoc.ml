@@ -252,12 +252,13 @@ module Loc = struct
         false
 
 
-  let rec is_pretty = function
-    | BoField.Prim (Var _) ->
+  let rec is_pretty (field : _ BoField.t) =
+    match field with
+    | Prim (Var _) ->
         true
-    | BoField.Prim (Allocsite a) ->
+    | Prim (Allocsite a) ->
         Allocsite.is_pretty a
-    | BoField.Field {prefix= loc} | StarField {prefix= loc} ->
+    | Field {prefix= loc} | StarField {prefix= loc} ->
         is_pretty loc
 
 
@@ -568,7 +569,7 @@ module PowLoc = struct
         mk_known (LocSet.fold (fun l -> LocSet.add (Loc.get_parent_field l)) ploc LocSet.empty)
 
 
-  let append_field ploc ~fn =
+  let append_field ?typ ploc ~fn =
     match ploc with
     | Bottom ->
         (* Return the unknown location to avoid unintended unreachable nodes *)
@@ -576,7 +577,7 @@ module PowLoc = struct
     | Unknown ->
         Unknown
     | Known ploc ->
-        mk_known (LocSet.fold (fun l -> LocSet.add (Loc.append_field l fn)) ploc LocSet.empty)
+        mk_known (LocSet.fold (fun l -> LocSet.add (Loc.append_field ?typ l fn)) ploc LocSet.empty)
 
 
   let append_star_field ploc ~fn =

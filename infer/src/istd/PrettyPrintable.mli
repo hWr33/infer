@@ -85,6 +85,8 @@ module type MonoMap = sig
 
   val filter : (key -> value -> bool) -> t -> t
 
+  val filter_map : (key -> value -> value option) -> t -> t
+
   val partition : (key -> value -> bool) -> t -> t * t
 
   val cardinal : t -> int
@@ -125,13 +127,19 @@ module type MonoMap = sig
 
   val fold_map : t -> init:'a -> f:('a -> value -> 'a * value) -> 'a * t
 
+  val fold_mapi : t -> init:'a -> f:(key -> 'a -> value -> 'a * value) -> 'a * t
+
   val of_seq : (key * value) Seq.t -> t
+
+  val to_seq : t -> (key * value) Seq.t
 end
 
 module type PPMap = sig
   include Caml.Map.S
 
   val fold_map : 'a t -> init:'b -> f:('b -> 'a -> 'b * 'c) -> 'b * 'c t
+
+  val fold_mapi : 'a t -> init:'b -> f:(key -> 'b -> 'a -> 'b * 'c) -> 'b * 'c t
 
   val is_singleton_or_more : 'a t -> (key * 'a) IContainer.singleton_or_more
 
@@ -172,7 +180,7 @@ end
 
 (** set where at most one element of a given rank can be present *)
 module type PPUniqRankSet = sig
-  type t
+  type t [@@deriving compare, equal]
 
   type rank
 
@@ -182,13 +190,13 @@ module type PPUniqRankSet = sig
 
   val empty : t
 
-  val equal : t -> t -> bool
-
   val find_rank : t -> rank -> elt option
 
   val fold : t -> init:'accum -> f:('accum -> elt -> 'accum) -> 'accum
 
   val fold_map : t -> init:'accum -> f:('accum -> elt -> 'accum * elt) -> 'accum * t
+
+  val for_all : f:(elt -> bool) -> t -> bool
 
   val is_empty : t -> bool
 

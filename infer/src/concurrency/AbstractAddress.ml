@@ -53,12 +53,24 @@ let normalise_access_list (accesses : access_list) =
 let pp_with_base pp_base fmt (base, accesses) =
   let rec pp_rev_accesses fmt (accesses : access_list) =
     match (accesses, !Language.curr_language) with
+    | _, Erlang ->
+        L.internal_error "Erlang not supported"
     | [], _ ->
         pp_base fmt base
     | ArrayAccess _ :: rest, _ ->
         F.fprintf fmt "%a[]" pp_rev_accesses rest
     | FieldAccess field_name :: Dereference :: rest, _ ->
-        let op = match !Language.curr_language with Clang -> "->" | Java -> "." in
+        let op =
+          match !Language.curr_language with
+          | Clang ->
+              "->"
+          | Java ->
+              "."
+          | CIL ->
+              "."
+          | Erlang ->
+              L.die InternalError "Erlang not supported"
+        in
         F.fprintf fmt "%a%s%a" pp_rev_accesses rest op Fieldname.pp field_name
     | FieldAccess field_name :: rest, _ ->
         (* Java is allowed here only because the frontend is broken and generates
@@ -67,6 +79,10 @@ let pp_with_base pp_base fmt (base, accesses) =
     | Dereference :: rest, Clang ->
         F.fprintf fmt "*(%a)" pp_rev_accesses rest
     | TakeAddress :: rest, Clang ->
+        F.fprintf fmt "&(%a)" pp_rev_accesses rest
+    | Dereference :: rest, CIL ->
+        F.fprintf fmt "*(%a)" pp_rev_accesses rest
+    | TakeAddress :: rest, CIL ->
         F.fprintf fmt "&(%a)" pp_rev_accesses rest
     | access :: rest, Java ->
         L.internal_error "Asked to print %a in Java mode@\n"

@@ -8,4 +8,10 @@
 (** Propositional formulas *)
 
 include module type of Propositional_intf
-module Make : MAKE
+
+module Make (Trm : sig
+  type t [@@deriving compare, equal, sexp]
+end) : sig
+  module Fml : FORMULA with type trm := Trm.t
+  module Fmls : FORMULA_SET with type elt := Fml.t with type t = Fml.set
+end

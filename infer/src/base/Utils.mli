@@ -26,6 +26,9 @@ val normalize_path_from : root:string -> string -> string * string
     the result is [("../foo/bar", ".")] (in particular "r/a/../../../foo/./bar" and "./../foo/bar"
     represent the same file) *)
 
+val normalize_path : string -> string
+(** Normalize a path without a root *)
+
 val filename_to_absolute : root:string -> string -> string
 (** Convert a filename to an absolute one if it is relative, and normalize "." and ".." *)
 
@@ -49,15 +52,17 @@ val close_outf : outfile -> unit
 (** close an outfile *)
 
 val directory_fold : ('a -> string -> 'a) -> 'a -> string -> 'a
-(** Functional fold function over all the file of a directory *)
+(** Functional fold function over all the files of a directory *)
 
 val directory_iter : (string -> unit) -> string -> unit
-(** Functional iter function over all the file of a directory *)
+(** Functional iter function over all the files of a directory *)
 
 val directory_is_empty : string -> bool
 (** Returns true if a given directory is empty. The directory is assumed to exist. *)
 
 val read_json_file : string -> (Yojson.Basic.t, string) Result.t
+
+val read_safe_json_file : string -> (Yojson.Safe.t, string) Result.t
 
 val with_file_in : string -> f:(In_channel.t -> 'a) -> 'a
 
@@ -96,10 +101,6 @@ val suppress_stderr2 : ('a -> 'b -> 'c) -> 'a -> 'b -> 'c
 
 val rmtree : string -> unit
 (** [rmtree path] removes [path] and, if [path] is a directory, recursively removes its contents *)
-
-val try_finally_swallow_timeout : f:(unit -> 'a) -> finally:(unit -> unit) -> 'a
-(** Calls [f] then [finally] even if [f] raised an exception. The original exception is reraised
-    afterwards. Where possible use [SymOp.try_finally] to avoid swallowing timeouts. *)
 
 val better_hash : 'a -> Caml.Digest.t
 (** Hashtbl.hash only hashes the first 10 meaningful values, [better_hash] uses everything. *)

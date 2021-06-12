@@ -26,7 +26,7 @@ Keep up to date with the latest Infer news on our
 
 ### IRC
 
-Our IRC channel is [#infer](irc://chat.freenode.net/infer) on Freenode.net.
+Our IRC channel is [`#infer`](irc://irc.libera.chat/infer) on [Libera Chat](https://libera.chat/).
 
 ## Troubleshooting
 
@@ -43,7 +43,7 @@ infer run -- xcodebuild -workspace HelloWorld.xcworkspace -scheme HelloWorld
 ### "infer [options] -- \<build command\>" fails during a linking step
 
 The linker will sometimes not work if files have been compiled using a different
-compiler, such as the one Infer uses [under the hood](/docs/infer-workflow) to
+compiler, such as the one Infer uses [under the hood](/docs/next/infer-workflow) to
 analyze your files.
 
 A workaround consists in setting the `LD` environment variable to a dummy

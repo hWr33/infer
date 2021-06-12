@@ -6,14 +6,11 @@
  *)
 
 open! IStd
-module F = Format
 
-type severity = Low | Medium | High [@@deriving compare]
-
-val pp_severity : F.formatter -> severity -> unit
-
-val may_block : Tenv.t -> Procname.t -> HilExp.t list -> severity option
+val may_block : Tenv.t -> Procname.t -> HilExp.t list -> bool
 (** is the method call potentially blocking, given the actuals passed? *)
+
+val may_do_ipc : Tenv.t -> Procname.t -> HilExp.t list -> bool
 
 val is_strict_mode_violation : Tenv.t -> Procname.t -> HilExp.t list -> bool
 
@@ -79,3 +76,6 @@ val is_assume_true : Tenv.t -> Procname.t -> HilExp.t list -> bool
 
 val is_java_main_method : Procname.t -> bool
 (** does the method look like a Java [main] *)
+
+val may_execute_arbitrary_code : Tenv.t -> Procname.t -> HilExp.t list -> bool
+(** for example [com.google.common.util.concurrent.SettableFuture.set] *)

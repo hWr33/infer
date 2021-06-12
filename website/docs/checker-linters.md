@@ -11,6 +11,8 @@ Activate with `--linters`.
 
 Supported languages:
 - C/C++/ObjC: Yes
+- C#/.Net: No
+- Erlang: No
 - Java: No
 
 For C/C++ and Objective-C languages, we provide a linters framework. These are
@@ -232,6 +234,7 @@ is_class ("class_name")
 is_const_var ()
 is_global_var ()
 is_ivar_atomic ()
+is_ivar_readonly ()
 is_method_property_accessor_of_ivar ()
 is_node ("node_name")
 is_objc_constructor ()

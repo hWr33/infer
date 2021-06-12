@@ -9,6 +9,8 @@ Activate with `--litho-required-props`.
 
 Supported languages:
 - C/C++/ObjC: No
+- C#/.Net: Yes
+- Erlang: No
 - Java: Yes
 
 This analysis checks that all non-optional [`@Prop`](https://fblitho.com/docs/props)`s have been specified when constructing Litho components. This is a [Litho](https://fblitho.com/) specific checker.

@@ -86,6 +86,11 @@ module Exec = struct
             Dom.Val.of_c_array_alloc allocsite ~stride ~offset ~size ~traces
         | Language.Java ->
             Dom.Val.of_java_array_alloc allocsite ~length:size ~traces
+        | Language.CIL ->
+            (* cil todo *)
+            Dom.Val.of_java_array_alloc allocsite ~length:size ~traces
+        | Language.Erlang ->
+            L.die InternalError "Erlang not supported"
       in
       if Int.equal dimension 1 then Dom.Mem.add_stack ~represents_multiple_values loc arr mem
       else Dom.Mem.add_heap ~represents_multiple_values loc arr mem
@@ -336,7 +341,7 @@ end
 type get_formals = Procname.t -> (Pvar.t * Typ.t) list option
 
 module ReplaceCallee = struct
-  type replaced = {pname: Procname.t; params: (Exp.t * Typ.t) list; is_params_ref: bool}
+  type replaced = {pname: Procname.t; args: (Exp.t * Typ.t) list; is_args_ref: bool}
 
   let is_cpp_constructor_with_types get_formals class_typ param_ref_typs pname =
     let num_params = List.length param_ref_typs in
@@ -405,16 +410,16 @@ module ReplaceCallee = struct
           result )
 
 
-  let replace_make_shared tenv get_formals pname params =
+  let replace_make_shared tenv get_formals pname args =
     match get_cpp_constructor_of_make_shared tenv get_formals pname with
     | Some constr ->
         (* NOTE: This replaces the pointer to the target object.  In the parameters of
            [std::make_shared], the pointer is on the last place.  On the other hand, it is on the
            first place in the constructor's parameters. *)
-        let params = IList.move_last_to_first params in
-        {pname= constr; params; is_params_ref= true}
+        let args = IList.move_last_to_first args in
+        {pname= constr; args; is_args_ref= true}
     | None ->
-        {pname; params; is_params_ref= false}
+        {pname; args; is_args_ref= false}
 end
 
 let clear_cache () = ReplaceCallee.CacheForMakeShared.clear ()

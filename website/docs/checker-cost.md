@@ -9,6 +9,8 @@ Activate with `--cost`.
 
 Supported languages:
 - C/C++/ObjC: Yes
+- C#/.Net: Yes
+- Erlang: Yes
 - Java: Yes
 
 Cost analysis statically estimates an upper bound on the worst-case execution cost of a program (WCET). This page gives an overview of how the analysis works for *Java* code. The analyser also has limited support for C/C++ and Objective-C.
@@ -69,10 +71,10 @@ where `foo` has a linear cost in its parameter, then Infer automatically detects
 Unlike other Infer analyses (which report found issues/bugs when running infer once), cost analysis only reports an issue for differential analysis (i.e. when comparing the analysis results on the original and the modified files). Instead, infer writes the execution cost of the program into `infer-out/costs-report.json` file. For each procedure, `costs-report.json` includes the actual polynomial (for the exection cost) along with the degree of the polynomial, the procedure name, line number etc.
 
 Differential cost analysis in action:
-- first run infer's cost analysis on `File.java` and rename `costs-report.json` (which is in `/infer-out`) to `previous-costs-report.json`
-- modify the function as shown above
-- re-run infer on `File.java` and rename  `costs-report.json` to `current-costs-report.json`
-- run `infer reportdiff --costs-current current-costs-report.json  --costs-previous current-costs-report`.
+- first run infer's cost analysis on `File.java` and copy `inter-out/costs-report.json` to `previous-costs-report.json` (Note that the file should be copied outside the result directory because the directory will be removed in the second infer run.)
+- modify `File.java` as shown above
+- re-run infer on `File.java` and copy `infer-out/costs-report.json` to `current-costs-report.json`
+- run `infer reportdiff --costs-current current-costs-report.json --costs-previous previous-costs-report.json`.
 - Inspect `infer-out/differential/introduced.json` to see the newly found complexity increase issue(s).
 
 
@@ -96,5 +98,7 @@ The following issue types are reported by this checker:
 - [EXECUTION_TIME_COMPLEXITY_INCREASE](/docs/next/all-issue-types#execution_time_complexity_increase)
 - [EXECUTION_TIME_COMPLEXITY_INCREASE_UI_THREAD](/docs/next/all-issue-types#execution_time_complexity_increase_ui_thread)
 - [EXECUTION_TIME_UNREACHABLE_AT_EXIT](/docs/next/all-issue-types#execution_time_unreachable_at_exit)
+- [EXPENSIVE_AUTORELEASEPOOL_SIZE](/docs/next/all-issue-types#expensive_autoreleasepool_size)
+- [EXPENSIVE_EXECUTION_TIME](/docs/next/all-issue-types#expensive_execution_time)
 - [INFINITE_AUTORELEASEPOOL_SIZE](/docs/next/all-issue-types#infinite_autoreleasepool_size)
 - [INFINITE_EXECUTION_TIME](/docs/next/all-issue-types#infinite_execution_time)
