@@ -25,9 +25,4 @@ val never_return_null_matcher : SourceFile.t -> Procname.t -> bool
 
 val skip_translation_matcher : SourceFile.t -> Procname.t -> bool
 
-val skip_implementation_matcher : SourceFile.t -> Procname.t -> bool
-
 val modeled_expensive_matcher : (string -> bool) -> Procname.t -> bool
-
-val test : unit -> unit
-(** Load the config file and list the files to report on *)

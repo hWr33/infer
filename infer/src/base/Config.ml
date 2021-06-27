@@ -197,8 +197,6 @@ let save_compact_summaries = true
 (** If true enables printing proposition compatible for the SMT project *)
 let smt_output = false
 
-let source_file_extentions = [".java"; ".m"; ".mm"; ".c"; ".cc"; ".cpp"; ".h"]
-
 let kotlin_source_extension = ".kt"
 
 (** Enable detailed tracing information during array abstraction *)
@@ -1735,6 +1733,12 @@ and margin =
     "Set right margin for the pretty printing functions"
 
 
+and mask_sajwa_exceptions =
+  CLOpt.mk_bool ~long:"mask-sawja-exceptions" ~default:true
+    ~in_help:InferCommand.[(Capture, manual_java)]
+    "Mask exceptions thrown by Sawja/Javalib during Java capture"
+
+
 and max_jobs =
   CLOpt.mk_int_opt ~long:"max-jobs"
     ~in_help:InferCommand.[(Analyze, manual_generic)]
@@ -1844,14 +1848,6 @@ and patterns_never_returning_null =
   ( long
   , CLOpt.mk_json ~deprecated:["never_returning_null"] ~long
       "Matcher or list of matchers for functions that never return $(i,null)." )
-
-
-and patterns_skip_implementation =
-  let long = "skip-implementation" in
-  ( long
-  , CLOpt.mk_json ~long
-      "Matcher or list of matchers for names of files where we only want to translate the method \
-       declaration, skipping the body of the methods (Java only)." )
 
 
 and patterns_skip_translation =
@@ -2504,11 +2500,6 @@ and test_determinator =
   CLOpt.mk_bool ~long:"test-determinator" ~default:false
     "Run infer in Test Determinator mode. It is used together with the $(b,--modified-lines) and \
      $(b,--profiler-samples) flags, which specify the relevant arguments."
-
-
-and test_filtering =
-  CLOpt.mk_bool ~deprecated:["test_filtering"] ~long:"test-filtering"
-    "List all the files Infer can report on (should be called from the root of the project)"
 
 
 and topl_max_conjuncts =
@@ -3204,6 +3195,8 @@ and load_average =
   match !load_average with None when !buck -> Some (float_of_int ncpu) | _ -> !load_average
 
 
+and mask_sajwa_exceptions = !mask_sajwa_exceptions
+
 and max_nesting = !max_nesting
 
 and memtrace_analysis = !memtrace_analysis
@@ -3245,8 +3238,6 @@ and only_cheap_debug = !only_cheap_debug
 and patterns_modeled_expensive = match patterns_modeled_expensive with k, r -> (k, !r)
 
 and patterns_never_returning_null = match patterns_never_returning_null with k, r -> (k, !r)
-
-and patterns_skip_implementation = match patterns_skip_implementation with k, r -> (k, !r)
 
 and patterns_skip_translation = match patterns_skip_translation with k, r -> (k, !r)
 
@@ -3509,8 +3500,6 @@ and tenv_json = !tenv_json
 and test_determinator = !test_determinator
 
 and export_changed_functions = !export_changed_functions
-
-and test_filtering = !test_filtering
 
 and profiler_samples = !profiler_samples
 

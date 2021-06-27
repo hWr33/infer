@@ -104,8 +104,6 @@ val save_compact_summaries : bool
 
 val smt_output : bool
 
-val source_file_extentions : string list
-
 val unsafe_unret : string
 
 val weak : string
@@ -409,6 +407,8 @@ val liveness_ignored_constant : string list
 
 val load_average : float option
 
+val mask_sajwa_exceptions : bool
+
 val max_nesting : int option
 
 val memtrace_analysis : bool
@@ -444,8 +444,6 @@ val only_cheap_debug : bool
 val patterns_modeled_expensive : string * Yojson.Basic.t
 
 val patterns_never_returning_null : string * Yojson.Basic.t
-
-val patterns_skip_implementation : string * Yojson.Basic.t
 
 val patterns_skip_translation : string * Yojson.Basic.t
 
@@ -652,8 +650,6 @@ val tenv_json : string option
 val test_determinator : bool
 
 val export_changed_functions : bool
-
-val test_filtering : bool
 
 val testing_mode : bool
 

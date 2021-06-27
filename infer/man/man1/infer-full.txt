@@ -885,6 +885,10 @@ OPTIONS
            Activates: Enable loop-hoisting and disable all other checkers
            (Conversely: --no-loop-hoisting-only)           See also infer-analyze(1).
 
+       --no-mask-sawja-exceptions
+           Deactivates: Mask exceptions thrown by Sawja/Javalib during Java
+           capture (Conversely: --mask-sawja-exceptions)           See also infer-capture(1).
+
        --max-jobs int
            Maximum number of analysis jobs running simultaneously       
     See also infer-analyze(1).
@@ -2088,11 +2092,6 @@ INTERNAL OPTIONS
        --skip-analysis-in-path-reset
            Set --skip-analysis-in-path to the empty list.
 
-       --skip-implementation json
-           Matcher or list of matchers for names of files where we only want
-           to translate the method declaration, skipping the body of the
-           methods (Java only).
-
        --skip-translation json
            Matcher or list of matchers for names of files that should not be
            analyzed at all.
@@ -2154,11 +2153,6 @@ INTERNAL OPTIONS
            together with the --modified-lines and --profiler-samples flags,
            which specify the relevant arguments. (Conversely:
            --no-test-determinator)
-
-       --test-filtering
-           Activates: List all the files Infer can report on (should be
-           called from the root of the project) (Conversely:
-           --no-test-filtering)
 
        --testing-mode
            Activates: Mode for testing, where no headers are translated, and
