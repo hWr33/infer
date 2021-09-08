@@ -35,10 +35,12 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
           L.(debug Capture Verbose)
             "@\n@\n>>---------- Start translating body of function: '%s' ---------<<@\n@."
             (Procname.to_string procname) ;
-          let vars_to_destroy = CScope.Variables.compute_vars_to_destroy_map body in
           let context =
             CContext.create_context trans_unit_ctx tenv cfg procdesc class_decl_opt has_return_param
-              outer_context_opt vars_to_destroy
+              outer_context_opt
+          in
+          let context =
+            {context with vars_to_destroy= CScope.Variables.compute_vars_to_destroy_map context body}
           in
           let start_node = Procdesc.get_start_node procdesc in
           let exit_node = Procdesc.get_exit_node procdesc in
@@ -128,7 +130,7 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
           if set_objc_accessor_attr then
             ignore
               (CMethod_trans.create_local_procdesc ~set_objc_accessor_attr trans_unit_ctx cfg tenv
-                 ms [] [])
+                 ms [] [] )
     with CFrontend_errors.IncorrectAssumption _ -> ()
 
 
@@ -219,6 +221,7 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
     | RecordDecl _
     | RequiresExprBodyDecl _
     | StaticAssertDecl _
+    | TemplateParamObjectDecl _
     | TemplateTemplateParmDecl _
     | TemplateTypeParmDecl _
     | TranslationUnitDecl _
@@ -297,14 +300,16 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
 
 
   (** Given REVERSED list of method qualifiers (method_name::class_name::rest_quals), return whether
-      method should be translated based on method and class whitelists *)
-  let is_whitelisted_cpp_method =
+      method should be translated based on method and class allow lists *)
+  let is_allow_listed_cpp_method =
     let method_matcher =
-      QualifiedCppName.Match.of_fuzzy_qual_names Config.whitelisted_cpp_methods
+      QualifiedCppName.Match.of_fuzzy_qual_names Config.allow_listed_cpp_methods
     in
-    let class_matcher = QualifiedCppName.Match.of_fuzzy_qual_names Config.whitelisted_cpp_classes in
+    let class_matcher =
+      QualifiedCppName.Match.of_fuzzy_qual_names Config.allow_listed_cpp_classes
+    in
     fun qual_name ->
-      (* either the method is explictely whitelisted, or the whole class is whitelisted *)
+      (* either the method is explictely allow listed, or the whole class is allow listed *)
       QualifiedCppName.Match.match_qualifiers method_matcher qual_name
       ||
       match QualifiedCppName.extract_last qual_name with
@@ -325,7 +330,7 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
       | CXXConstructorDecl (_, name_info, _, _, _)
       | CXXConversionDecl (_, name_info, _, _, _)
       | CXXDestructorDecl (_, name_info, _, _, _) ->
-          is_whitelisted_cpp_method (CAst_utils.get_qualified_name name_info)
+          is_allow_listed_cpp_method (CAst_utils.get_qualified_name name_info)
       | _ ->
           false
     in
@@ -371,7 +376,7 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
           let curr_class = CContext.ContextClsDeclPtr dec_ptr in
           ignore
             (ObjcInterface_decl.interface_declaration CType_decl.qual_type_to_sil_type
-               CType_decl.CProcname.from_decl tenv dec) ;
+               CType_decl.CProcname.from_decl tenv dec ) ;
           process_methods trans_unit_ctx tenv cfg curr_class decl_list
       | ObjCProtocolDecl (_, _, decl_list, _, _) ->
           let curr_class = CContext.ContextClsDeclPtr dec_ptr in
@@ -381,20 +386,20 @@ module CFrontend_decl_funct (T : CModule_type.CTranslation) : CModule_type.CFron
           let curr_class = CContext.ContextClsDeclPtr dec_ptr in
           ignore
             (ObjcCategory_decl.category_decl CType_decl.qual_type_to_sil_type
-               CType_decl.CProcname.from_decl tenv dec) ;
+               CType_decl.CProcname.from_decl tenv dec ) ;
           process_methods trans_unit_ctx tenv cfg curr_class decl_list
       | ObjCCategoryImplDecl (_, _, decl_list, _, _) ->
           let curr_class = CContext.ContextClsDeclPtr dec_ptr in
           ignore
             (ObjcCategory_decl.category_impl_decl CType_decl.qual_type_to_sil_type
-               CType_decl.CProcname.from_decl tenv dec) ;
+               CType_decl.CProcname.from_decl tenv dec ) ;
           process_methods trans_unit_ctx tenv cfg curr_class decl_list
       | ObjCImplementationDecl (objc_class_decl_info, _, decl_list, _, _) ->
           let curr_class = CContext.ContextClsDeclPtr dec_ptr in
           let qual_type_to_sil_type = CType_decl.qual_type_to_sil_type in
           ignore
             (ObjcInterface_decl.interface_impl_declaration qual_type_to_sil_type
-               CType_decl.CProcname.from_decl tenv dec) ;
+               CType_decl.CProcname.from_decl tenv dec ) ;
           process_methods trans_unit_ctx tenv cfg curr_class decl_list ;
           create_and_process_dealloc_objc_impl trans_unit_ctx tenv cfg curr_class
             objc_class_decl_info decl_list

@@ -6,13 +6,16 @@
  *)
 
 open! IStd
+module Attribute = PulseAttribute
 module CallEvent = PulseCallEvent
 module Invalidation = PulseInvalidation
 module Trace = PulseTrace
 module ValueHistory = PulseValueHistory
 
+type calling_context = (CallEvent.t * Location.t) list [@@deriving compare, equal]
+
 type access_to_invalid_address =
-  { calling_context: (CallEvent.t * Location.t) list
+  { calling_context: calling_context
         (** the list of function calls leading to the issue being realised, in
             outermost-to-innermost order, which is an additional common prefix to the traces in the
             record *)
@@ -26,8 +29,16 @@ type access_to_invalid_address =
   ; must_be_valid_reason: Invalidation.must_be_valid_reason option }
 [@@deriving compare, equal, yojson_of]
 
+type erlang_error =
+  | Badmatch of {calling_context: calling_context; location: Location.t}
+  | Badrecord of {calling_context: calling_context; location: Location.t}
+  | Case_clause of {calling_context: calling_context; location: Location.t}
+  | Function_clause of {calling_context: calling_context; location: Location.t}
+  | If_clause of {calling_context: calling_context; location: Location.t}
+[@@deriving compare, equal, yojson_of]
+
 type read_uninitialized_value =
-  { calling_context: (CallEvent.t * Location.t) list
+  { calling_context: calling_context
         (** the list of function calls leading to the issue being realised, which is an additional
             common prefix to the traces in the record *)
   ; trace: Trace.t
@@ -38,7 +49,8 @@ type read_uninitialized_value =
 (** an error to report to the user *)
 type t =
   | AccessToInvalidAddress of access_to_invalid_address
-  | MemoryLeak of {procname: Procname.t; allocation_trace: Trace.t; location: Location.t}
+  | MemoryLeak of {allocator: Attribute.allocator; allocation_trace: Trace.t; location: Location.t}
+  | ErlangError of erlang_error
   | ReadUninitializedValue of read_uninitialized_value
   | StackVariableAddressEscape of {variable: Var.t; history: ValueHistory.t; location: Location.t}
 [@@deriving equal]

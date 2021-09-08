@@ -108,7 +108,7 @@ let reroot_rel_path ~foreign_rel_project_root rel_path =
       let foreign_abs_project_root = offset_to_abs_path foreign_offset_opt in
       Option.value_exn
         (Utils.filename_to_relative ~force_full_backtrack:true ~root:abs_project_root
-           foreign_abs_project_root)
+           foreign_abs_project_root )
       ^/ rel_path
   | _ ->
       rel_path
@@ -162,15 +162,23 @@ let to_string ?(force_relative = false) fname =
         let open IOption.Let_syntax in
         (let* isysroot_suffix = Config.xcode_isysroot_suffix in
          let+ pos = String.substr_index path ~pattern:isysroot_suffix in
-         "${XCODE_ISYSROOT}" ^ String.subo ~pos:(pos + String.length isysroot_suffix) path)
+         "${XCODE_ISYSROOT}" ^ String.subo ~pos:(pos + String.length isysroot_suffix) path )
         |> IOption.if_none_eval ~f:(fun () ->
                Option.value_exn
-                 (Utils.filename_to_relative ~force_full_backtrack:true ~root:project_root_real
-                    path) )
+                 (Utils.filename_to_relative ~force_full_backtrack:true ~root:project_root_real path) )
       else path
 
 
-let has_extension t ~ext = String.is_suffix (to_string t) ~suffix:ext
+let has_extension ~ext = function
+  | Invalid {ml_source_file} ->
+      L.die InternalError
+        "has_extension cannot be called with Invalid source file originating in %s" ml_source_file
+  | RelativeProjectRootAndWorkspace {rel_path= path}
+  | HashedBuckOut path
+  | RelativeProjectRoot path
+  | Absolute path ->
+      String.is_suffix path ~suffix:ext
+
 
 let pp fmt fname = Format.pp_print_string fmt (to_string fname)
 
@@ -293,6 +301,14 @@ let read_config_changed_files =
   fun () -> Lazy.force result
 
 
+let is_matching patterns source_file =
+  let path = to_rel_path source_file in
+  List.exists
+    ~f:(fun pattern ->
+      try Int.equal (Str.search_forward pattern path 0) 0 with Caml.Not_found -> false )
+    patterns
+
+
 module SQLite = struct
   type nonrec t = t
 
@@ -322,7 +338,7 @@ module SQLite = struct
     | RelativeProjectRootAndWorkspace {workspace_rel_root= prefix; rel_path} ->
         Sqlite3.Data.TEXT
           (Printf.sprintf "%c%d%c%s/%s" relative_project_root_and_workspace_tag
-             (String.length prefix) relative_project_root_and_workspace_tag prefix rel_path)
+             (String.length prefix) relative_project_root_and_workspace_tag prefix rel_path )
 
 
   let deserialize serialized_sourcefile =

@@ -179,7 +179,7 @@ struct
           (Procdesc.Node.Prune_node
              ( true_branch
              , if_kind
-             , if true_branch then PruneNodeKind_TrueBranch else PruneNodeKind_FalseBranch ))
+             , if true_branch then PruneNodeKind_TrueBranch else PruneNodeKind_FalseBranch ) )
           [prune_instr]
       in
       let true_prune_node = mk_prune_node cond_exp if_kind true in
@@ -300,9 +300,8 @@ module Make (T : TransferFunctions.SIL with type CFG.Node.t = Procdesc.Node.t) =
 
   let create_tests ?(test_pname = Procname.empty_block) ~initial ?pp_opt make_analysis_data tests =
     AnalysisCallbacks.set_callbacks
-      { get_proc_desc_f= Ondemand.get_proc_desc
-      ; html_debug_new_node_session_f= NodePrinter.with_session
-      ; proc_resolve_attributes_f= Summary.OnDisk.proc_resolve_attributes } ;
+      { html_debug_new_node_session_f= NodePrinter.with_session
+      ; get_model_proc_desc_f= Summary.OnDisk.get_model_proc_desc } ;
     let open OUnit2 in
     List.concat_map
       ~f:(fun (name, test_program) ->

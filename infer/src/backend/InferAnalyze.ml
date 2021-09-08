@@ -11,7 +11,6 @@
 open! IStd
 module F = Format
 module L = Logging
-module CLOpt = CommandLineOption
 
 let clear_caches_except_lrus () =
   Summary.OnDisk.clear_cache () ;
@@ -134,20 +133,18 @@ let get_source_files_to_analyze ~changed_files =
 
 
 let tasks_generator_builder_for sources =
-  if Config.call_graph_schedule then (
-    CLOpt.warnf "WARNING: '--call-graph-schedule' is deprecated. Use '--scheduler' instead.@." ;
-    SyntacticCallGraph.make sources )
-  else
-    match Config.scheduler with
-    | File ->
-        FileScheduler.make sources
-    | Restart ->
-        RestartScheduler.make sources
-    | SyntacticCallGraph ->
-        SyntacticCallGraph.make sources
+  match Config.scheduler with
+  | File ->
+      FileScheduler.make sources
+  | Restart ->
+      RestartScheduler.make sources
+  | SyntacticCallGraph ->
+      SyntacticCallGraph.make sources
 
 
 let analyze source_files_to_analyze =
+  if Config.is_checker_enabled ConfigImpactAnalysis then
+    L.debug Analysis Quiet "Config impact strict mode: %b@." ConfigImpactAnalysis.strict_mode ;
   if Int.equal Config.jobs 1 then (
     let target_files =
       List.rev_map (Lazy.force source_files_to_analyze) ~f:(fun sf -> TaskSchedulerTypes.File sf)

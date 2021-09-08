@@ -25,16 +25,14 @@ let report_topl_errors proc_desc err_log summary =
 
 module PulseTransferFunctions = struct
   module CFG = ProcCfg.Normal
-  module Domain = AbstractDomain.PairNoJoin (PathContext) (ExecutionDomain)
+  module Domain = AbstractDomain.PairDisjunct (ExecutionDomain) (PathContext)
 
   type analysis_data = PulseSummary.t InterproceduralAnalysis.t
 
-  let get_pvar_formals pname =
-    AnalysisCallbacks.proc_resolve_attributes pname |> Option.map ~f:Pvar.get_pvar_formals
-
+  let get_pvar_formals pname = IRAttributes.load pname |> Option.map ~f:Pvar.get_pvar_formals
 
   let interprocedural_call {InterproceduralAnalysis.analyze_dependency; tenv; proc_desc} path ret
-      callee_pname call_exp actuals call_loc astate =
+      callee_pname call_exp actuals call_loc (flags : CallFlags.t) astate =
     match callee_pname with
     | Some callee_pname when not Config.pulse_intraprocedural_only ->
         let formals_opt = get_pvar_formals callee_pname in
@@ -44,7 +42,9 @@ module PulseTransferFunctions = struct
     | _ ->
         (* dereference call expression to catch nil issues *)
         let<*> astate, _ =
-          PulseOperations.eval_deref path ~must_be_valid_reason:BlockCall call_loc call_exp astate
+          if flags.cf_is_objc_block then
+            PulseOperations.eval_deref path ~must_be_valid_reason:BlockCall call_loc call_exp astate
+          else PulseOperations.eval_deref path call_loc call_exp astate
         in
         L.d_printfln "Skipping indirect call %a@\n" Exp.pp call_exp ;
         let astate =
@@ -186,7 +186,7 @@ module PulseTransferFunctions = struct
           in
           let r =
             interprocedural_call analysis_data path ret callee_pname call_exp only_actuals_evaled
-              call_loc astate
+              call_loc flags astate
           in
           PerfEvent.(log (fun logger -> log_end_event logger ())) ;
           r
@@ -304,7 +304,7 @@ module PulseTransferFunctions = struct
                        PulseOperations.write_id lhs_id rhs_addr_hist astate )
               else
                 [ (let+ astate, rhs_addr_hist = PulseOperations.eval_deref path loc rhs_exp astate in
-                   PulseOperations.write_id lhs_id rhs_addr_hist astate) ]
+                   PulseOperations.write_id lhs_id rhs_addr_hist astate ) ]
             in
             PulseReport.report_results tenv proc_desc err_log loc results
           in
@@ -396,7 +396,7 @@ module PulseTransferFunctions = struct
              []
            else
              (* [condition] is true or unknown value: go into the branch *)
-             [Ok (ContinueProgram astate)])
+             [Ok (ContinueProgram astate)] )
           |> PulseReport.report_exec_results tenv proc_desc err_log loc
       | Call (ret, call_exp, actuals, loc, call_flags) ->
           dispatch_call analysis_data path ret call_exp actuals loc call_flags astate
@@ -443,13 +443,13 @@ module PulseTransferFunctions = struct
           [ContinueProgram astate] )
 
 
-  let exec_instr (path, astate) analysis_data cfg_node instr : Domain.t list =
+  let exec_instr (astate, path) analysis_data cfg_node instr : Domain.t list =
     (* Sometimes instead of stopping on contradictions a false path condition is recorded
        instead. Prune these early here so they don't spuriously count towards the disjunct limit. *)
     exec_instr_aux path astate analysis_data cfg_node instr
     |> List.filter_map ~f:(fun exec_state ->
            if ExecutionDomain.is_unsat_cheap exec_state then None
-           else Some (PathContext.post_exec_instr path, exec_state) )
+           else Some (exec_state, PathContext.post_exec_instr path) )
 
 
   let pp_session_name _node fmt = F.pp_print_string fmt "Pulse"
@@ -471,22 +471,25 @@ let with_debug_exit_node proc_desc ~f =
     ~f
 
 
+let initial tenv proc_desc =
+  [ ( ContinueProgram (PulseObjectiveCSummary.mk_initial_with_positive_self tenv proc_desc)
+    , PathContext.initial ) ]
+
+
 let checker ({InterproceduralAnalysis.tenv; proc_desc; err_log} as analysis_data) =
   AbstractValue.State.reset () ;
-  let initial_astate = ExecutionDomain.mk_initial tenv proc_desc in
-  let initial = [(PathContext.initial, initial_astate)] in
-  match DisjunctiveAnalyzer.compute_post analysis_data ~initial proc_desc with
+  match
+    DisjunctiveAnalyzer.compute_post analysis_data ~initial:(initial tenv proc_desc) proc_desc
+  with
   | Some posts ->
       (* forget path contexts, we don't propagate them across functions *)
-      let posts = List.map ~f:snd posts in
+      let posts = List.map ~f:fst posts in
       with_debug_exit_node proc_desc ~f:(fun () ->
-          let updated_posts =
-            PulseObjectiveCSummary.update_objc_method_posts analysis_data ~initial_astate ~posts
-          in
+          let objc_nil_summary = PulseObjectiveCSummary.mk_nil_messaging_summary tenv proc_desc in
           let summary =
             PulseSummary.of_posts tenv proc_desc err_log
               (Procdesc.get_exit_node proc_desc |> Procdesc.Node.get_loc)
-              updated_posts
+              (Option.to_list objc_nil_summary @ posts)
           in
           report_topl_errors proc_desc err_log summary ;
           Some summary )

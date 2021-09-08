@@ -562,15 +562,15 @@ let%test_module _ =
 
     let%test "unsigned boolean overflow" =
       Formula.equal Formula.tt
-        (Llair_to_Fol.formula
+        (Llair_to_Fol.formula ThreadID.init
            Llair.(
              Exp.uge
                (Exp.integer Typ.bool Z.minus_one)
-               (Exp.signed 1 (Exp.integer Typ.siz Z.one) ~to_:Typ.bool)))
+               (Exp.signed 1 (Exp.integer Typ.siz Z.one) ~to_:Typ.bool)) )
 
     let pp_exp e =
       Format.printf "@\nexp= %a; term= %a@." Llair.Exp.pp e Term.pp
-        (Llair_to_Fol.term e)
+        (Llair_to_Fol.term ThreadID.init e)
 
     let ( !! ) i = Llair.(Exp.integer Typ.siz (Z.of_int i))
 

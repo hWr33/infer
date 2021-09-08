@@ -278,8 +278,8 @@ module AddressAttributes = struct
     else astate
 
 
-  let allocate procname address location astate =
-    map_post_attrs astate ~f:(BaseAddressAttributes.allocate procname address location)
+  let allocate allocator address location astate =
+    map_post_attrs astate ~f:(BaseAddressAttributes.allocate allocator address location)
 
 
   let get_allocation addr astate =
@@ -324,15 +324,6 @@ module AddressAttributes = struct
 
   let add_unreachable_at addr location astate =
     map_post_attrs astate ~f:(BaseAddressAttributes.add_unreachable_at addr location)
-
-
-  let replace_must_be_valid_reason path reason addr astate =
-    match BaseAddressAttributes.get_must_be_valid addr (astate.pre :> base_domain).attrs with
-    | Some (_timestamp, trace, _reason) ->
-        remove_must_be_valid_attr addr astate
-        |> abduce_attribute addr (MustBeValid (path.PathContext.timestamp, trace, Some reason))
-    | None ->
-        astate
 
 
   let is_end_of_collection addr astate =
@@ -648,19 +639,14 @@ let check_memory_leaks ~live_addresses ~unreachable_addresses astate =
        |> snd
   in
   let check_memory_leak addr attributes =
-    let allocated_not_freed_opt =
-      let allocated = Attributes.get_allocation attributes in
-      if Option.is_some allocated then
-        match Attributes.get_invalid attributes with Some (CFree, _) -> None | _ -> allocated
-      else None
-    in
+    let allocated_not_freed_opt = Attributes.get_allocated_not_freed attributes in
     match allocated_not_freed_opt with
     | None ->
         Ok ()
-    | Some (procname, trace) ->
+    | Some (allocator, trace) ->
         (* allocated but not freed => leak *)
         L.d_printfln ~color:Red "LEAK: unreachable address %a was allocated by %a" AbstractValue.pp
-          addr Procname.pp procname ;
+          addr Attribute.pp_allocator allocator ;
         (* last-chance checks: it could be that the value (or its canonical equal) is reachable via
            pointer arithmetic from live values. This is common in libraries that do their own memory
            management, e.g. they return a field of the malloc()'d pointer, and the latter is a fat
@@ -693,7 +679,7 @@ let check_memory_leaks ~live_addresses ~unreachable_addresses astate =
         else
           (* if the address became unreachable at a known point use that location *)
           let location = Attributes.get_unreachable_at attributes in
-          Error (location, procname, trace)
+          Error (location, allocator, trace)
   in
   List.fold_result unreachable_addresses ~init:() ~f:(fun () addr ->
       match AddressAttributes.find_opt addr astate with
@@ -742,6 +728,23 @@ let get_unreachable_attributes {post} =
       if AbstractValue.Set.mem address post_addresses then dead_addresses
       else address :: dead_addresses )
     (post :> BaseDomain.t).attrs []
+
+
+let deallocate_all_reachable_from x astate =
+  let post = (astate.post :> BaseDomain.t) in
+  let attrs =
+    BaseDomain.GraphVisit.fold_from_addresses (Seq.return x) post ~init:post.attrs
+      ~f:(fun attrs addr _edges ->
+        Continue (BaseAddressAttributes.remove_allocation_attr addr attrs) )
+      ~finish:Fn.id
+    |> snd
+  in
+  {astate with post= PostDomain.update ~attrs astate.post}
+
+
+let deep_deallocate x astate =
+  deallocate_all_reachable_from x astate
+  |> AddressAttributes.add_attrs x (Attributes.singleton DeepDeallocate)
 
 
 let is_local var astate = not (Var.is_return var || Stack.is_abducible astate var)
@@ -1039,7 +1042,7 @@ let summary_of_post tenv pdesc location astate =
     | Error (unreachable_location, proc_name, trace) ->
         Error
           (`MemoryLeak
-            (astate, proc_name, trace, Option.value unreachable_location ~default:location)) )
+            (astate, proc_name, trace, Option.value unreachable_location ~default:location) ) )
   | Some (address, must_be_valid) ->
       Error (`PotentialInvalidAccessSummary (astate, address, must_be_valid))
 
@@ -1059,6 +1062,15 @@ let incorporate_new_eqs new_eqs astate =
         Ok astate
     | Sat (astate, Some (address, must_be_valid)) ->
         Error (`PotentialInvalidAccess (astate, address, must_be_valid))
+
+
+let incorporate_new_eqs_on_val new_eqs v =
+  List.find_map new_eqs ~f:(function
+    | PulseFormula.Equal (v1, v2) when AbstractValue.equal v1 v ->
+        Some v2
+    | _ ->
+        None )
+  |> Option.value ~default:v
 
 
 module Topl = struct

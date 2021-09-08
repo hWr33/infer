@@ -44,7 +44,7 @@ let build_formal_from_pvar var =
       Mangled.from_string
         (F.asprintf "%s[%a]" (Mangled.to_string var.pv_name)
            (Procname.pp_simplified_string ~withclass:false)
-           pname)
+           pname )
   | _ ->
       var.pv_name
 
@@ -327,6 +327,12 @@ let is_objc_static_local_of_proc_name pname pvar =
 let is_block_pvar pvar = Typ.has_block_prefix (Mangled.to_string (get_name pvar))
 
 module Set = PrettyPrintable.MakePPSet (struct
+  type nonrec t = t [@@deriving compare]
+
+  let pp = pp Pp.text
+end)
+
+module Map = PrettyPrintable.MakePPMap (struct
   type nonrec t = t [@@deriving compare]
 
   let pp = pp Pp.text

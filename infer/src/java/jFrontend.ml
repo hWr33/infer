@@ -88,8 +88,10 @@ let add_edges (context : JContext.t) start_node exn_node exit_nodes method_body_
 (** Add a concrete method. *)
 let add_cmethod source_file program icfg cm proc_name =
   let cn, _ = JBasics.cms_split cm.Javalib.cm_class_method_signature in
-  if SourceFile.has_extension source_file ~ext:Config.kotlin_source_extension then
-    ignore (JTrans.create_empty_procdesc source_file program icfg cm proc_name)
+  if
+    (not Config.kotlin_capture)
+    && SourceFile.has_extension source_file ~ext:Config.kotlin_source_extension
+  then ignore (JTrans.create_empty_procdesc source_file program icfg cm proc_name)
   else
     match JTrans.create_cm_procdesc source_file program icfg cm proc_name with
     | None ->
@@ -221,7 +223,7 @@ let compute_source_icfg program tenv source_basename package_opt source_file =
     JBasics.ClassMap.iter
       (select
          (should_capture program package_opt source_basename)
-         (create_icfg source_file program tenv icfg))
+         (create_icfg source_file program tenv icfg) )
       (JProgramDesc.get_classmap program)
   in
   icfg.JContext.cfg

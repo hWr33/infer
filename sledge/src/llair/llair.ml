@@ -294,9 +294,7 @@ let pp_actuals pp_actual fs actuals =
 let pp_formal fs reg = Reg.pp fs reg
 
 let pp_jump fs {dst; retreating} =
-  Format.fprintf fs "@[<2>%s%%%s@]"
-    (if retreating then "↑" else "")
-    dst.lbl
+  Format.fprintf fs "@[<2>%s%%%s@]" (if retreating then "↑" else "") dst.lbl
 
 let pp_call tag pp_callee fs
     {callee; actuals; areturn; return; throw; recursive; loc; _} =
@@ -322,12 +320,12 @@ let pp_term fs term =
     | _ ->
         pf "@[<2>switch %a@ @[%a@ else: %a@]@]\t%a" Exp.pp key
           (IArray.pp "@ " (fun fs (case, jmp) ->
-               Format.fprintf fs "%a: %a" Exp.pp case pp_goto jmp ))
+               Format.fprintf fs "%a: %a" Exp.pp case pp_goto jmp ) )
           tbl pp_goto els Loc.pp loc )
   | Iswitch {ptr; tbl; loc} ->
       pf "@[<2>iswitch %a@ @[<hv>%a@]@]\t%a" Exp.pp ptr
         (IArray.pp "@ " (fun fs jmp ->
-             Format.fprintf fs "%s: %a" jmp.dst.lbl pp_goto jmp ))
+             Format.fprintf fs "%s: %a" jmp.dst.lbl pp_goto jmp ) )
         tbl Loc.pp loc
   | Call call -> pp_call "call" (fun fs f -> Function.pp fs f.name) fs call
   | ICall call -> pp_call "icall" Exp.pp fs call
@@ -369,10 +367,6 @@ and dummy_func =
 
 module Inst = struct
   type t = inst [@@deriving compare, equal, hash, sexp]
-
-  module Tbl = HashTable.Make (struct
-    type t = block * inst [@@deriving equal, hash]
-  end)
 
   let pp = pp_inst
   let move ~reg_exps ~loc = Move {reg_exps; loc}
@@ -458,8 +452,7 @@ module Term = struct
       match parent with
       | Some parent ->
           assert (
-            Bool.equal (Option.is_some exp) (Option.is_some parent.freturn)
-          )
+            Bool.equal (Option.is_some exp) (Option.is_some parent.freturn) )
       | None -> assert true )
     | Throw _ | Unreachable -> assert true
 
@@ -536,6 +529,53 @@ module Block = struct
     ; term
     ; parent= dummy_block.parent
     ; sort_index= dummy_block.sort_index }
+end
+
+type ip = {block: block; index: int}
+[@@deriving compare, equal, hash, sexp_of]
+
+module IP = struct
+  type t = ip [@@deriving compare, equal, hash, sexp_of]
+
+  let mk block = {block; index= 0}
+  let succ {block; index} = {block; index= index + 1}
+
+  let inst {block; index} =
+    if index < IArray.length block.cmnd then
+      Some (IArray.get block.cmnd index)
+    else None
+
+  let block ip = ip.block
+
+  let is_schedule_point ip =
+    match inst ip with
+    | Some (Load _ | Store _ | Free _) -> true
+    | Some (Move _ | Alloc _ | Nondet _ | Abort _) -> false
+    | Some (Intrinsic {name; _}) -> (
+      match name with
+      | `calloc | `malloc | `mallocx | `nallocx -> false
+      | `_ZN5folly13usingJEMallocEv | `aligned_alloc | `dallocx | `mallctl
+       |`mallctlbymib | `mallctlnametomib | `malloc_stats_print
+       |`malloc_usable_size | `memcpy | `memmove | `memset
+       |`posix_memalign | `rallocx | `realloc | `sallocx | `sdallocx
+       |`strlen | `xallocx ->
+          true )
+    | None -> (
+      match ip.block.term with
+      | Call {callee; _} -> (
+        match Function.name callee.name with
+        | "sledge_thread_join" -> true
+        | _ -> false )
+      | _ -> false )
+
+  let pp ppf {block; index} =
+    Format.fprintf ppf "#%i%t %%%s" block.sort_index
+      (fun ppf -> if index <> 0 then Format.fprintf ppf "+%i" index)
+      block.lbl
+
+  module Tbl = HashTable.Make (struct
+    type t = ip [@@deriving equal, hash]
+  end)
 end
 
 (* Blocks compared by label, which are unique within a function, used to
@@ -646,10 +686,9 @@ module Func = struct
             not
               (Iter.contains_dup
                  (Iter.of_list (entry_cfg func))
-                 ~cmp:(fun b1 b2 -> String.compare b1.lbl b2.lbl)) ) ;
+                 ~cmp:(fun b1 b2 -> String.compare b1.lbl b2.lbl) ) ) ;
           assert (
-            Bool.equal (Option.is_some return) (Option.is_some func.freturn)
-          ) ;
+            Bool.equal (Option.is_some return) (Option.is_some func.freturn) ) ;
           iter_term func ~f:(fun term -> Term.invariant ~parent:func term)
       | _ -> assert false
     with exc ->
@@ -788,7 +827,7 @@ module Program = struct
     assert (
       not
         (Iter.contains_dup (IArray.to_iter pgm.globals) ~cmp:(fun g1 g2 ->
-             Global.compare g1.name g2.name )) )
+             Global.compare g1.name g2.name ) ) )
 
   let mk ~globals ~functions =
     { globals= IArray.of_list_rev globals

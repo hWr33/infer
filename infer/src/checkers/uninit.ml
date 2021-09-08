@@ -85,9 +85,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
 
   let is_array t = match t.Typ.desc with Typ.Tarray _ -> true | _ -> false
 
-  let get_formals pname =
-    AnalysisCallbacks.proc_resolve_attributes pname |> Option.map ~f:ProcAttributes.get_formals
-
+  let get_formals pname = Attributes.load pname |> Option.map ~f:ProcAttributes.get_formals
 
   let should_report_var pdesc tenv maybe_uninit_vars access_expr =
     let base = HilExp.AccessExpression.get_base access_expr in
@@ -138,7 +136,7 @@ module TransferFunctions (CFG : ProcCfg.S) = struct
               && (not (Typ.is_pointer t))
               && not
                    (Option.exists callee_formals_opt ~f:(fun callee_formals ->
-                        is_struct_field_passed_by_ref callee_formals t access_expr idx ))
+                        is_struct_field_passed_by_ref callee_formals t access_expr idx ) )
             then report_intra access_expr loc analysis_data
         | _ ->
             () )

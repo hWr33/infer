@@ -566,12 +566,10 @@ let sigma_remove_hpred eq sigma e =
 
 (** {2 Routines used when finding disjoint isomorphic sigmas from a single sigma} *)
 
-type iso_mode = Exact | LFieldForget | RFieldForget [@@deriving compare]
+type iso_mode = Exact | LFieldForget | RFieldForget [@@deriving compare, equal]
 
-let equal_iso_mode = [%compare.equal: iso_mode]
-
-let rec generate_todos_from_strexp mode todos (sexp1 : Predicates.strexp)
-    (sexp2 : Predicates.strexp) =
+let rec generate_todos_from_strexp mode todos (sexp1 : Predicates.strexp) (sexp2 : Predicates.strexp)
+    =
   match (sexp1, sexp2) with
   | Eexp (exp1, _), Eexp (exp2, _) ->
       let new_todos = (exp1, exp2) :: todos in

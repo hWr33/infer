@@ -60,8 +60,11 @@ val to_string : ?force_relative:bool -> t -> string
 (** convert a source file to a string WARNING: result may not be valid file path, do not use this
     function to perform operations on filenames *)
 
-val has_extension : t -> ext:string -> bool
+val has_extension : ext:string -> t -> bool
 (** returns whether the source file has provided extension *)
+
+val is_matching : Str.regexp list -> t -> bool
+(** Check if the source file path is matching with a regexp of the given regexp list. *)
 
 module SQLite : SqliteUtils.Data with type t = t
 

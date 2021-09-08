@@ -45,6 +45,16 @@ let rec is_java_class tenv (typ : Typ.t) =
       false
 
 
+let rec is_csharp_class tenv (typ : Typ.t) =
+  match typ.desc with
+  | Tstruct name ->
+      Typ.Name.CSharp.is_class name
+  | Tarray {elt= inner_typ} | Tptr (inner_typ, _) ->
+      is_csharp_class tenv inner_typ
+  | _ ->
+      false
+
+
 (** Negate an atom *)
 let atom_negate tenv (atom : Predicates.atom) : Predicates.atom =
   match atom with
@@ -1755,7 +1765,8 @@ let expand_hpred_pointer =
                     (* type of struct at adr_base is known *)
                     Some
                       (Exp.Sizeof
-                         {typ= adr_typ; nbytes= None; dynamic_length= None; subtype= Subtype.exact})
+                         {typ= adr_typ; nbytes= None; dynamic_length= None; subtype= Subtype.exact}
+                      )
                 | None ->
                     None )
               | _ ->
@@ -1845,7 +1856,7 @@ let texp_imply tenv subs texp1 texp2 e1 calc_missing =
     | Exp.Sizeof {typ= typ1}, Exp.Sizeof {typ= typ2} -> (
       match (typ1.desc, typ2.desc) with
       | (Tstruct _ | Tarray _), (Tstruct _ | Tarray _) ->
-          is_java_class tenv typ1
+          (is_java_class tenv typ1 || is_csharp_class tenv typ1)
           || (Typ.is_cpp_class typ1 && Typ.is_cpp_class typ2)
           || (Typ.is_objc_class typ1 && Typ.is_objc_class typ2)
       | _ ->
@@ -2418,7 +2429,7 @@ let rec pre_check_pure_implication tenv calc_missing (subs : subst2) pi1 pi2 =
         (IMPL_EXC
            ( "ineq e2=f2 in rhs with e2 not primed var"
            , (Predicates.sub_empty, Predicates.sub_empty)
-           , EXC_FALSE ))
+           , EXC_FALSE ) )
   | (Aeq _ | Aneq _ | Apred _ | Anpred _) :: pi2' ->
       pre_check_pure_implication tenv calc_missing subs pi1 pi2'
 

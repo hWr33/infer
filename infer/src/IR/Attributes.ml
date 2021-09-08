@@ -8,9 +8,7 @@
 open! IStd
 module F = Format
 
-type attributes_kind = ProcUndefined | ProcDefined [@@deriving compare]
-
-let equal_attributes_kind = [%compare.equal: attributes_kind]
+type attributes_kind = ProcUndefined | ProcDefined [@@deriving compare, equal]
 
 let attributes_kind_to_int64 = [(ProcUndefined, Int64.zero); (ProcDefined, Int64.of_int 2)]
 
@@ -42,8 +40,7 @@ let should_try_to_update =
     ResultsDatabase.with_registered_statement find_more_defined_statement ~f:(fun db find_stmt ->
         Sqlite3.bind find_stmt 1 (* uid *) (Sqlite3.Data.TEXT proc_uid)
         |> SqliteUtils.check_result_code db ~log:"should update bind pname_uid" ;
-        Sqlite3.bind find_stmt 2
-          (* :akind *) (Sqlite3.Data.INT (int64_of_attributes_kind attr_kind))
+        Sqlite3.bind find_stmt 2 (* :akind *) (Sqlite3.Data.INT (int64_of_attributes_kind attr_kind))
         |> SqliteUtils.check_result_code db ~log:"should update bind attribute kind" ;
         SqliteUtils.result_single_column_option ~finalize:false ~log:"Attributes.replace" db
           find_stmt

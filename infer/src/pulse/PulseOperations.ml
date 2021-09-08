@@ -172,6 +172,12 @@ module Closures = struct
     (astate, closure_addr_hist)
 end
 
+let pulse_model_type = Typ.CStruct (QualifiedCppName.of_list ["__infer_pulse_model"])
+
+module ModeledField = struct
+  let string_length = Fieldname.make pulse_model_type "__infer_model_string_length"
+end
+
 let eval_access path ?must_be_valid_reason mode location addr_hist access astate =
   let+ astate = check_addr_access path ?must_be_valid_reason mode location addr_hist astate in
   Memory.eval_edge addr_hist access astate
@@ -197,13 +203,12 @@ let eval path mode location exp0 astate =
     match (exp : Exp.t) with
     | Var id ->
         Ok
-          (Stack.eval path location (* error in case of missing history? *) [] (Var.of_id id)
-             astate)
+          (Stack.eval path location (* error in case of missing history? *) [] (Var.of_id id) astate)
     | Lvar pvar ->
         Ok
           (Stack.eval path location
              [ValueHistory.VariableAccessed (pvar, location)]
-             (Var.of_pvar pvar) astate)
+             (Var.of_pvar pvar) astate )
     | Lfield (exp', field, _) ->
         let* astate, addr_hist = eval path Read exp' astate in
         eval_access path mode location addr_hist (FieldAccess field) astate
@@ -236,17 +241,27 @@ let eval path mode location exp0 astate =
                 invalidation location
         in
         (astate, (v, [ValueHistory.Invalidated (invalidation, location)]))
+    | Const (Cstr s) ->
+        let v = AbstractValue.mk_fresh () in
+        let* astate, (len_addr, hist) =
+          eval_access path Write location
+            (v, [Assignment location])
+            (FieldAccess ModeledField.string_length) astate
+        in
+        let len_int = IntLit.of_int (String.length s) in
+        let+ astate = PulseArithmetic.and_eq_int len_addr len_int astate in
+        (astate, (v, hist))
     | UnOp (unop, exp, _typ) ->
         let* astate, (addr, hist) = eval path Read exp astate in
         let unop_addr = AbstractValue.mk_fresh () in
-        let+ astate = PulseArithmetic.eval_unop unop_addr unop addr astate in
+        let+ astate, unop_addr = PulseArithmetic.eval_unop unop_addr unop addr astate in
         (astate, (unop_addr, hist))
     | BinOp (bop, e_lhs, e_rhs) ->
         let* astate, (addr_lhs, hist_lhs) = eval path Read e_lhs astate in
         (* NOTE: keeping track of only [hist_lhs] into the binop is not the best *)
         let* astate, (addr_rhs, _hist_rhs) = eval path Read e_rhs astate in
         let binop_addr = AbstractValue.mk_fresh () in
-        let+ astate =
+        let+ astate, binop_addr =
           PulseArithmetic.eval_binop binop_addr bop (AbstractValueOperand addr_lhs)
             (AbstractValueOperand addr_rhs) astate
         in
@@ -393,8 +408,8 @@ let havoc_deref_field path location addr_trace field trace_obj astate =
     astate
 
 
-let allocate procname location addr_trace astate =
-  AddressAttributes.allocate procname addr_trace location astate
+let allocate allocator location addr_trace astate =
+  AddressAttributes.allocate allocator addr_trace location astate
 
 
 let add_dynamic_type typ address astate = AddressAttributes.add_dynamic_type typ address astate
@@ -472,7 +487,8 @@ let invalidate_array_elements path location cause addr_trace astate =
           | ArrayAccess _ as access ->
               AddressAttributes.invalidate dest_addr_trace cause location astate
               |> record_invalidation path
-                   (MemoryAccess {pointer= addr_trace; access; hist_obj_default= snd dest_addr_trace})
+                   (MemoryAccess {pointer= addr_trace; access; hist_obj_default= snd dest_addr_trace}
+                   )
                    location cause
           | _ ->
               astate )
@@ -515,7 +531,7 @@ let check_address_escape escape_location proc_desc address history astate =
                         { diagnostic=
                             Diagnostic.StackVariableAddressEscape
                               {variable; location= escape_location; history}
-                        ; astate })
+                        ; astate } )
                | _ ->
                    Ok () ) )
   in
@@ -536,7 +552,7 @@ let check_address_escape escape_location proc_desc address history astate =
                { diagnostic=
                    Diagnostic.StackVariableAddressEscape
                      {variable; location= escape_location; history}
-               ; astate }) )
+               ; astate } ) )
         else Ok () )
   in
   let+ () = check_address_of_cpp_temporary () >>= check_address_of_stack_variable in
@@ -596,7 +612,7 @@ let filter_live_addresses ~is_dead_root potential_leak_addrs astate =
        ~f:(fun _ () addr _ ->
          mark_reachable addr ;
          Continue () )
-       ~finish:(fun () -> ())) ;
+       ~finish:(fun () -> ()) ) ;
   let collect_reachable_from addrs base_state =
     BaseDomain.GraphVisit.fold_from_addresses addrs base_state ~init:()
       ~f:(fun () addr _ ->

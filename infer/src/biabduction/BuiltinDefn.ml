@@ -73,7 +73,7 @@ let add_array_to_prop ({InterproceduralAnalysis.tenv; _} as analysis_data) prop_
              let hpred =
                Prop.mk_ptsto tenv n_lexp s
                  (Exp.Sizeof
-                    {typ= arr_typ; nbytes= None; dynamic_length= None; subtype= Subtype.exact})
+                    {typ= arr_typ; nbytes= None; dynamic_length= None; subtype= Subtype.exact} )
              in
              let sigma = prop.Prop.sigma in
              let sigma_fp = prop.Prop.sigma_fp in
@@ -964,6 +964,10 @@ let nsArray_arrayWithObjects =
 let nsArray_arrayWithObjectsCount =
   Builtin.register BuiltinDecl.nsArray_arrayWithObjectsCount execute_skip
 
+
+let objc_insert_key = Builtin.register BuiltinDecl.objc_insert_key execute_skip
+
+let objc_insert_value = Builtin.register BuiltinDecl.objc_insert_value execute_skip
 
 let objc_autorelease_pool_pop = Builtin.register BuiltinDecl.objc_autorelease_pool_pop execute_skip
 

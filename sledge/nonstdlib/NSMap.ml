@@ -110,6 +110,7 @@ struct
   let choose_exn = M.choose
   let min_binding = M.min_binding_opt
   let max_binding = M.max_binding_opt
+  let max_binding_exn = M.max_binding
   let mem k m = M.mem k m
   let find_exn k m = M.find k m
   let find k m = M.find_opt k m
@@ -183,7 +184,7 @@ struct
   let pp pp_k pp_v fs m =
     Format.fprintf fs "@[<1>[%a]@]"
       (List.pp ",@ " (fun fs (k, v) ->
-           Format.fprintf fs "@[%a@ @<2>↦ %a@]" pp_k k pp_v v ))
+           Format.fprintf fs "@[%a@ @<2>↦ %a@]" pp_k k pp_v v ) )
       (Iter.to_list (to_iter m))
 
   let pp_diff ?(pre = ("[@[<hv>" : (unit, unit) fmt))

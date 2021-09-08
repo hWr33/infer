@@ -125,13 +125,19 @@ BUCK OPTIONS
            Additional Buck flavors to append to targets discovered by the
            --buck-compilation-database option.
 
-       --buck-blacklist +regex
+       --buck-block-list +regex
            Skip capture of files matched by the specified regular expression.
            Only the clang, non-compilation-database                Buck integration is supported, not Java.
 
        --buck-clang
            Activates: Buck integration for clang-based targets
            (C/C++/Objective-C/Objective-C++). (Conversely: --no-buck-clang)
+
+       --buck-clang-use-toolchain-config
+           Activates: Suppress setting buck config values for the infer
+           binary and other values in the buck-clang-flavor integration and
+           instead rely on buck toolchain configuration options. (Conversely:
+           --no-buck-clang-use-toolchain-config)
 
        --buck-compilation-database { no-deps | deps }
            Buck integration using the compilation database, with or without
@@ -162,7 +168,7 @@ BUCK OPTIONS
            successful capture. Only valid for --buck-clang. (Conversely:
            --no-buck-merge-all-deps)
 
-       --buck-targets-blacklist +regex
+       --buck-targets-block-list +regex
            Skip capture of buck targets matched by the specified regular
            expression. Only valid for --buck-compilation-database.
 
@@ -223,10 +229,10 @@ CLANG OPTIONS
            format. Please note you still need to provide a compilation
            command.
 
-       --clang-blacklisted-flags +string
+       --clang-block-listed-flags +string
            Clang flags to filter out
 
-       --clang-blacklisted-flags-with-arg +string
+       --clang-block-listed-flags-with-arg +string
            Clang flags (taking args) to filter out
 
        --clang-compound-literal-init-limit int
@@ -291,7 +297,7 @@ JAVA OPTIONS
        --bootclasspath string
            Specify the Java bootclasspath
 
-       --capture-blacklist regex
+       --capture-block-list regex
            Skip capture of files matched by the specified OCaml regular
            expression (only supported by the javac integration for now).
 
@@ -309,6 +315,10 @@ JAVA OPTIONS
        --java-version int
            The version of Java being used. Set it to your Java version if mvn
            is failing.
+
+       --kotlin-capture
+           Activates: Enable Kotlin capture (experimental, do not use).
+           (Conversely: --no-kotlin-capture)
 
        --no-mask-sawja-exceptions
            Deactivates: Mask exceptions thrown by Sawja/Javalib during Java

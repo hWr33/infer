@@ -139,7 +139,7 @@ OPTIONS
        --bootclasspath string
            Specify the Java bootclasspath           See also infer-capture(1).
 
-       --buck-blacklist +regex
+       --buck-block-list +regex
            Skip capture of files matched by the specified regular expression.
            Only the clang, non-compilation-database                Buck integration is supported, not Java.
            See also infer-capture(1) and infer-run(1).
@@ -148,6 +148,12 @@ OPTIONS
            Activates: Buck integration for clang-based targets
            (C/C++/Objective-C/Objective-C++). (Conversely: --no-buck-clang)       
     See also infer-capture(1).
+
+       --buck-clang-use-toolchain-config
+           Activates: Suppress setting buck config values for the infer
+           binary and other values in the buck-clang-flavor integration and
+           instead rely on buck toolchain configuration options. (Conversely:
+           --no-buck-clang-use-toolchain-config)           See also infer-capture(1).
 
        --buck-compilation-database { no-deps | deps }
            Buck integration using the compilation database, with or without
@@ -180,7 +186,7 @@ OPTIONS
            successful capture. Only valid for --buck-clang. (Conversely:
            --no-buck-merge-all-deps)           See also infer-capture(1).
 
-       --buck-targets-blacklist +regex
+       --buck-targets-block-list +regex
            Skip capture of buck targets matched by the specified regular
            expression. Only valid for --buck-compilation-database.       
     See also infer-capture(1) and infer-run(1).
@@ -194,10 +200,14 @@ OPTIONS
            Activates: Enable bufferoverrun and disable all other checkers
            (Conversely: --no-bufferoverrun-only)           See also infer-analyze(1).
 
-       --capture-blacklist regex
+       --capture-block-list regex
            Skip capture of files matched by the specified OCaml regular
            expression (only supported by the javac integration for now).       
     See also infer-capture(1) and infer-run(1).
+
+       --no-censor-report +issue_type_regex
+           For debugging/experimentation only: Specify issues not to be
+           censored by --censor-report.           See also infer-report(1) and infer-run(1).
 
        --censor-report +string
            Specify a filter for issues to be censored by adding a
@@ -211,8 +221,8 @@ OPTIONS
            `<issue_type_regex>:<filename_regex>:<reason_string>`. The first
            two components are OCaml Str regular expressions, with an optional
            `!` character prefix. If a regex has a `!` prefix, the polarity is
-           inverted, and the filter becomes a "blacklist" instead of a
-           "whitelist". Each filter is interpreted as an implication: an
+           inverted, and the filter becomes a "block list" instead of a
+           "allow list". Each filter is interpreted as an implication: an
            issue matches if it does not match the `issue_type_regex` or if it
            does match the `filename_regex`. The filenames that are tested by
            the regex are relative to the `--project-root` directory. The
@@ -232,10 +242,10 @@ OPTIONS
            format. Please note you still need to provide a compilation
            command.           See also infer-capture(1).
 
-       --clang-blacklisted-flags +string
+       --clang-block-listed-flags +string
            Clang flags to filter out           See also infer-capture(1).
 
-       --clang-blacklisted-flags-with-arg +string
+       --clang-block-listed-flags-with-arg +string
            Clang flags (taking args) to filter out           See also infer-capture(1).
 
        --clang-compound-literal-init-limit int
@@ -432,6 +442,7 @@ OPTIONS
              Array_of_pointsto (enabled by default),
              Assert_failure (enabled by default),
              BAD_POINTER_COMPARISON (enabled by default),
+             BAD_RECORD (enabled by default),
              BIABDUCTION_ANALYSIS_STOPS (disabled by default),
              BIABDUCTION_MEMORY_LEAK (disabled by default),
              BUFFER_OVERRUN_L1 (enabled by default),
@@ -456,6 +467,7 @@ OPTIONS
              CONDITION_ALWAYS_TRUE (disabled by default),
              CONFIG_CHECKS_BETWEEN_MARKERS (disabled by default),
              CONFIG_IMPACT (disabled by default),
+             CONFIG_IMPACT_STRICT (disabled by default),
              CONSTANT_ADDRESS_DEREFERENCE (disabled by default),
              CREATE_INTENT_FROM_URI (enabled by default),
              CROSS_SITE_SCRIPTING (enabled by default),
@@ -544,6 +556,10 @@ OPTIONS
              NIL_BLOCK_CALL (enabled by default),
              NIL_INSERTION_INTO_COLLECTION (enabled by default),
              NIL_MESSAGING_TO_NON_POD (enabled by default),
+             NO_MATCHING_CASE_CLAUSE (enabled by default),
+             NO_MATCHING_FUNCTION_CLAUSE (enabled by default),
+             NO_MATCH_OF_RHS (enabled by default),
+             NO_TRUE_BRANCH_IN_IF (enabled by default),
              NULLPTR_DEREFERENCE (enabled by default),
              NULL_DEREFERENCE (enabled by default),
              OPTIONAL_EMPTY_ACCESS (enabled by default),
@@ -638,7 +654,7 @@ OPTIONS
            differential reports           See also infer-reportdiff(1).
 
        --no-filtering,-F
-           Deactivates: Do not show the experimental and blacklisted issue
+           Deactivates: Do not show the experimental and block listed issue
            types (Conversely: --filtering | -f)           See also infer-report(1).
 
        --force-delete-results-dir
@@ -791,6 +807,10 @@ OPTIONS
        --keep-going
            Activates: Keep going when the analysis encounters a failure
            (Conversely: --no-keep-going)           See also infer-analyze(1).
+
+       --kotlin-capture
+           Activates: Enable Kotlin capture (experimental, do not use).
+           (Conversely: --no-kotlin-capture)           See also infer-capture(1).
 
        --linter string
            From the linters available, only run this one linter. (Useful
@@ -1055,6 +1075,16 @@ OPTIONS
            Activates: Enable pulse and disable all other checkers
            (Conversely: --no-pulse-only)           See also infer-analyze(1).
 
+       --pulse-prune-unsupported-arithmetic
+           Activates: The arithmetic engine in Pulse sometimes does not
+           detect that the collection of conditions on the path makes it
+           infeasible, especially outside the well-supported linear
+           arithmetic fragment. To avoid false positives, Pulse tries to
+           detect when there is a possibility of imprecise arithmetic
+           treatment and if so pessimistically assumes the path is
+           infeasible. (Conversely: --no-pulse-prune-unsupported-arithmetic)       
+    See also infer-analyze(1).
+
        --pulse-report-ignore-unknown-java-methods-patterns +string
            On Java, issues that are found on program paths that contain calls
            to unknown methods (those without implementation) are not reported
@@ -1125,14 +1155,19 @@ OPTIONS
            Deactivates: Run the reporting phase once the analysis has
            completed (Conversely: --report)           See also infer-analyze(1) and infer-run(1).
 
-       --report-blacklist-files-containing +string
+       --report-allow-list-path-regex +path_regex
+           Report issues only on files whose relative path matches the
+           specified OCaml regex (and which do not match
+           --report-block-list-path-regex)           See also infer-report(1) and infer-run(1).
+
+       --report-block-list-files-containing +string
            Do not report any issues on files containing the specified string       
     See also infer-report(1) and infer-run(1).
 
-       --report-blacklist-path-regex +path_regex
+       --report-block-list-path-regex +path_regex
            Do not report any issues on files whose relative path matches the
-           specified OCaml regex, even if they match the whitelist specified
-           by --report-whitelist-path-regex           See also infer-report(1) and infer-run(1).
+           specified OCaml regex, even if they match the allow list specified
+           by --report-allow-list-path-regex           See also infer-report(1) and infer-run(1).
 
        --report-console-limit int
            Maximum number of issues to display on standard output. Unset with
@@ -1154,11 +1189,6 @@ OPTIONS
 
        --report-suppress-errors +error_name
            do not report a type of errors           See also infer-report(1) and infer-run(1).
-
-       --report-whitelist-path-regex +path_regex
-           Report issues only on files whose relative path matches the
-           specified OCaml regex (and which do not match
-           --report-blacklist-path-regex)           See also infer-report(1) and infer-run(1).
 
        --results-dir,-o dir
            Write results and internal files in the specified directory       
@@ -1411,7 +1441,7 @@ FILES
 
          {
            "cxx": false,
-           "infer-blacklist-files-containing": ["@gen","/* no infer */"]
+           "infer-block-list-files-containing": ["@gen","/* no infer */"]
          }
 
 

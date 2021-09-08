@@ -22,15 +22,11 @@ type t' = Exact  (** denotes the current type only *) | Subtypes of Typ.Name.t l
 let equal_modulo_flag (st1, _) (st2, _) = [%compare.equal: t'] st1 st2
 
 (** denotes the current type and a list of types that are not their subtypes *)
-type kind = CAST | INSTOF | NORMAL [@@deriving compare]
-
-let equal_kind = [%compare.equal: kind]
+type kind = CAST | INSTOF | NORMAL [@@deriving compare, equal]
 
 type t = t' * kind [@@deriving compare, equal]
 
-type result = No | Unknown | Yes [@@deriving compare]
-
-let equal_result = [%compare.equal: result]
+type result = No | Unknown | Yes [@@deriving compare, equal]
 
 let max_result res1 res2 = if compare_result res1 res2 <= 0 then res2 else res1
 
@@ -46,6 +42,8 @@ let is_root_class class_name =
   match class_name with
   | Typ.JavaClass _ ->
       Typ.Name.equal class_name StdTyp.Name.Java.java_lang_object
+  | Typ.CSharpClass _ ->
+      Typ.Name.equal class_name StdTyp.Name.CSharp.system_object
   | _ ->
       false
 
@@ -83,13 +81,12 @@ end)
 
 let check_subtype =
   let subtMap = ref SubtypesMap.empty in
-  fun tenv c1 c2 ->
-    ( try SubtypesMap.find (c1, c2) !subtMap
-      with Caml.Not_found ->
-        let is_subt = check_subclass_tenv tenv c1 c2 in
-        subtMap := SubtypesMap.add (c1, c2) is_subt !subtMap ;
-        is_subt
-      : result )
+  fun tenv c1 c2 : result ->
+    try SubtypesMap.find (c1, c2) !subtMap
+    with Caml.Not_found ->
+      let is_subt = check_subclass_tenv tenv c1 c2 in
+      subtMap := SubtypesMap.add (c1, c2) is_subt !subtMap ;
+      is_subt
 
 
 let is_known_subtype tenv c1 c2 : bool = equal_result (check_subtype tenv c1 c2) Yes

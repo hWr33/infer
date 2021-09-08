@@ -13,6 +13,7 @@ type 'a t = 'a array [@@deriving compare, equal, sexp]
 val of_ : 'a -> 'a t
 val of_iter : 'a iter -> 'a t
 val of_list_rev : 'a list -> 'a t
+val of_list_map : 'a list -> f:('a -> 'b) -> 'b t
 val map : 'a t -> f:('a -> 'b) -> 'b t
 val mapi : 'a t -> f:(int -> 'a -> 'b) -> 'b t
 
@@ -26,6 +27,7 @@ val combine : 'a t -> 'b t -> ('a * 'b) t option
 val combine_exn : 'a t -> 'b t -> ('a * 'b) t
 val is_empty : 'a t -> bool
 val mem : 'a -> 'a t -> eq:('a -> 'a -> bool) -> bool
+val contains_adjacent_duplicate : eq:('a -> 'a -> bool) -> 'a t -> bool
 val iter : 'a t -> f:('a -> unit) -> unit
 val iteri : 'a t -> f:(int -> 'a -> unit) -> unit
 val exists : 'a t -> f:('a -> bool) -> bool

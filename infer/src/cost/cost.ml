@@ -23,8 +23,7 @@ type extras_WorstCaseCost =
   ; get_node_nb_exec: Node.t -> BasicCost.t
   ; get_summary: Procname.t -> CostDomain.summary option
   ; get_formals: Procname.t -> (Pvar.t * Typ.t) list option
-  ; get_proc_desc: Procname.t -> Procdesc.t option
-  ; proc_resolve_attributes: Procname.t -> ProcAttributes.t option }
+  ; get_proc_desc: Procname.t -> Procdesc.t option }
 
 let instantiate_cost ?get_closure_callee_cost ~default_closure_cost integer_type_widths
     ~inferbo_caller_mem ~callee_pname ~callee_formals ~args ~callee_cost ~loc =
@@ -332,15 +331,16 @@ module Check = struct
     let pname = Procdesc.get_proc_name proc_desc in
     if not (is_report_suppressed pname) then
       CostIssues.CostKindMap.iter2 CostIssues.enabled_cost_map cost
-        ~f:(fun kind
-           CostIssues.
-             { name
-             ; unreachable_issue
-             ; infinite_issue
-             ; expensive_issue
-             ; top_and_unreachable
-             ; expensive }
-           cost
+        ~f:(fun
+             kind
+             CostIssues.
+               { name
+               ; unreachable_issue
+               ; infinite_issue
+               ; expensive_issue
+               ; top_and_unreachable
+               ; expensive }
+             cost
            ->
           let report =
             mk_report proc_desc pname err_log (Procdesc.get_loc proc_desc) ~name
@@ -435,9 +435,7 @@ let checker ({InterproceduralAnalysis.proc_desc; exe_env; analyze_dependency} as
       let* _cost_summary, inferbo_summary, _ = get_summary_common callee_pname in
       inferbo_summary
     in
-    let get_formals callee_pname =
-      AnalysisCallbacks.proc_resolve_attributes callee_pname >>| Pvar.get_pvar_formals
-    in
+    let get_formals callee_pname = Attributes.load callee_pname >>| Pvar.get_pvar_formals in
     let instr_cfg = InstrCFG.from_pdesc proc_desc in
     let extras =
       { inferbo_invariant_map
@@ -446,8 +444,7 @@ let checker ({InterproceduralAnalysis.proc_desc; exe_env; analyze_dependency} as
       ; get_node_nb_exec
       ; get_summary
       ; get_formals
-      ; get_proc_desc= AnalysisCallbacks.get_proc_desc
-      ; proc_resolve_attributes= AnalysisCallbacks.proc_resolve_attributes }
+      ; get_proc_desc= Procdesc.load }
     in
     AnalysisCallbacks.html_debug_new_node_session (NodeCFG.start_node node_cfg)
       ~pp_name:(fun f -> F.pp_print_string f "cost(worst-case)")
@@ -455,8 +452,7 @@ let checker ({InterproceduralAnalysis.proc_desc; exe_env; analyze_dependency} as
   in
   let () =
     L.(debug Analysis Verbose)
-      "@\n[COST ANALYSIS] PROCEDURE '%a' |CFG| = %i FINAL COST = %a @\n" Procname.pp proc_name
-      (Container.length ~fold:NodeCFG.fold_nodes node_cfg)
+      "@\n[COST ANALYSIS] PROCEDURE '%a' FINAL COST = %a @\n" Procname.pp proc_name
       CostDomain.VariantCostMap.pp astate
   in
   let astate =

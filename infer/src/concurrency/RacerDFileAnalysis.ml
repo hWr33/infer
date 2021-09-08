@@ -255,7 +255,7 @@ let get_reporting_explanation_java ~nullsafe report_kind tenv pname thread =
       Some
         (F.asprintf
            "@\n Reporting because current method is annotated %a or overrides an annotated method."
-           MF.pp_monospaced "@ThreadSafe")
+           MF.pp_monospaced "@ThreadSafe" )
     else
       match RacerDModels.get_litho_explanation tenv pname with
       | Some _ as expl_opt ->
@@ -444,8 +444,8 @@ let report_on_write_java_csharp ~nullsafe accesses acc (reported_access : report
 
 
 (** unprotected read. report all writes as conflicts for java/csharp. *)
-let report_on_unprotected_read_java_csharp ~nullsafe accesses acc
-    (reported_access : reported_access) =
+let report_on_unprotected_read_java_csharp ~nullsafe accesses acc (reported_access : reported_access)
+    =
   let open RacerDDomain in
   let is_conflict {snapshot; threads= other_threads} =
     AccessSnapshot.is_write snapshot
@@ -617,37 +617,38 @@ let make_results_table exe_env summaries =
       (fun snapshot acc -> ReportMap.add {threads; snapshot; tenv; procname} acc)
       accesses acc
   in
-  List.fold summaries ~init:ReportMap.empty ~f:(fun acc (proc_desc, summary) ->
-      let procname = Procdesc.get_proc_name proc_desc in
+  List.fold summaries ~init:ReportMap.empty ~f:(fun acc (procname, summary) ->
       let tenv = Exe_env.get_proc_tenv exe_env procname in
       aggregate_post tenv procname acc summary )
 
 
-let should_report_on_proc file_exe_env procdesc =
-  let proc_name = Procdesc.get_proc_name procdesc in
-  let tenv = Exe_env.get_proc_tenv file_exe_env proc_name in
-  match proc_name with
-  | CSharp _ ->
-      not (ProcAttributes.equal_access (Procdesc.get_access procdesc) Private)
-  | Java java_pname ->
-      (* return true if procedure is at an abstraction boundary or reporting has been explicitly
-         requested via @ThreadSafe in java *)
-      RacerDModels.is_thread_safe_method proc_name tenv
-      || (not (ProcAttributes.equal_access (Procdesc.get_access procdesc) Private))
-         && (not (Procname.Java.is_class_initializer java_pname))
-         && (not (Procname.Java.is_autogen_method java_pname))
-         && not (Annotations.pdesc_return_annot_ends_with procdesc Annotations.visibleForTesting)
-  | ObjC_Cpp _ when Procname.is_cpp_lambda proc_name ->
-      (* do not report on lambdas; they are essentially private though do not appear as such *)
-      false
-  | ObjC_Cpp {kind= CPPMethod _ | CPPConstructor _ | CPPDestructor _} ->
-      not (ProcAttributes.equal_access (Procdesc.get_access procdesc) Private)
-  | ObjC_Cpp {kind= ObjCClassMethod | ObjCInstanceMethod | ObjCInternalMethod; class_name} ->
-      Tenv.lookup tenv class_name
-      |> Option.exists ~f:(fun {Struct.exported_objc_methods} ->
-             List.mem ~equal:Procname.equal exported_objc_methods proc_name )
-  | _ ->
-      false
+let should_report_on_proc file_exe_env proc_name =
+  Attributes.load proc_name
+  |> Option.exists ~f:(fun attrs ->
+         let tenv = Exe_env.get_proc_tenv file_exe_env proc_name in
+         let is_not_private = not ProcAttributes.(equal_access (get_access attrs) Private) in
+         match (proc_name : Procname.t) with
+         | CSharp _ ->
+             is_not_private
+         | Java java_pname ->
+             (* return true if procedure is at an abstraction boundary or reporting has been explicitly
+                requested via @ThreadSafe in java *)
+             RacerDModels.is_thread_safe_method proc_name tenv
+             || is_not_private
+                && (not (Procname.Java.is_class_initializer java_pname))
+                && (not (Procname.Java.is_autogen_method java_pname))
+                && not Annotations.(attrs_return_annot_ends_with attrs visibleForTesting)
+         | ObjC_Cpp _ when Procname.is_cpp_lambda proc_name ->
+             (* do not report on lambdas; they are essentially private though do not appear as such *)
+             false
+         | ObjC_Cpp {kind= CPPMethod _ | CPPConstructor _ | CPPDestructor _} ->
+             is_not_private
+         | ObjC_Cpp {kind= ObjCClassMethod | ObjCInstanceMethod | ObjCInternalMethod; class_name} ->
+             Tenv.lookup tenv class_name
+             |> Option.exists ~f:(fun {Struct.exported_objc_methods} ->
+                    List.mem ~equal:Procname.equal exported_objc_methods proc_name )
+         | _ ->
+             false )
 
 
 let class_has_concurrent_method class_summaries =
@@ -675,14 +676,11 @@ let aggregate_by_class {InterproceduralAnalysis.procedures; file_exe_env; analyz
       Procname.get_class_type_name procname
       |> Option.bind ~f:(fun classname ->
              analyze_file_dependency procname
-             |> Option.filter ~f:(fun (pdesc, _) -> should_report_on_proc file_exe_env pdesc)
-             |> Option.map ~f:(fun summary_proc_desc ->
+             |> Option.filter ~f:(fun _ -> should_report_on_proc file_exe_env procname)
+             |> Option.map ~f:(fun summary ->
                     Typ.Name.Map.update classname
-                      (function
-                        | None ->
-                            Some [summary_proc_desc]
-                        | Some summaries ->
-                            Some (summary_proc_desc :: summaries) )
+                      (fun summaries_opt ->
+                        Some ((procname, summary) :: Option.value ~default:[] summaries_opt) )
                       acc ) )
       |> Option.value ~default:acc )
   |> Typ.Name.Map.filter should_report_on_class

@@ -358,8 +358,8 @@ let set_class_init_attributes procname (astate : Domain.t) =
 
 
 (** Compute the attributes of instance variables that all constructors agree on. *)
-let set_constructor_attributes ({InterproceduralAnalysis.proc_desc} as interproc)
-    (astate : Domain.t) =
+let set_constructor_attributes ({InterproceduralAnalysis.proc_desc} as interproc) (astate : Domain.t)
+    =
   let procname = Procdesc.get_proc_name proc_desc in
   let open Domain in
   (* make a local [this] variable, for replacing all constructor attribute map keys' roots *)
@@ -627,11 +627,11 @@ let fold_reportable_summaries analyze_ondemand tenv clazz ~init ~f =
     |> Option.value_map ~default:[] ~f:(fun tstruct -> tstruct.Struct.methods)
   in
   let f acc mthd =
-    AnalysisCallbacks.proc_resolve_attributes mthd
+    Attributes.load mthd
     |> Option.value_map ~default:acc ~f:(fun other_attrs ->
            if should_report other_attrs then
              analyze_ondemand mthd
-             |> Option.map ~f:(fun (_, payload) -> (mthd, payload))
+             |> Option.map ~f:(fun payload -> (mthd, payload))
              |> Option.fold ~init:acc ~f
            else acc )
   in
@@ -640,22 +640,19 @@ let fold_reportable_summaries analyze_ondemand tenv clazz ~init ~f =
 
 let is_private attrs = ProcAttributes.equal_access (ProcAttributes.get_access attrs) Private
 
-(*  Note about how many times we report a deadlock: normally twice, at each trace starting point.
-    Due to the fact we look for deadlocks in the summaries of the class at the root of a path,
-    this will fail when (a) the lock is of class type (ie as used in static sync methods), because
-    then the root is an identifier of type java.lang.Class and (b) when the lock belongs to an
-    inner class but this is no longer obvious in the path, because of nested-class path normalisation.
-    The net effect of the above issues is that we will only see these locks in conflicting pairs
-    once, as opposed to twice with all other deadlock pairs. *)
+(* Note about how many times we report a deadlock: normally twice, at each trace starting point.
+   Due to the fact we look for deadlocks in the summaries of the class at the root of a path,
+   this will fail when (a) the lock is of class type (ie as used in static sync methods), because
+   then the root is an identifier of type java.lang.Class and (b) when the lock belongs to an
+   inner class but this is no longer obvious in the path, because of nested-class path normalisation.
+   The net effect of the above issues is that we will only see these locks in conflicting pairs
+   once, as opposed to twice with all other deadlock pairs. *)
 
 (** report warnings possible on the parallel composition of two threads/critical pairs
     [should_report_starvation] means [pair] is on the UI thread and not on a constructor *)
 let report_on_parallel_composition ~should_report_starvation tenv pattrs pair lock other_pname
     other_pair report_map =
-  if
-    is_private pattrs
-    || AnalysisCallbacks.proc_resolve_attributes other_pname |> Option.exists ~f:is_private
-  then report_map
+  if is_private pattrs || Attributes.load other_pname |> Option.exists ~f:is_private then report_map
   else
     let open Domain in
     let pname = ProcAttributes.get_proc_name pattrs in
@@ -674,8 +671,8 @@ let report_on_parallel_composition ~should_report_starvation tenv pattrs pair lo
              && Acquisitions.lock_is_held_in_other_thread tenv lock acquisitions ->
           let error_message =
             Format.asprintf
-              "Method %a runs on UI thread and%a, which may be held by another thread which %a. \
-               This may regress scroll performance or cause ANRs."
+              "%a runs on UI thread and%a, which may be held by another thread which %a. This may \
+               regress scroll performance or cause ANRs."
               pname_pp pname Lock.pp_locks lock Event.describe event
           in
           let ltr, loc = make_trace_and_loc () in
@@ -686,8 +683,8 @@ let report_on_parallel_composition ~should_report_starvation tenv pattrs pair lo
              && not (Lock.equal lock monitor_lock) ->
           let error_message =
             Format.asprintf
-              "Method %a runs on UI thread and%a, which may be held by another thread which %a. \
-               This may regress scroll performance or cause ANRs."
+              "%a runs on UI thread and%a, which may be held by another thread which %a. This may \
+               regress scroll performance or cause ANRs."
               pname_pp pname Lock.pp_locks lock Event.describe other_pair.CriticalPair.elem.event
           in
           let ltr, loc = make_trace_and_loc () in
@@ -697,9 +694,8 @@ let report_on_parallel_composition ~should_report_starvation tenv pattrs pair lo
         | Some other_lock when should_report_deadlock_on_current_proc pair other_pair ->
             let error_message =
               Format.asprintf
-                "Potential deadlock. %a (Trace 1) and %a (Trace 2) acquire locks %a and %a in \
-                 reverse orders."
-                pname_pp pname pname_pp other_pname Lock.describe lock Lock.describe other_lock
+                "%a (Trace 1) and %a (Trace 2) acquire locks %a and %a in reverse orders." pname_pp
+                pname pname_pp other_pname Lock.describe lock Lock.describe other_lock
             in
             let ltr, loc = make_trace_and_loc () in
             ReportMap.add_deadlock tenv pattrs loc ltr error_message report_map
@@ -727,7 +723,7 @@ let report_on_pair ~analyze_ondemand tenv pattrs (pair : Domain.CriticalPair.t) 
   | Ipc _ when is_not_private && should_report_starvation ->
       let error_message =
         Format.asprintf
-          "Method %a runs on UI thread and may perform blocking IPC, potentially regressing scroll \
+          "%a runs on UI thread and may perform blocking IPC, potentially regressing scroll \
            performance or causing ANRs; %a."
           pname_pp pname Event.describe event
       in
@@ -736,7 +732,7 @@ let report_on_pair ~analyze_ondemand tenv pattrs (pair : Domain.CriticalPair.t) 
   | MayBlock _ when is_not_private && should_report_starvation ->
       let error_message =
         Format.asprintf
-          "Method %a runs on UI thread and may block, potentially regressing scroll performance or \
+          "%a runs on UI thread and may block, potentially regressing scroll performance or \
            causing ANRs; %a."
           pname_pp pname Event.describe event
       in
@@ -745,7 +741,7 @@ let report_on_pair ~analyze_ondemand tenv pattrs (pair : Domain.CriticalPair.t) 
   | MonitorWait _ when is_not_private && should_report_starvation ->
       let error_message =
         Format.asprintf
-          "Method %a runs on UI thread and may block, potentially regressing scroll performance or \
+          "%a runs on UI thread and may block, potentially regressing scroll performance or \
            causing ANRs; %a."
           pname_pp pname Event.describe event
       in
@@ -753,8 +749,8 @@ let report_on_pair ~analyze_ondemand tenv pattrs (pair : Domain.CriticalPair.t) 
       ReportMap.add_starvation tenv pattrs loc ltr error_message report_map
   | StrictModeCall _ when is_not_private && should_report_starvation ->
       let error_message =
-        Format.asprintf "Method %a runs on UI thread and may violate Strict Mode; %a." pname_pp
-          pname Event.describe event
+        Format.asprintf "%a runs on UI thread and may violate Strict Mode; %a." pname_pp pname
+          Event.describe event
       in
       let ltr, loc = make_trace_and_loc () in
       ReportMap.add_strict_mode_violation tenv pattrs loc ltr error_message report_map
@@ -777,8 +773,8 @@ let report_on_pair ~analyze_ondemand tenv pattrs (pair : Domain.CriticalPair.t) 
       | IContainer.Singleton _ ->
           let error_message =
             Format.asprintf
-              "Method %a %a under a lock; executed code may acquire arbitrary locks leading to \
-               potential deadlock."
+              "%a %a under a lock; executed code may acquire arbitrary locks leading to potential \
+               deadlock."
               pname_pp pname Event.describe event
           in
           let loc = CriticalPair.get_earliest_lock_or_call_loc ~procname:pname pair in
@@ -787,7 +783,7 @@ let report_on_pair ~analyze_ondemand tenv pattrs (pair : Domain.CriticalPair.t) 
             report_map )
   | LockAcquire _ when is_not_private && StarvationModels.is_annotated_lockless tenv pname ->
       let error_message =
-        Format.asprintf "Method %a is annotated %s but%a." pname_pp pname
+        Format.asprintf "%a is annotated %s but%a." pname_pp pname
           (MF.monospaced_to_string Annotations.lockless)
           Event.describe event
       in
@@ -819,7 +815,7 @@ let report_on_pair ~analyze_ondemand tenv pattrs (pair : Domain.CriticalPair.t) 
                      ~f:(fun acc (other_pname, summary) ->
                        Domain.fold_critical_pairs_of_summary
                          (report_on_parallel_composition ~should_report_starvation tenv pattrs pair
-                            lock other_pname)
+                            lock other_pname )
                          summary acc ) ) ) )
   | _ ->
       report_map
@@ -828,17 +824,20 @@ let report_on_pair ~analyze_ondemand tenv pattrs (pair : Domain.CriticalPair.t) 
 let reporting {InterproceduralAnalysis.procedures; file_exe_env; analyze_file_dependency} =
   if Config.starvation_whole_program then IssueLog.empty
   else
-    let report_on_proc tenv proc_desc report_map payload =
+    let report_on_proc tenv pattrs report_map payload =
       Domain.fold_critical_pairs_of_summary
-        (report_on_pair ~analyze_ondemand:analyze_file_dependency tenv proc_desc)
+        (report_on_pair ~analyze_ondemand:analyze_file_dependency tenv pattrs)
         payload report_map
     in
     let report_procedure report_map procname =
-      analyze_file_dependency procname
-      |> Option.value_map ~default:report_map ~f:(fun (proc_desc, summary) ->
-             let attributes = Procdesc.get_attributes proc_desc in
-             let tenv = Exe_env.get_proc_tenv file_exe_env procname in
-             if should_report attributes then report_on_proc tenv attributes report_map summary
-             else report_map )
+      match Attributes.load procname with
+      | None ->
+          report_map
+      | Some attributes ->
+          analyze_file_dependency procname
+          |> Option.value_map ~default:report_map ~f:(fun summary ->
+                 let tenv = Exe_env.get_proc_tenv file_exe_env procname in
+                 if should_report attributes then report_on_proc tenv attributes report_map summary
+                 else report_map )
     in
     List.fold procedures ~init:ReportMap.empty ~f:report_procedure |> ReportMap.issue_log_of

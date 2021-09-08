@@ -31,11 +31,9 @@ type 'abductive_domain_t base_t =
 
 type t = AbductiveDomain.t base_t
 
-include AbstractDomain.NoJoin with type t := t
+include AbstractDomain.Disjunct with type t := t
 
 val continue : AbductiveDomain.t -> t
-
-val mk_initial : Tenv.t -> Procdesc.t -> t
 
 val is_unsat_cheap : t -> bool
 (** see {!PulsePathCondition.is_unsat_cheap} *)

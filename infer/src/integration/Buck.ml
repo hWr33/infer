@@ -128,29 +128,30 @@ let config =
   in
   let get_java_flavor_config () =
     if Config.buck_java_flavor_suppress_config then []
-    else
-      [ "infer_java.version=" ^ Version.versionString
-      ; Printf.sprintf "infer_java.binary=%s/infer" Config.bin_dir ]
+    else ["infer.version=" ^ Version.versionString; "infer.binary=" ^ Config.infer_binary]
   in
-  let get_flavors_config () =
+  let get_clang_flavor_config () =
     [ "client.id=infer.clang"
-    ; Printf.sprintf "*//infer.infer_bin=%s" Config.bin_dir
-    ; Printf.sprintf "*//infer.clang_compiler=%s" clang_path
-    ; Printf.sprintf "*//infer.clang_plugin=%s" Config.clang_plugin_path
     ; "*//cxx.pch_enabled=false"
     ; (* Infer doesn't support C++ modules yet (T35656509) *)
       "*//cxx.modules_default=false"
     ; "*//cxx.modules=false" ]
+    @ ( if Config.buck_clang_use_toolchain_config then []
+      else
+        [ "*//infer.infer_bin=" ^ Config.bin_dir
+        ; "*//infer.binary=" ^ Config.infer_binary
+        ; "*//infer.clang_compiler=" ^ clang_path
+        ; "*//infer.clang_plugin=" ^ Config.clang_plugin_path ] )
     @ ( match Config.xcode_developer_dir with
       | Some d ->
           [Printf.sprintf "apple.xcode_developer_dir=%s" d]
       | None ->
           [] )
     @
-    if List.is_empty Config.buck_blacklist then []
+    if List.is_empty Config.buck_block_list then []
     else
-      [ Printf.sprintf "*//infer.blacklist_regex=(%s)"
-          (String.concat ~sep:")|(" Config.buck_blacklist) ]
+      [ Printf.sprintf "*//infer.block_list_regex=(%s)"
+          (String.concat ~sep:")|(" Config.buck_block_list) ]
   in
   fun buck_mode ->
     let args =
@@ -158,7 +159,7 @@ let config =
       | JavaFlavor ->
           get_java_flavor_config ()
       | ClangFlavors ->
-          get_flavors_config ()
+          get_clang_flavor_config ()
       | ClangCompilationDB _ ->
           []
     in
@@ -388,11 +389,11 @@ let inline_argument_files buck_args =
 let parse_command_and_targets (buck_mode : BuckMode.t) original_buck_args =
   let expanded_buck_args = inline_argument_files original_buck_args in
   let command, args = split_buck_command expanded_buck_args in
-  let buck_targets_blacklist_regexp =
-    if List.is_empty Config.buck_targets_blacklist then None
+  let buck_targets_block_list_regexp =
+    if List.is_empty Config.buck_targets_block_list then None
     else
       Some
-        (Str.regexp ("\\(" ^ String.concat ~sep:"\\)\\|\\(" Config.buck_targets_blacklist ^ "\\)"))
+        (Str.regexp ("\\(" ^ String.concat ~sep:"\\)\\|\\(" Config.buck_targets_block_list ^ "\\)"))
   in
   let rec parse_cmd_args parsed_args = function
     | [] ->
@@ -428,7 +429,7 @@ let parse_command_and_targets (buck_mode : BuckMode.t) original_buck_args =
   let targets =
     Option.value_map ~default:targets
       ~f:(fun re -> List.filter ~f:(fun tgt -> not (Str.string_match re tgt 0)) targets)
-      buck_targets_blacklist_regexp
+      buck_targets_block_list_regexp
   in
   ScubaLogging.log_count ~label:"buck_targets" ~value:(List.length targets) ;
   (command, parsed_args.rev_not_targets', targets)
@@ -437,7 +438,7 @@ let parse_command_and_targets (buck_mode : BuckMode.t) original_buck_args =
 let filter_compatible subcommand args =
   match subcommand with
   | `Targets ->
-      let blacklist = "--keep-going" in
-      List.filter args ~f:(fun arg -> not (String.equal blacklist arg))
+      let block_list = "--keep-going" in
+      List.filter args ~f:(fun arg -> not (String.equal block_list arg))
   | _ ->
       args

@@ -225,7 +225,7 @@ let get_successor_decls an =
 
 
 (* Either succ_node is a direct successor of node or
-succ_node is a successor of one of the successors of node *)
+   succ_node is a successor of one of the successors of node *)
 let rec is_node_successor_of ~is_successor:succ_node node =
   match succ_node with
   | Stmt _ ->
@@ -291,13 +291,11 @@ type builtin_kind =
   | ObjCId  (** id *)
   | ObjCClass  (** Class *)
   | ObjCSel  (** SEL *)
-[@@deriving compare]
+[@@deriving compare, equal]
 
-(*  | OCLSampler | OCLEvent | OCLClkEvent | OCLQueue | OCLNDRange
-    | OCLReserveID | Dependent | Overload | BoundMember | PseudoObject
-    | UnknownAny | BuiltinFn | ARCUnbridgedCast | OMPArraySection *)
-
-let equal_builtin_kind = [%compare.equal: builtin_kind]
+(* | OCLSampler | OCLEvent | OCLClkEvent | OCLQueue | OCLNDRange
+   | OCLReserveID | Dependent | Overload | BoundMember | PseudoObject
+   | UnknownAny | BuiltinFn | ARCUnbridgedCast | OMPArraySection *)
 
 let builtin_kind_to_string t =
   match t with

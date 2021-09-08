@@ -45,9 +45,12 @@ let unknown_call tenv path call_loc (reason : CallEvent.t) ~ret ~actuals ~formal
     | Tptr (typ, _)
       when (not (Language.curr_language_is Java)) && not (is_ptr_to_const formal_typ_opt) ->
         is_functional := false ;
+        (* avoid creating leaks when havoc'ing pointers, and generally optimistically assume unknown
+           calls deallocate everything reachable to avoid reporting memory leak false positives *)
+        let astate = AbductiveDomain.deep_deallocate (fst actual) astate in
         (* HACK: write through the pointer even if it is invalid (except in Java). This is to avoid
            raising issues when havoc'ing pointer parameters (which normally causes a [check_valid]
-           call. *)
+           call). *)
         let fresh_value = AbstractValue.mk_fresh () in
         Memory.add_edge actual Dereference (fresh_value, [event]) call_loc astate
         |> havoc_fields actual typ
@@ -72,7 +75,7 @@ let unknown_call tenv path call_loc (reason : CallEvent.t) ~ret ~actuals ~formal
       | Some f ->
           PulseArithmetic.and_equal (AbstractValueOperand ret_val)
             (FunctionApplicationOperand
-               {f; actuals= List.map ~f:(fun ((actual_val, _hist), _typ) -> actual_val) actuals})
+               {f; actuals= List.map ~f:(fun ((actual_val, _hist), _typ) -> actual_val) actuals} )
             astate
     in
     match reason with
@@ -138,9 +141,9 @@ let apply_callee tenv path ~caller_proc_desc callee_pname call_loc callee_exec_s
   | LatentInvalidAccess {astate} ->
       map_call_result ~is_isl_error_prepost:false
         (astate :> AbductiveDomain.t)
-        ~f:(fun subst astate ->
+        ~f:(fun subst astate_post_call ->
           let* astate_summary_result =
-            ( AbductiveDomain.summary_of_post tenv caller_proc_desc call_loc astate
+            ( AbductiveDomain.summary_of_post tenv caller_proc_desc call_loc astate_post_call
               >>| AccessResult.ignore_memory_leaks >>| AccessResult.of_abductive_result
               :> (AbductiveDomain.summary, AbductiveDomain.t AccessResult.error) result SatUnsat.t
               )
@@ -168,17 +171,27 @@ let apply_callee tenv path ~caller_proc_desc callee_pname call_loc callee_exec_s
                     Sat (Error (ReportableErrorSummary {diagnostic; astate= astate_summary}))
                 | `ISLDelay astate ->
                     Sat (Error (ISLError astate)) )
-            | LatentInvalidAccess {address= address_callee; must_be_valid; calling_context} -> (
+            | LatentInvalidAccess
+                { address= address_callee
+                ; must_be_valid= callee_access_trace, must_be_valid_reason
+                ; calling_context } -> (
               match AbstractValue.Map.find_opt address_callee subst with
               | None ->
                   (* the address became unreachable so the bug can never be reached; drop it *)
                   Unsat
-              | Some (address, _history) -> (
+              | Some (address, caller_history) -> (
+                  let access_trace =
+                    Trace.ViaCall
+                      { in_call= callee_access_trace
+                      ; f= Call callee_pname
+                      ; location= call_loc
+                      ; history= caller_history }
+                  in
                   let calling_context =
                     (CallEvent.Call callee_pname, call_loc) :: calling_context
                   in
                   match
-                    AbductiveDomain.find_post_cell_opt address (astate_summary :> AbductiveDomain.t)
+                    AbductiveDomain.find_post_cell_opt address astate_post_call
                     |> Option.bind ~f:(fun (_, attrs) -> Attributes.get_invalid attrs)
                   with
                   | None ->
@@ -186,7 +199,10 @@ let apply_callee tenv path ~caller_proc_desc callee_pname call_loc callee_exec_s
                       Sat
                         (Ok
                            (LatentInvalidAccess
-                              {astate= astate_summary; address; must_be_valid; calling_context}))
+                              { astate= astate_summary
+                              ; address
+                              ; must_be_valid= (access_trace, must_be_valid_reason)
+                              ; calling_context } ) )
                   | Some (invalidation, invalidation_trace) ->
                       Sat
                         (Error
@@ -196,9 +212,9 @@ let apply_callee tenv path ~caller_proc_desc callee_pname call_loc callee_exec_s
                                     { calling_context
                                     ; invalidation
                                     ; invalidation_trace
-                                    ; access_trace= fst must_be_valid
-                                    ; must_be_valid_reason= snd must_be_valid }
-                              ; astate= astate_summary })) ) ) ) )
+                                    ; access_trace
+                                    ; must_be_valid_reason }
+                              ; astate= astate_summary } ) ) ) ) ) )
   | ISLLatentMemoryError astate ->
       map_call_result ~is_isl_error_prepost:true
         (astate :> AbductiveDomain.t)
@@ -242,7 +258,7 @@ let call_aux tenv path caller_proc_desc call_loc callee_pname ret actuals callee
         Str.string_match regex (Procname.to_string callee_pname) 0 )
   in
   if should_keep_at_most_one_disjunct then
-    L.d_printfln "Will keep at most one disjunct because %a is in blacklist" Procname.pp
+    L.d_printfln "Will keep at most one disjunct because %a is in block list" Procname.pp
       callee_pname ;
   (* call {!AbductiveDomain.PrePost.apply} on each pre/post pair in the summary. *)
   List.fold ~init:[] exec_states ~f:(fun posts callee_exec_state ->
@@ -272,13 +288,10 @@ let call tenv path ~caller_proc_desc ~(callee_data : (Procdesc.t * PulseSummary.
       astate_unknown
     in
     let result_unknown_nil =
-      PulseObjectiveCSummary.mk_objc_method_nil_summary tenv procdesc
-        (ExecutionDomain.mk_initial tenv procdesc)
+      PulseObjectiveCSummary.mk_nil_messaging_summary tenv procdesc
       |> Option.value_map ~default:[] ~f:(fun nil_summary ->
-             let<*> nil_astate = nil_summary in
              call_aux tenv path caller_proc_desc call_loc callee_pname ret actuals procdesc
-               ([ContinueProgram nil_astate] :> ExecutionDomain.t list)
-               astate )
+               [nil_summary] astate )
     in
     result_unknown @ result_unknown_nil
   in
@@ -296,7 +309,7 @@ let call tenv path ~caller_proc_desc ~(callee_data : (Procdesc.t * PulseSummary.
         |> unknown_call tenv path call_loc (SkippedKnownCall callee_pname) ~ret ~actuals
              ~formals_opt
       in
-      let callee_procdesc_opt = AnalysisCallbacks.get_proc_desc callee_pname in
+      let callee_procdesc_opt = Procdesc.load callee_pname in
       Option.value_map callee_procdesc_opt
         ~default:[Ok (ContinueProgram astate_unknown)]
         ~f:(unknown_objc_nil_messaging astate_unknown)

@@ -83,6 +83,14 @@ module Closures : sig
   (** assert the validity of the addresses captured by the lambda *)
 end
 
+val pulse_model_type : Typ.name
+(** Struct type name of "__infer_pulse_model" *)
+
+module ModeledField : sig
+  val string_length : Fieldname.t
+  (** Modeled field for string length *)
+end
+
 val eval :
      PathContext.t
   -> access_mode
@@ -245,7 +253,7 @@ val invalidate_biad_isl :
 (** record that the address is invalid. If the address has not been allocated, abduce ISL specs for
     both invalid (null, free, unint) and allocated heap. *)
 
-val allocate : Procname.t -> Location.t -> AbstractValue.t * ValueHistory.t -> t -> t
+val allocate : Attribute.allocator -> Location.t -> AbstractValue.t * ValueHistory.t -> t -> t
 
 val add_dynamic_type : Typ.t -> AbstractValue.t -> t -> t
 

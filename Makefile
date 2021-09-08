@@ -25,12 +25,13 @@ BUILD_SYSTEMS_TESTS += \
   clang_multiple_files \
   clang_translation \
   clang_unknown_ext \
-  clang_with_blacklisted_flags \
+  clang_with_block_listed_flags \
   clang_with_E_flag \
   clang_with_M_flag \
   clang_with_MD_flag \
   deduplicate_template_warnings \
   delete_results_dir \
+  disjunctive_domain \
   duplicate_symbols \
   fail_on_issue \
   j1 \
@@ -77,7 +78,7 @@ DIRECT_TESTS += \
 
 ifneq ($(BUCK),no)
 BUILD_SYSTEMS_TESTS += \
-  buck_blacklist \
+  buck_block_list \
   buck-clang-db \
   buck_clang_test_determinator \
   buck_flavors \
@@ -148,6 +149,17 @@ endif
 endif # HAS_OBJC
 endif # BUILD_C_ANALYZERS
 
+ifeq ($(BUILD_ERLANG_ANALYZERS),yes)
+ifneq ($(REBAR3),no)
+DIRECT_TESTS += \
+  erlang_nonmatch \
+  erlang_topl \
+  erlang_features \
+
+BUILD_SYSTEMS_TESTS += rebar3
+endif
+endif # BUILD_ERLANG_ANALYZERS
+
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
 BUILD_SYSTEMS_TESTS += \
   differential_interesting_paths_filter \
@@ -204,6 +216,8 @@ COST_TESTS += java_fb-performance
 
 DIRECT_TESTS += \
   java_fb-config-impact \
+  java_fb-config-impact-paths \
+  java_fb-config-impact-strict \
   java_fb-gk-interaction \
   java_fb-immutability \
   java_fb-performance
@@ -212,19 +226,13 @@ endif
 ifneq ($(ANT),no)
 BUILD_SYSTEMS_TESTS += ant
 endif
-
-
-
 ifneq ($(BUCK),no)
 BUILD_SYSTEMS_TESTS += buck_java_flavor
 endif
 ifneq ($(MVN),no)
 BUILD_SYSTEMS_TESTS += mvn
 endif
-ifneq ($(REBAR3),no)
-BUILD_SYSTEMS_TESTS += rebar3
-endif
-endif
+endif # BUILD_JAVA_ANALYZERS
 
 DIRECT_TESTS += \
   dotnet_arithmetic \
@@ -876,6 +884,8 @@ endif
 .PHONY: devsetup
 devsetup: Makefile.autoconf
 	$(QUIET)[ $(OPAM) != "no" ] || (echo 'No `opam` found, aborting setup.' >&2; exit 1)
+	$(QUIET)$(call silent_on_success,pinning ocamlformat,\
+	  OPAMSWITCH=$(OPAMSWITCH); $(OPAM) pin ocamlformat 'git+https://github.com/ocaml-ppx/ocamlformat#nebuchadnezzar' --yes)
 	$(QUIET)$(call silent_on_success,installing $(OPAM_DEV_DEPS),\
 	  OPAMSWITCH=$(OPAMSWITCH); $(OPAM) install --yes --no-checksum user-setup $(OPAM_DEV_DEPS))
 	$(QUIET)echo '$(TERM_INFO)*** Running `opam user-setup`$(TERM_RESET)' >&2

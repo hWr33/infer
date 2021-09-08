@@ -76,11 +76,21 @@ let __delete_array = create_procname "__delete_array"
 
 let __delete_locked_attribute = create_procname "__delete_locked_attribute"
 
+let __erlang_error_badmatch = create_procname "__erlang_error_badmatch"
+
+let __erlang_error_badrecord = create_procname "__erlang_error_badrecord"
+
+let __erlang_error_case_clause = create_procname "__erlang_error_case_clause"
+
+let __erlang_error_function_clause = create_procname "__erlang_error_function_clause"
+
+let __erlang_error_if_clause = create_procname "__erlang_error_if_clause"
+
 let __erlang_make_cons = create_procname "__erlang_make_cons"
 
 let __erlang_make_nil = create_procname "__erlang_make_nil"
 
-let __erlang_pattern_fail = create_procname "__erlang_pattern_fail"
+let __erlang_make_tuple = create_procname "__erlang_make_tuple"
 
 let __exit = create_procname "_exit"
 
@@ -180,6 +190,10 @@ let nsArray_arrayWithObjects =
 let nsArray_arrayWithObjectsCount =
   create_objc_class_method "NSArray" "arrayWithObjects:count:" [None; None]
 
+
+let objc_insert_key = create_procname "_objc_insertKey"
+
+let objc_insert_value = create_procname "_objc_insertValue"
 
 let objc_autorelease_pool_pop = create_procname "_objc_autoreleasePoolPop"
 

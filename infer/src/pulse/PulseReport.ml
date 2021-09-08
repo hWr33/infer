@@ -6,6 +6,7 @@
  *)
 
 open! IStd
+module L = Logging
 open PulseBasicInterface
 open PulseDomainInterface
 
@@ -46,14 +47,16 @@ let is_nullsafe_error tenv diagnostic jn =
    being equal to the value being dereferenced *)
 let is_constant_deref_without_invalidation (diagnostic : Diagnostic.t) =
   match diagnostic with
-  | MemoryLeak _ | ReadUninitializedValue _ | StackVariableAddressEscape _ ->
+  | MemoryLeak _ | ErlangError _ | ReadUninitializedValue _ | StackVariableAddressEscape _ ->
       false
   | AccessToInvalidAddress {invalidation; access_trace} -> (
     match invalidation with
     | ConstantDereference _ ->
         not (Trace.has_invalidation access_trace)
     | CFree
+    | CustomFree _
     | CppDelete
+    | CppDeleteArray
     | EndIterator
     | GoneOutOfScope _
     | OptionalEmpty
@@ -63,14 +66,17 @@ let is_constant_deref_without_invalidation (diagnostic : Diagnostic.t) =
 
 
 let is_suppressed tenv proc_desc diagnostic astate =
-  is_constant_deref_without_invalidation diagnostic
-  ||
-  match Procdesc.get_proc_name proc_desc with
-  | Procname.Java jn ->
-      is_nullsafe_error tenv diagnostic jn
-      || not (AbductiveDomain.skipped_calls_match_pattern astate)
-  | _ ->
-      false
+  if is_constant_deref_without_invalidation diagnostic then (
+    L.d_printfln ~color:Red
+      "Dropping error: constant dereference with no invalidation in the access trace" ;
+    true )
+  else
+    match Procdesc.get_proc_name proc_desc with
+    | Procname.Java jn ->
+        is_nullsafe_error tenv diagnostic jn
+        || not (AbductiveDomain.skipped_calls_match_pattern astate)
+    | _ ->
+        false
 
 
 let summary_of_error_post tenv proc_desc location mk_error astate =
@@ -118,7 +124,7 @@ let report_summary_error tenv proc_desc err_log
              ; invalidation= ConstantDereference IntLit.zero
              ; invalidation_trace= Immediate {location= Procdesc.get_loc proc_desc; history= []}
              ; access_trace= fst must_be_valid
-             ; must_be_valid_reason= snd must_be_valid }) ;
+             ; must_be_valid_reason= snd must_be_valid } ) ;
       LatentInvalidAccess {astate; address; must_be_valid; calling_context= []}
   | ISLError astate ->
       ISLLatentMemoryError astate

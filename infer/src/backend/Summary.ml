@@ -129,12 +129,11 @@ module ReportSummary = struct
     ; config_impact_opt: ConfigImpactAnalysis.Summary.t option
     ; err_log: Errlog.t }
 
-  let of_full_summary (f : full_summary) =
-    ( { loc= get_loc f
-      ; cost_opt= f.payloads.Payloads.cost
-      ; config_impact_opt= f.payloads.Payloads.config_impact_analysis
-      ; err_log= f.err_log }
-      : t )
+  let of_full_summary (f : full_summary) : t =
+    { loc= get_loc f
+    ; cost_opt= f.payloads.Payloads.cost
+    ; config_impact_opt= f.payloads.Payloads.config_impact_analysis
+    ; err_log= f.err_log }
 
 
   module SQLite = SqliteUtils.MarshalledDataNOTForComparison (struct
@@ -157,14 +156,13 @@ module AnalysisSummary = struct
     [@@deriving fields]
   end
 
-  let of_full_summary (f : full_summary) =
-    ( { payloads= f.payloads
-      ; sessions= f.sessions
-      ; stats= f.stats
-      ; status= f.status
-      ; proc_desc= f.proc_desc
-      ; callee_pnames= f.callee_pnames }
-      : t )
+  let of_full_summary (f : full_summary) : t =
+    { payloads= f.payloads
+    ; sessions= f.sessions
+    ; stats= f.stats
+    ; status= f.status
+    ; proc_desc= f.proc_desc
+    ; callee_pnames= f.callee_pnames }
 
 
   module SQLite = SqliteUtils.MarshalledDataNOTForComparison (struct
@@ -172,15 +170,15 @@ module AnalysisSummary = struct
   end)
 end
 
-let mk_full_summary (report_summary : ReportSummary.t) (analysis_summary : AnalysisSummary.t) =
-  ( { payloads= analysis_summary.payloads
-    ; sessions= analysis_summary.sessions
-    ; stats= analysis_summary.stats
-    ; status= analysis_summary.status
-    ; proc_desc= analysis_summary.proc_desc
-    ; callee_pnames= analysis_summary.callee_pnames
-    ; err_log= report_summary.err_log }
-    : full_summary )
+let mk_full_summary (report_summary : ReportSummary.t) (analysis_summary : AnalysisSummary.t) :
+    full_summary =
+  { payloads= analysis_summary.payloads
+  ; sessions= analysis_summary.sessions
+  ; stats= analysis_summary.stats
+  ; status= analysis_summary.status
+  ; proc_desc= analysis_summary.proc_desc
+  ; callee_pnames= analysis_summary.callee_pnames
+  ; err_log= report_summary.err_log }
 
 
 module OnDisk = struct
@@ -261,14 +259,11 @@ module OnDisk = struct
         load_summary_to_spec_table proc_name
 
 
-  (** Try to find the attributes for a defined proc. First look at specs (to get attributes computed
-      by analysis) then look at the attributes table. If no attributes can be found, return None. *)
-  let proc_resolve_attributes proc_name =
-    match get proc_name with
-    | Some summary ->
-        Some (get_attributes summary)
-    | None ->
-        Attributes.load proc_name
+  let get_model_proc_desc model_name =
+    if not (BiabductionModels.mem model_name) then
+      Logging.die InternalError "Requested summary of model that couldn't be found: %a@\n"
+        Procname.pp model_name
+    else Option.map (get model_name) ~f:(fun (s : full_summary) -> s.proc_desc)
 
 
   (** Save summary for the procedure into the spec database *)

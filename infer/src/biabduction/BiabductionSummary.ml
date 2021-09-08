@@ -213,7 +213,7 @@ end = struct
            ~f:(fun id ->
              incr count ;
              (id, Exp.Var (Ident.create_normal Ident.name_spec !count)) )
-           idlist)
+           idlist )
     in
     spec_sub tenv sub spec
 
@@ -239,9 +239,7 @@ let expose = NormSpec.tospec
 (** Cast a list of normalized specs to a list of specs *)
 let normalized_specs_to_specs = List.map ~f:NormSpec.tospec
 
-type phase = FOOTPRINT | RE_EXECUTION [@@deriving compare]
-
-let equal_phase = [%compare.equal: phase]
+type phase = FOOTPRINT | RE_EXECUTION [@@deriving compare, equal]
 
 let string_of_phase = function FOOTPRINT -> "FOOTPRINT" | RE_EXECUTION -> "RE_EXECUTION"
 

@@ -128,7 +128,7 @@ end = struct
     F.fprintf fmt "<center><h1>Procedure %a</h1></center>@\n"
       (Io_infer.Html.pp_line_link source
          ~text:(Some (Escape.escape_xml (Procname.to_string pname)))
-         [])
+         [] )
       linenum ;
     pp_node_link_seq [] ~description:true fmt nodes ;
     ( match Summary.OnDisk.get pname with
@@ -230,8 +230,8 @@ end = struct
     Io_infer.Html.close (fd, fmt)
 
 
-  let is_whitelisted =
-    match Config.write_html_whitelist_regex with
+  let is_allow_listed =
+    match Config.write_html_allow_list_regex with
     | [] ->
         fun _ -> true
     | _ as reg_list ->
@@ -256,7 +256,7 @@ end = struct
           | Some proc_desc ->
               if Procdesc.is_defined proc_desc then
                 let file = (Procdesc.get_loc proc_desc).Location.file in
-                if is_whitelisted file then (
+                if is_allow_listed file then (
                   let pdescs_in_file =
                     try Hashtbl.find pdescs_in_source file
                     with Caml.Not_found -> Procname.Map.empty

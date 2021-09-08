@@ -33,7 +33,7 @@ let append_template_args_to_last quals ~args =
         (ParseError
            (F.sprintf
               "expected qualified name without template args, but got %s, the last qualifier of %s"
-              last (String.concat ~sep:", " quals)))
+              last (String.concat ~sep:", " quals) ) )
   | last :: rest ->
       (last ^ args) :: rest
   | [] ->
@@ -115,7 +115,7 @@ module Match = struct
 
 
   let match_qualifiers matcher quals =
-    (* qual_name may have qualifiers with template parameters - drop them to whitelist all
+    (* qual_name may have qualifiers with template parameters - drop them to allow all
        instantiations *)
     let normalized_qualifiers = strip_template_args quals in
     Str.string_match matcher (to_separated_string ~sep:matching_separator normalized_qualifiers) 0

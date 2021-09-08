@@ -115,51 +115,49 @@ struct
 
   type analysis_data = T.analysis_data
 
+  let (`UnderApproximateAfter disjunct_limit) = DConfig.join_policy
+
   module Domain = struct
     (** a list [\[x1; x2; ...; xN\]] represents a disjunction [x1 ∨ x2 ∨ ... ∨ xN] *)
     type t = T.Domain.t list
 
-    (* a bit too specialised to go into {!IList} *)
-    let length_if_leq n l =
-      let rec aux length n l =
-        if n < 0 then None
-        else match l with [] -> Some length | _ :: tl -> aux (length + 1) (n - 1) tl
-      in
-      aux 0 n l
-
-
-    let append_no_duplicates_up_to leq n from ~into =
-      let rec aux n acc from =
+    let append_no_duplicates_up_to leq ~limit from ~into ~into_length =
+      let rec aux acc n_acc from =
         match from with
-        | hd :: tl when n > 0 ->
+        | hd :: tl when n_acc < limit ->
             (* check with respect to the original [into] and not [acc] as we assume lists of
                disjuncts are already deduplicated *)
             if List.exists into ~f:(fun into_disj -> leq ~lhs:hd ~rhs:into_disj) then
               (* [hd] is already implied by one of the states in [into]; skip it
                  ([(a=>b) => (a\/b <=> b)]) *)
-              aux n acc tl
-            else aux (n - 1) (hd :: acc) tl
+              aux acc n_acc tl
+            else aux (hd :: acc) (n_acc + 1) tl
         | _ ->
-            (* [from] is empty or [n = 0], either way we are done *) acc
+            (* [from] is empty or [n_acc ≥ limit], either way we are done *) (acc, n_acc)
       in
-      aux n into from
+      aux into into_length from
 
 
-    (** Ignore states in [lhs] that are over-approximated in [rhs] and vice-versa. Favors keeping
-        states in [lhs]. *)
-    let join_up_to leq lhs rhs =
-      if phys_equal lhs rhs then lhs
+    let length_and_cap_to_limit n l =
+      let length = List.length l in
+      (List.drop l (length - n), min length n)
+
+
+    (** Ignore states in [lhs] that are over-approximated in [rhs] according to [leq] and
+        vice-versa. Favors keeping states in [lhs]. Returns no more than [limit] disjuncts. *)
+    let join_up_to_with_leq ~limit leq ~into:lhs rhs =
+      let lhs, lhs_length = length_and_cap_to_limit limit lhs in
+      if phys_equal lhs rhs || lhs_length >= limit then (lhs, lhs_length)
       else
-        let (`UnderApproximateAfter n) = DConfig.join_policy in
-        match length_if_leq n lhs with
-        | None ->
-            (* already at max disjuncts *) lhs
-        | Some lhs_length ->
-            (* this filters only in one direction for now, could be worth doing both ways *)
-            append_no_duplicates_up_to leq (n - lhs_length) rhs ~into:lhs
+        (* this filters only in one direction for now, could be worth doing both ways *)
+        append_no_duplicates_up_to leq ~limit (List.rev rhs) ~into:lhs ~into_length:lhs_length
 
 
-    let join lhs rhs = join_up_to (fun ~lhs ~rhs -> phys_equal lhs rhs) lhs rhs
+    let join_up_to ~limit ~into:lhs rhs =
+      join_up_to_with_leq ~limit (fun ~lhs ~rhs -> T.Domain.equal_fast lhs rhs) ~into:lhs rhs
+
+
+    let join lhs rhs = join_up_to ~limit:disjunct_limit ~into:lhs rhs |> fst
 
     (** check if elements of [disj] appear in [of_] in the same order, using pointer equality on
         abstract states to compare elements quickly *)
@@ -167,7 +165,7 @@ struct
       match (disj, of_) with
       | [], _ ->
           true
-      | x :: disj', y :: of' when phys_equal x y ->
+      | x :: disj', y :: of' when T.Domain.equal_fast x y ->
           is_trivial_subset disj' ~of_:of'
       | _, _ :: of' ->
           is_trivial_subset disj ~of_:of'
@@ -184,34 +182,38 @@ struct
         L.d_printfln "Iteration %d is greater than max iter %d, stopping." num_iters max_iter ;
         prev )
       else
-        let post = join_up_to T.Domain.leq prev next in
+        let post, _ = join_up_to_with_leq ~limit:disjunct_limit T.Domain.leq ~into:prev next in
         if leq ~lhs:post ~rhs:prev then prev else post
 
 
     let pp f disjuncts =
       let pp_disjuncts f disjuncts =
-        List.iteri disjuncts ~f:(fun i disjunct ->
+        List.iteri (List.rev disjuncts) ~f:(fun i disjunct ->
             F.fprintf f "#%d: @[%a@]@;" i T.Domain.pp disjunct )
       in
       F.fprintf f "@[<v>%d disjuncts:@;%a@]" (List.length disjuncts) pp_disjuncts disjuncts
   end
 
+  (** the number of remaining disjuncts taking into account disjuncts already recorded in the post
+      of a node (and therefore that will stay there) *)
+  let remaining_disjuncts = ref None
+
   let exec_instr pre_disjuncts analysis_data node _ instr =
-    List.foldi pre_disjuncts ~init:[] ~f:(fun i post_disjuncts pre_disjunct ->
-        let should_skip =
-          let (`UnderApproximateAfter n) = DConfig.join_policy in
-          List.length post_disjuncts >= n
-        in
-        if should_skip then (
+    (* always called from [exec_node_instrs] so [remaining_disjuncts] should always be [Some _] *)
+    let limit = Option.value_exn !remaining_disjuncts in
+    List.foldi (List.rev pre_disjuncts) ~init:([], 0)
+      ~f:(fun i (post_disjuncts, n_disjuncts) pre_disjunct ->
+        if n_disjuncts >= limit then (
           L.d_printfln "@[<v2>Reached max disjuncts limit, skipping disjunct #%d@;@]" i ;
-          post_disjuncts )
+          (post_disjuncts, n_disjuncts) )
         else (
           L.d_printfln "@[<v2>Executing instruction from disjunct #%d@;" i ;
           let disjuncts' = T.exec_instr pre_disjunct analysis_data node instr in
           ( if Config.write_html then
             let n = List.length disjuncts' in
             L.d_printfln "@]@\n@[Got %d disjunct%s back@]" n (if Int.equal n 1 then "" else "s") ) ;
-          Domain.join post_disjuncts disjuncts' ) )
+          Domain.join_up_to ~limit ~into:post_disjuncts disjuncts' ) )
+    |> fst
 
 
   let exec_node_instrs old_state_opt ~exec_instr pre instrs =
@@ -220,18 +222,27 @@ struct
       | None ->
           true
       | Some {State.pre= previous_pre; _} ->
-          not (List.mem ~equal:phys_equal previous_pre disjunct)
+          not (List.mem ~equal:T.Domain.equal_fast previous_pre disjunct)
     in
-    let current_post = match old_state_opt with None -> [] | Some {State.post; _} -> post in
-    List.foldi pre ~init:current_post ~f:(fun i post_disjuncts pre_disjunct ->
-        if is_new_pre pre_disjunct then (
-          L.d_printfln "@[<v2>Executing node from disjunct #%d@;" i ;
+    let current_post_n =
+      match old_state_opt with None -> ([], 0) | Some {State.post; _} -> (post, List.length post)
+    in
+    List.foldi (List.rev pre) ~init:current_post_n
+      ~f:(fun i (post_disjuncts, n_disjuncts) pre_disjunct ->
+        let limit = disjunct_limit - n_disjuncts in
+        remaining_disjuncts := Some limit ;
+        if limit <= 0 then (
+          L.d_printfln "@[Reached disjunct limit: already got %d disjuncts@]@;" limit ;
+          (post_disjuncts, n_disjuncts) )
+        else if is_new_pre pre_disjunct then (
+          L.d_printfln "@[<v2>Executing node from disjunct #%d, setting limit to %d@;" i limit ;
           let disjuncts' = Instrs.foldi ~init:[pre_disjunct] instrs ~f:exec_instr in
           L.d_printfln "@]@\n" ;
-          Domain.join post_disjuncts disjuncts' )
+          Domain.join_up_to ~limit:disjunct_limit ~into:post_disjuncts disjuncts' )
         else (
           L.d_printfln "@[Skipping already-visited disjunct #%d@]@;" i ;
-          post_disjuncts ) )
+          (post_disjuncts, n_disjuncts) ) )
+    |> fst
 
 
   let pp_session_name node f = T.pp_session_name node f
@@ -339,7 +350,7 @@ module AbstractInterpreterCommon (TransferFunctions : NodeTransferFunctions) = s
                 logged_error := true ) ) ;
           Caml.Printexc.raise_with_backtrace exn backtrace
     in
-    (* hack to ensure that we call `exec_instr` on a node even if it has no instructions *)
+    (* hack to ensure that we call [exec_instr] on a node even if it has no instructions *)
     let instrs = if Instrs.is_empty instrs then Instrs.singleton Sil.skip_instr else instrs in
     TransferFunctions.exec_node_instrs old_state_opt ~exec_instr pre instrs
 

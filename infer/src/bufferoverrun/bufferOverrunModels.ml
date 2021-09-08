@@ -801,9 +801,9 @@ module type Lang = sig
 end
 
 (* Abstract Collections are represented like arrays. But we don't care about the elements.
-- when they are constructed, we set the size to 0
-- each time we add an element, we increase the length of the array
-- each time we delete an element, we decrease the length of the array *)
+   - when they are constructed, we set the size to 0
+   - each time we add an element, we increase the length of the array
+   - each time we delete an element, we decrease the length of the array *)
 module AbstractCollection (Lang : Lang) = struct
   let create_collection {pname; node_hash; location} ~ret:(id, _) mem ~length =
     let represents_multiple_values = true in
@@ -963,6 +963,15 @@ module AbstractCollection (Lang : Lang) = struct
       in
       model_by_value collection_size ret_id mem
       |> Dom.Mem.add_iterator_has_next_alias ret_id iterator
+    in
+    {exec; check= no_check}
+
+
+  let get_elem iterator =
+    let exec {integer_type_widths} ~ret:(id, _) mem =
+      let traces = Sem.eval integer_type_widths iterator mem |> Dom.Val.get_traces in
+      let locs = eval_collection_internal_array_locs iterator mem in
+      model_by_value (Dom.Val.of_pow_loc ~traces locs) id mem
     in
     {exec; check= no_check}
 
@@ -1902,6 +1911,7 @@ module Call = struct
         &:: "addAll" <>$ capt_var_exn $+ capt_exp $--> Collection.addAll
       ; +PatternMatch.Java.implements_collection
         &:: "get" <>$ capt_var_exn $+ capt_exp $--> Collection.get_at_index
+      ; +PatternMatch.Java.implements_map &:: "get" <>$ capt_exp $+ any_arg $--> Collection.get_elem
       ; +PatternMatch.Java.implements_collection
         &:: "remove" <>$ capt_var_exn $+ capt_exp $--> Collection.remove_at_index
       ; +PatternMatch.Java.implements_collection

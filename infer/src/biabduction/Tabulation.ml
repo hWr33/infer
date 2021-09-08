@@ -102,7 +102,7 @@ let spec_find_rename proc_attrs specs :
     if List.is_empty specs then
       raise
         (Exceptions.Precondition_not_found
-           (Localise.verbatim_desc (Procname.to_string proc_name), __POS__)) ;
+           (Localise.verbatim_desc (Procname.to_string proc_name), __POS__) ) ;
     let formal_parameters =
       List.map ~f:(fun (x, _) -> Pvar.mk_callee x proc_name) proc_attrs.ProcAttributes.formals
     in
@@ -111,7 +111,7 @@ let spec_find_rename proc_attrs specs :
     L.d_printfln "ERROR: found no entry for procedure %a. Give up..." Procname.pp proc_name ;
     raise
       (Exceptions.Precondition_not_found
-         (Localise.verbatim_desc (Procname.to_string proc_name), __POS__))
+         (Localise.verbatim_desc (Procname.to_string proc_name), __POS__) )
 
 
 (** Process a splitting coming straight from a call to the prover: change the instantiating
@@ -745,9 +745,15 @@ let prop_set_exn tenv pname prop se_exn =
   Prop.normalize tenv (Prop.set prop ~sigma:sigma')
 
 
+let get_attributes proc_name =
+  if BiabductionModels.mem proc_name then
+    AnalysisCallbacks.get_model_proc_desc proc_name |> Option.map ~f:Procdesc.get_attributes
+  else Attributes.load proc_name
+
+
 (** Include a subtrace for a procedure call if the callee is not a model. *)
 let include_subtrace callee_pname =
-  match AnalysisCallbacks.proc_resolve_attributes callee_pname with
+  match get_attributes callee_pname with
   | Some attrs ->
       (not attrs.ProcAttributes.is_biabduction_model)
       && SourceFile.is_under_project_root attrs.ProcAttributes.loc.Location.file

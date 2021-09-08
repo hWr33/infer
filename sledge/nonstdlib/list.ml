@@ -57,9 +57,19 @@ let group_join_by ~eq ~hash = group_join_by ~eq ~hash
 let fold xs init ~f = fold_left ~f:(fun s x -> f x s) ~init xs
 let fold_left xs init ~f = fold_left ~f ~init xs
 let fold_right xs init ~f = fold_right ~f ~init xs
+let foldi xs init ~f = foldi ~f:(fun s i x -> f i x s) ~init xs
 
 let reduce xs ~f =
   match xs with [] -> None | x :: xs -> Some (fold ~f xs x)
+
+let fold_diagonal xs init ~f =
+  let rec fold_diagonal_ z = function
+    | [] -> z
+    | x :: ys ->
+        let z = fold ~f:(fun y z -> f x y z) ys z in
+        fold_diagonal_ z ys
+  in
+  fold_diagonal_ init xs
 
 let fold_map xs init ~f =
   Pair.swap (fold_map ~f:(fun s x -> Pair.swap (f x s)) ~init xs)
@@ -103,6 +113,9 @@ let pp_diff ~cmp ?pre ?suf sep pp_elt fs (xs, ys) =
 module Assoc = struct
   include Assoc
 
+  let compare (type k v) compare_k compare_v = [%compare: (k * v) list]
+  let equal (type k v) equal_k equal_v = [%equal: (k * v) list]
+  let sexp_of_t sexp_of_k sexp_of_v = [%sexp_of: (k * v) list]
   let mem elt seq ~eq = mem ~eq elt seq
 end
 

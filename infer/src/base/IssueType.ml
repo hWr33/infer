@@ -153,7 +153,8 @@ end = struct
            ; enabled= _ (* not touching this one since [Config] will have set it *)
            ; hum= _ (* mutable field to update *)
            ; doc_url= _ (* mutable field to update *)
-           ; linters_def_file= _ (* mutable field to update *) } as issue ))[@warning "+9"]) ->
+           ; linters_def_file= _ (* mutable field to update *) } as issue ) )
+    [@warning "+9"] ) ->
         (* update fields that were supplied this time around, but keep the previous values of others
            and assert that the immutable fields are the same (see doc comment) *)
         let die_of_mismatch ~what ~old ~new_ =
@@ -302,6 +303,11 @@ let _bad_pointer_comparison =
     ~user_documentation:[%blob "../../documentation/issues/BAD_POINTER_COMPARISON.md"]
 
 
+let bad_record =
+  register ~id:"BAD_RECORD" Error Pulse
+    ~user_documentation:[%blob "../../documentation/issues/BAD_RECORD.md"]
+
+
 let biabduction_analysis_stops =
   register_hidden ~enabled:false ~id:"BIABDUCTION_ANALYSIS_STOPS" Warning Biabduction
 
@@ -419,6 +425,11 @@ let config_impact_analysis =
     ~user_documentation:"A function is called without a config check"
 
 
+let config_impact_analysis_strict =
+  register ~enabled:false ~id:"CONFIG_IMPACT_STRICT" Advice ConfigImpactAnalysis
+    ~user_documentation:"A function is called without a config check (experimental in strict mode)"
+
+
 let constant_address_dereference =
   register ~enabled:false ~id:"CONSTANT_ADDRESS_DEREFERENCE" Warning Pulse
     ~user_documentation:[%blob "../../documentation/issues/CONSTANT_ADDRESS_DEREFERENCE.md"]
@@ -493,7 +504,7 @@ let eradicate_annotation_graph =
    null, this can have a lot of reasons to be actually nullable.
 
    Until it is made non-precise, it is recommended to not turn this warning on.  But even when it is
-   on, this should not be more than advice.  *)
+   on, this should not be more than advice. *)
 let eradicate_condition_redundant =
   register ~id:"ERADICATE_CONDITION_REDUNDANT" ~hum:"Condition Redundant" Advice Eradicate
     ~user_documentation:[%blob "../../documentation/issues/ERADICATE_CONDITION_REDUNDANT.md"]
@@ -802,6 +813,26 @@ let nil_insertion_into_collection =
 let nil_messaging_to_non_pod =
   register ~id:"NIL_MESSAGING_TO_NON_POD" Error Pulse
     ~user_documentation:[%blob "../../documentation/issues/NIL_MESSAGING_TO_NON_POD.md"]
+
+
+let no_match_of_rhs =
+  register ~id:"NO_MATCH_OF_RHS" Error Pulse
+    ~user_documentation:[%blob "../../documentation/issues/NO_MATCH_OF_RHS.md"]
+
+
+let no_matching_case_clause =
+  register ~id:"NO_MATCHING_CASE_CLAUSE" Error Pulse
+    ~user_documentation:[%blob "../../documentation/issues/NO_MATCHING_CASE_CLAUSE.md"]
+
+
+let no_matching_function_clause =
+  register ~id:"NO_MATCHING_FUNCTION_CLAUSE" Error Pulse
+    ~user_documentation:[%blob "../../documentation/issues/NO_MATCHING_FUNCTION_CLAUSE.md"]
+
+
+let no_true_branch_in_if =
+  register ~id:"NO_TRUE_BRANCH_IN_IF" Error Pulse
+    ~user_documentation:[%blob "../../documentation/issues/NO_TRUE_BRANCH_IN_IF.md"]
 
 
 let null_dereference =

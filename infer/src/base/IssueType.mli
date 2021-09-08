@@ -83,6 +83,8 @@ val assert_failure : t
 
 val bad_footprint : t
 
+val bad_record : t
+
 val biabduction_analysis_stops : t
 
 val buffer_overrun_l1 : t
@@ -136,6 +138,8 @@ val condition_always_true : t
 val config_checks_between_markers : t
 
 val config_impact_analysis : t
+
+val config_impact_analysis_strict : t
 
 val constant_address_dereference : t
 
@@ -281,6 +285,14 @@ val nil_block_call : t
 val nil_insertion_into_collection : t
 
 val nil_messaging_to_non_pod : t
+
+val no_match_of_rhs : t
+
+val no_matching_case_clause : t
+
+val no_matching_function_clause : t
+
+val no_true_branch_in_if : t
 
 val null_dereference : t
 

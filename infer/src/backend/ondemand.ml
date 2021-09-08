@@ -16,7 +16,7 @@ module LocalCache = struct
   let results =
     lazy
       (Procname.LRUHash.create ~initial_size:Config.summaries_caches_max_size
-         ~max_size:Config.summaries_caches_max_size)
+         ~max_size:Config.summaries_caches_max_size )
 
 
   let clear () = Procname.LRUHash.clear (Lazy.force results)
@@ -68,10 +68,8 @@ let should_be_analyzed proc_attributes =
   (not (is_active proc_name)) (* avoid infinite loops *) && not (already_analyzed proc_name)
 
 
-let get_proc_attr proc_name = Summary.OnDisk.proc_resolve_attributes proc_name
-
 let procedure_should_be_analyzed proc_name =
-  match get_proc_attr proc_name with
+  match Attributes.load proc_name with
   | Some proc_attributes ->
       should_be_analyzed proc_attributes
   | None ->
@@ -82,6 +80,7 @@ type global_state =
   { abs_val: int
   ; abstraction_rules: Abs.rules
   ; delayed_prints: L.delayed_prints
+  ; disjunctive_demo_state: int
   ; footprint_mode: bool
   ; html_formatter: F.formatter
   ; name_generator: Ident.NameGenerator.t
@@ -98,6 +97,7 @@ let save_global_state () =
   { abs_val= !BiabductionConfig.abs_val
   ; abstraction_rules= Abs.get_current_rules ()
   ; delayed_prints= L.get_and_reset_delayed_prints ()
+  ; disjunctive_demo_state= !DisjunctiveDemo.node_id
   ; footprint_mode= !BiabductionConfig.footprint
   ; html_formatter= !Printer.curr_html_formatter
   ; name_generator= Ident.NameGenerator.get_current ()
@@ -116,6 +116,7 @@ let restore_global_state st =
   L.set_delayed_prints st.delayed_prints ;
   BiabductionConfig.footprint := st.footprint_mode ;
   Printer.curr_html_formatter := st.html_formatter ;
+  DisjunctiveDemo.node_id := st.disjunctive_demo_state ;
   Ident.NameGenerator.set_current st.name_generator ;
   PulseAbstractValue.State.set st.pulse_address_generator ;
   AnalysisState.restore st.absint_state ;
@@ -299,9 +300,8 @@ let register_callee ?caller_summary callee_pname =
 
 
 let get_proc_desc callee_pname =
-  IList.force_until_first_some
-    [ lazy (Procdesc.load callee_pname)
-    ; lazy (Option.map ~f:Summary.get_proc_desc (Summary.OnDisk.get callee_pname)) ]
+  if BiabductionModels.mem callee_pname then Summary.OnDisk.get_model_proc_desc callee_pname
+  else Procdesc.load callee_pname
 
 
 let analyze_callee exe_env ?caller_summary callee_pname =

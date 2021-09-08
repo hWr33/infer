@@ -88,19 +88,28 @@ let should_report issue_type error_desc =
     if issue_type_is_null_deref then Localise.error_desc_is_reportable_bucket error_desc else true
 
 
+let should_not_censor (issue_type : IssueType.t) =
+  List.exists Config.no_censor_report ~f:(fun issue_type_re ->
+      Str.string_match issue_type_re issue_type.unique_id 0 )
+
+
 (* The reason an issue should be censored (that is, not reported). The empty
    string (that is "no reason") means that the issue should be reported. *)
 let censored_reason (issue_type : IssueType.t) source_file =
-  let filename = SourceFile.to_rel_path source_file in
-  let rejected_by ((issue_type_polarity, issue_type_re), (filename_polarity, filename_re), reason) =
-    let accepted =
-      (* matches issue_type_re implies matches filename_re *)
-      (not (Bool.equal issue_type_polarity (Str.string_match issue_type_re issue_type.unique_id 0)))
-      || Bool.equal filename_polarity (Str.string_match filename_re filename 0)
+  if should_not_censor issue_type then None
+  else
+    let filename = SourceFile.to_rel_path source_file in
+    let rejected_by ((issue_type_polarity, issue_type_re), (filename_polarity, filename_re), reason)
+        =
+      let accepted =
+        (* matches issue_type_re implies matches filename_re *)
+        (not
+           (Bool.equal issue_type_polarity (Str.string_match issue_type_re issue_type.unique_id 0)) )
+        || Bool.equal filename_polarity (Str.string_match filename_re filename 0)
+      in
+      Option.some_if (not accepted) reason
     in
-    Option.some_if (not accepted) reason
-  in
-  List.find_map Config.censor_report ~f:rejected_by
+    List.find_map Config.censor_report ~f:rejected_by
 
 
 let potential_exception_message = "potential exception at line"
@@ -308,9 +317,10 @@ module JsonConfigImpactPrinterElt = struct
   type elt =
     { loc: Location.t
     ; proc_name: Procname.t
-    ; config_impact_opt: ConfigImpactAnalysis.Summary.t option }
+    ; config_impact_opt: ConfigImpactAnalysis.Summary.t option
+    ; is_strict: bool }
 
-  let to_string {loc; proc_name; config_impact_opt} =
+  let to_string {loc; proc_name; config_impact_opt; is_strict} =
     Option.map config_impact_opt ~f:(fun config_impact ->
         let {NoQualifierHashProcInfo.hash; loc; procedure_name; procedure_id} =
           NoQualifierHashProcInfo.get loc proc_name
@@ -320,7 +330,7 @@ module JsonConfigImpactPrinterElt = struct
           |> ConfigImpactAnalysis.UncheckedCallees.encode
         in
         Jsonbug_j.string_of_config_impact_item
-          {Jsonbug_t.hash; loc; procedure_name; procedure_id; unchecked_callees} )
+          {Jsonbug_t.hash; loc; procedure_name; procedure_id; unchecked_callees; is_strict} )
 end
 
 module JsonConfigImpactPrinter = MakeJsonListPrinter (JsonConfigImpactPrinterElt)
@@ -366,14 +376,20 @@ let get_all_config_fields () =
 
 let write_config_impact all_config_fields proc_name loc config_impact_opt (outfile : Utils.outfile)
     =
-  if ExternalConfigImpactData.is_in_config_data_file proc_name && is_in_changed_files loc then
+  if
+    ( ExternalConfigImpactData.is_in_config_data_file proc_name
+    || (Config.config_impact_strict_mode && List.is_empty Config.config_impact_strict_mode_paths)
+    || ConfigImpactAnalysis.is_in_strict_mode_paths loc.Location.file )
+    && is_in_changed_files loc
+  then
     let config_impact_opt =
       Option.map config_impact_opt
         ~f:
           (ConfigImpactAnalysis.Summary.instantiate_unchecked_callees_cond
-             ~all_config_fields:(Lazy.force all_config_fields))
+             ~all_config_fields:(Lazy.force all_config_fields) )
     in
-    JsonConfigImpactPrinter.pp outfile.fmt {loc; proc_name; config_impact_opt}
+    JsonConfigImpactPrinter.pp outfile.fmt
+      {loc; proc_name; config_impact_opt; is_strict= ConfigImpactAnalysis.strict_mode}
 
 
 (** Process lint issues of a procedure *)

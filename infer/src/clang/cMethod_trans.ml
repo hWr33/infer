@@ -16,9 +16,7 @@ module L = Logging
     means that it is an instance method and that the method to be called will be determined at
     runtime. If it is MCNoVirtual it means that it is an instance method but that the method to be
     called will be determined at compile time *)
-type method_call_type = MCVirtual | MCNoVirtual | MCStatic [@@deriving compare]
-
-let equal_method_call_type = [%compare.equal: method_call_type]
+type method_call_type = MCVirtual | MCNoVirtual | MCStatic [@@deriving compare, equal]
 
 let method_signature_of_pointer tenv pointer =
   try
@@ -157,7 +155,7 @@ let get_objc_property_accessor tenv ms =
           let class_tname =
             Typ.Name.Objc.from_qual_name
               (QualifiedCppName.from_field_qualified_name
-                 (QualifiedCppName.of_rev_list name_decl_info.ni_qual_name))
+                 (QualifiedCppName.of_rev_list name_decl_info.ni_qual_name) )
           in
           let field_name = CGeneral_utils.mk_class_field_name class_tname name_decl_info.ni_name in
           match Tenv.lookup tenv class_tname with
@@ -333,7 +331,7 @@ let create_procdesc_with_pointer ?(captured_vars = []) context pointer class_nam
       ignore
         (create_local_procdesc context.translation_unit_context context.cfg context.tenv callee_ms
            [] captured_vars
-           ~record_lambda_captured:(not (List.is_empty captured_vars))) ;
+           ~record_lambda_captured:(not (List.is_empty captured_vars)) ) ;
       callee_ms.CMethodSignature.name
   | None ->
       let callee_name, method_kind =

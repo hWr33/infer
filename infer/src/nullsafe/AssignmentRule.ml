@@ -68,7 +68,7 @@ module ReportableViolation = struct
       | PassingParamToFunction {actual_param_expression} ->
           not
             (ErrorRenderingUtils.is_object_nullability_self_explanatory
-               ~object_expression:actual_param_expression origin)
+               ~object_expression:actual_param_expression origin )
       | AssigningToField _ | ReturningFromFunction _ ->
           true
     in
@@ -94,7 +94,7 @@ module ReportableViolation = struct
       Option.value_map alternative_method
         ~f:
           (Format.asprintf " If you don't expect null, use %a instead."
-             MarkupFormatter.pp_monospaced)
+             MarkupFormatter.pp_monospaced )
         ~default:""
     in
     let full_description = Format.sprintf "%s%s" description alternative_recommendation in
@@ -134,7 +134,7 @@ module ReportableViolation = struct
       | Nullability.Nullable ->
           Logging.die Logging.InternalError "Passing anything to a nullable param should be allowed"
       | Nullability.ThirdPartyNonnull ->
-          (* This is a special case. While for FB codebase we can assume "not annotated hence not nullable" rule for all_whitelisted signatures,
+          (* This is a special case. While for FB codebase we can assume "not annotated hence not nullable" rule for all_allow_listed signatures,
              This is not the case for third party functions, which can have different conventions,
              So we can not just say "param is declared as non-nullable" like we say for FB-internal or modelled case:
              param can be nullable according to API but it was just not annotated.
@@ -180,7 +180,7 @@ module ReportableViolation = struct
             | ThirdParty (InThirdPartyRepo {filename; line_number}) ->
                 Format.sprintf " (see %s at line %d)"
                   (ThirdPartyAnnotationGlobalRepo.get_user_friendly_third_party_sig_file_name
-                     ~filename)
+                     ~filename )
                   line_number
           in
           let description =
@@ -243,7 +243,7 @@ module ReportableViolation = struct
         let return_description =
           match explicit_rhs_nullable_kind with
           | ErrorRenderingUtils.UserFriendlyNullable.Null ->
-              (* Return `null` in all_whitelisted branches *)
+              (* Return `null` in all_allow_listed branches *)
               "`null`"
           | ErrorRenderingUtils.UserFriendlyNullable.Nullable ->
               "a nullable value"

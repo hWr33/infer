@@ -11,9 +11,8 @@ open! IStd
    crash) *)
 let () =
   AnalysisCallbacks.set_callbacks
-    { get_proc_desc_f= Ondemand.get_proc_desc
-    ; html_debug_new_node_session_f= NodePrinter.with_session
-    ; proc_resolve_attributes_f= Summary.OnDisk.proc_resolve_attributes }
+    { html_debug_new_node_session_f= NodePrinter.with_session
+    ; get_model_proc_desc_f= Summary.OnDisk.get_model_proc_desc }
 
 
 let mk_interprocedural_t ~f_analyze_dep ~get_payload exe_env summary
@@ -59,9 +58,8 @@ let interprocedural_with_field payload_field checker {Callbacks.summary; exe_env
 
 let interprocedural_file payload_field checker {Callbacks.procedures; exe_env; source_file} =
   let analyze_file_dependency proc_name =
-    let summary = Ondemand.analyze_proc_name_no_caller exe_env proc_name in
-    Option.bind summary ~f:(fun {Summary.payloads; proc_desc; _} ->
-        Field.get payload_field payloads |> Option.map ~f:(fun payload -> (proc_desc, payload)) )
+    Ondemand.analyze_proc_name_no_caller exe_env proc_name
+    |> Option.bind ~f:(fun {Summary.payloads; _} -> Field.get payload_field payloads)
   in
   checker
     {InterproceduralAnalysis.procedures; source_file; file_exe_env= exe_env; analyze_file_dependency}

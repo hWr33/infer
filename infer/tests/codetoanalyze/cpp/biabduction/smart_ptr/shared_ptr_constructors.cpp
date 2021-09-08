@@ -125,13 +125,13 @@ std::shared_ptr<B> internal_null_def() {
   return r;
 }
 
-std::shared_ptr<A> aliasing_construct_from_external() {
+std::shared_ptr<A> ERROR_aliasing_construct_from_external() {
   auto p = external_def();
   if (!p)
     throw std::logic_error("Suppress NULL");
   return {p, p->a};
 }
-std::shared_ptr<A> aliasing_construct_from_internal() {
+std::shared_ptr<A> ERROR_aliasing_construct_from_internal() {
   auto p = internal_null_def();
   if (!p)
     throw std::logic_error("Suppress NULL");
@@ -139,13 +139,13 @@ std::shared_ptr<A> aliasing_construct_from_internal() {
 }
 
 void aliasing_member_not_null_ok() {
-  auto q = aliasing_construct_from_external();
+  auto q = ERROR_aliasing_construct_from_external();
   // q is unknown here so we should not report null deref
   // Also we should not report dangling pointer because q is still alive
   q->baz();
 }
 void aliasing_member_null_bad() {
-  auto q = aliasing_construct_from_internal();
+  auto q = ERROR_aliasing_construct_from_internal();
   // q is known here so we should report null deref
   // Also we should not report dangling pointer because q is still alive
   q->baz();

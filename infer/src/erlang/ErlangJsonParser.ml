@@ -21,7 +21,7 @@ let unknown name json =
 
 
 (* Takes a json of the form `List [j1;...;jn] and returns [f j1;...;f jn]. If skip_errors, then
-  elements that fail to parse are filtered out; otherwise, a parsing failure propagates up. *)
+   elements that fail to parse are filtered out; otherwise, a parsing failure propagates up. *)
 let to_list ?(skip_errors = false) ~(f : 'a parser) : 'a list parser =
  fun json ->
   try
@@ -39,11 +39,13 @@ let default_or (to_a : 'a parser) : 'a option parser = function
 
 
 let to_line json : Ast.line option =
-  (* TODO: When OTP is upgraded, add case for line&col locations. *)
   match json with
   | `Int line ->
       Some line
   | `List [`List (`String "generated" :: _); `List [`String "location"; `Int line]] ->
+      Some line
+  | `List [`Int line; _] ->
+      (* TODO: Next item is the column we can store as well *)
       Some line
   | _ ->
       unknown "line" json
@@ -479,6 +481,18 @@ let to_function json : Ast.function_ option =
       unknown "function" json
 
 
+let rec to_record_field json : Ast.record_field option =
+  match json with
+  | `List [`String "record_field"; _; `List [`String "atom"; _; `String field_name]; expr] ->
+      Some {Ast.field_name; initializer_= to_expression expr}
+  | `List [`String "record_field"; _; `List [`String "atom"; _; `String field_name]] ->
+      Some {Ast.field_name; initializer_= None}
+  | `List [`String "typed_record_field"; inner_record_field; _] ->
+      to_record_field inner_record_field
+  | _ ->
+      unknown "record_field" json
+
+
 let to_line_form json : Ast.form option =
   let form line simple_form : Ast.form option = Some {line; simple_form} in
   match json with
@@ -502,8 +516,12 @@ let to_line_form json : Ast.form option =
       let function_ : Ast.function_reference = FunctionName function_ in
       let function_ : Ast.function_ = {module_= ModuleMissing; function_; arity} in
       form line (Function {function_; clauses})
+  | `List [`String "attribute"; anno; `String "record"; `List [`String name; fields]] ->
+      let* line = to_line anno in
+      let* field_list = to_list ~f:to_record_field fields in
+      form line (Record {name; fields= field_list})
   | `List [`String "attribute"; _anno; `String _unknown_attribute; _] ->
-      (* TODO: handle types (spec, record, ...) *)
+      (* TODO: handle types (spec, ...) *)
       None
   | `List [`String "eof"; _] ->
       None

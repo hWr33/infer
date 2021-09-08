@@ -108,9 +108,9 @@ val unsafe_unret : string
 
 val weak : string
 
-val whitelisted_cpp_classes : string list
+val allow_listed_cpp_classes : string list
 
-val whitelisted_cpp_methods : string list
+val allow_listed_cpp_methods : string list
 
 val wrappers_dir : string
 
@@ -171,13 +171,15 @@ val bootclasspath : string option
 
 val buck : bool
 
-val buck_blacklist : string list
+val buck_block_list : string list
 
 val buck_build_args : string list
 
 val buck_build_args_no_inline : string list
 
 val buck_cache_mode : bool
+
+val buck_clang_use_toolchain_config : bool
 
 val buck_java_flavor_suppress_config : bool
 
@@ -187,15 +189,15 @@ val buck_merge_all_deps : bool
 
 val buck_mode : BuckMode.t option
 
+val buck_out : string
+
 val buck_out_gen : string
 
-val buck_targets_blacklist : string list
-
-val call_graph_schedule : bool
+val buck_targets_block_list : string list
 
 val capture : bool
 
-val capture_blacklist : string option
+val capture_block_list : string option
 
 val censor_report : ((bool * Str.regexp) * (bool * Str.regexp) * string) list
 
@@ -211,9 +213,9 @@ val clang_compound_literal_init_limit : int
 
 val clang_extra_flags : string list
 
-val clang_blacklisted_flags : string list
+val clang_block_listed_flags : string list
 
-val clang_blacklisted_flags_with_arg : string list
+val clang_block_listed_flags_with_arg : string list
 
 val clang_frontend_action_string : string
 
@@ -238,6 +240,10 @@ val config_impact_issues_tests : string option
 val config_impact_max_callees_to_print : int
 
 val config_impact_previous : string option
+
+val config_impact_strict_mode : bool
+
+val config_impact_strict_mode_paths : Str.regexp list
 
 val continue_analysis : bool
 
@@ -335,6 +341,8 @@ val genrule_mode : bool
 
 val get_linter_doc_url : linter_id:string -> string option
 
+val global_tenv : bool
+
 val help_checker : Checker.t list
 
 val help_issue_type : IssueType.t list
@@ -343,7 +351,8 @@ val hoisting_report_only_expensive : bool
 
 val html : bool
 
-val global_tenv : bool
+val infer_binary : string
+(** absolute canonicalized path to the current executable *)
 
 val icfg_dotty_outfile : string option
 
@@ -385,6 +394,8 @@ val jobs : int
 
 val keep_going : bool
 
+val kotlin_capture : bool
+
 val linter : string option
 
 val linters_def_file : string list
@@ -420,6 +431,8 @@ val merge : bool
 val method_decls_info : string option
 
 val modified_lines : string option
+
+val no_censor_report : Str.regexp list
 
 val no_translate_libs : bool
 
@@ -515,6 +528,8 @@ val pulse_model_return_nonnull : Str.regexp option
 
 val pulse_model_skip_pattern : Str.regexp option
 
+val pulse_prune_unsupported_arithmetic : bool
+
 val pulse_report_ignore_unknown_java_methods_patterns : Str.regexp option
 
 val pulse_model_transfer_ownership_namespace : (string * string) list
@@ -555,7 +570,7 @@ val remodel_class : string option
 
 val report : bool
 
-val report_blacklist_files_containing : string list
+val report_block_list_files_containing : string list
 
 val report_console_limit : int option
 
@@ -567,9 +582,9 @@ val report_force_relative_path : bool
 
 val report_formatter : [`No_formatter | `Phabricator_formatter]
 
-val report_path_regex_blacklist : string list
+val report_path_regex_block_list : string list
 
-val report_path_regex_whitelist : string list
+val report_path_regex_allow_list : string list
 
 val report_previous : string option
 
@@ -683,7 +698,7 @@ val workspace : string option
 
 val write_html : bool
 
-val write_html_whitelist_regex : string list
+val write_html_allow_list_regex : string list
 
 val write_website : string option
 

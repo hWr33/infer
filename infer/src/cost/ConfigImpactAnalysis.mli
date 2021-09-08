@@ -7,6 +7,10 @@
 
 open! IStd
 
+val is_in_strict_mode_paths : SourceFile.t -> bool
+
+val strict_mode : bool
+
 module Fields : AbstractDomain.FiniteSetS
 
 module UncheckedCallee : sig
