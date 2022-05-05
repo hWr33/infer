@@ -52,7 +52,7 @@ let is_subtype_of_str tenv cn1 classname_str =
 
 (** The type the method is invoked on *)
 let get_this_type_nonstatic_methods_only proc_attributes =
-  match proc_attributes.ProcAttributes.formals with (_, t) :: _ -> Some t | _ -> None
+  match proc_attributes.ProcAttributes.formals with (_, t, _) :: _ -> Some t | _ -> None
 
 
 let type_get_direct_supertypes tenv (typ : Typ.t) =
@@ -103,10 +103,20 @@ let get_field_type_name tenv (typ : Typ.t) (fieldname : Fieldname.t) : string op
       None
 
 
+module CSharp = struct
+  let implements interface tenv typename =
+    let is_interface s _ = String.equal interface (Typ.Name.name s) in
+    supertype_exists tenv is_interface (Typ.Name.CSharp.from_string typename)
+end
+
 module Java = struct
   let implements interface tenv typename =
     let is_interface s _ = String.equal interface (Typ.Name.name s) in
     supertype_exists tenv is_interface (Typ.Name.Java.from_string typename)
+
+
+  let implements_one_of interfaces tenv typename =
+    List.exists interfaces ~f:(fun interface -> implements interface tenv typename)
 
 
   let implements_lang class_name = implements ("java.lang." ^ class_name)
@@ -168,6 +178,8 @@ module Java = struct
 
   let implements_queue = implements "java.util.Queue"
 
+  let implements_regex class_name = implements ("java.util.regex." ^ class_name)
+
   let implements_google class_name = implements ("com.google." ^ class_name)
 
   let implements_android class_name = implements ("android." ^ class_name)
@@ -193,6 +205,8 @@ module Java = struct
   let implements_view_group = implements "android.view.ViewGroup"
 
   let implements_view_parent = implements "android.view.ViewParent"
+
+  let implements_kotlin_intrinsics = implements "kotlin.jvm.internal.Intrinsics"
 
   let initializer_classes =
     List.map ~f:Typ.Name.Java.from_string

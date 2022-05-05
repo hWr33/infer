@@ -270,7 +270,7 @@ $(b,infer) $(i,[options])|}
       ; `P "- for switches options, the value is a JSON boolean (true or false, without quotes)"
       ; `Noblank
       ; `P
-          "- for non-switches options with no arguments (for instance the $(,...-reset) option \
+          "- for non-switches options with no arguments (for instance the $(b,...-reset) option \
            associated with a list option), the value is null"
       ; `Noblank
       ; `P "- for integers, the value is a JSON integer (without quotes)"
@@ -286,8 +286,11 @@ $(b,infer) $(i,[options])|}
       ; `P "- cumulative options are JSON arrays of the appropriate type"
       ; `P
           (Printf.sprintf
-             "Infer will look for an $(b,%s) file in the current directory, then its parent, etc., \
-              stopping at the first $(b,%s) file found."
+             "If an $(b,%s) file is specified on the command line with $(b,--%s) then Infer will \
+              use that. Otherwise, Infer will look for an $(b,%s) file in the environment variable \
+              $(b,%s). Finally, Infer will first look for an $(b,%s) file in the current \
+              directory, then its parent, etc., stopping at the first $(b,%s) file found."
+             inferconfig_file CLOpt.inferconfig_path_arg inferconfig_file inferconfig_env_var
              inferconfig_file inferconfig_file )
       ; `P "Example:"
       ; `Pre
@@ -300,15 +303,16 @@ $(b,infer) $(i,[options])|}
 
 
 let report =
-  mk_command_doc ~title:"Infer Reporting" ~short_description:"compute and manipulate infer results"
-    ~synopsis:"$(b,infer) $(b,report) $(i,[options]) [$(i,file.specs)...]"
+  mk_command_doc ~title:"Infer Reporting" ~short_description:"compute and manipulate infer reports"
+    ~synopsis:
+      {|$(b,infer) $(b,report) $(b,--issues-tests)
+$(b,infer) $(b,report) $(b,--cost-issues-tests)
+$(b,infer) $(b,report) $(b,--config-impact-issues-tests)
+$(b,infer) $(b,report) $(b,--merge-report) $(i,dir1) $(i,...) $(b,--merge-report) $(i,dirN)|}
     ~description:
       [ `P
-          "Read, convert, and print .specs files in the results directory. Each spec is printed to \
-           standard output unless option -q is used."
-      ; `P
-          "If no specs file are passed on the command line, process all the .specs in the results \
-           directory." ]
+          "Write out issues in a format suitable for tests, or merge multiple JSON reports in one \
+           with $(b,--merge-report)." ]
     ~see_also:InferCommand.[ReportDiff; Run]
 
 

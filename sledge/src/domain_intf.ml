@@ -9,11 +9,13 @@
 module type Domain = sig
   type t [@@deriving compare, equal, sexp_of]
 
+  module Set : Set.S with type elt := t
+
   val pp : t pp
   val init : Llair.GlobalDefn.t iarray -> t
   val join : t -> t -> t
-  val joinN : t list -> t
-  val dnf : t -> t list
+  val joinN : Set.t -> t
+  val dnf : t -> Set.t
   val exec_assume : ThreadID.t -> t -> Llair.Exp.t -> t option
   val exec_kill : ThreadID.t -> Llair.Reg.t -> t -> t
   val exec_move : ThreadID.t -> (Llair.Reg.t * Llair.Exp.t) iarray -> t -> t
@@ -26,6 +28,7 @@ module type Domain = sig
   val call :
        summaries:bool
     -> ThreadID.t
+    -> ?child:ThreadID.t
     -> globals:Llair.Global.Set.t
     -> actuals:Llair.Exp.t iarray
     -> areturn:Llair.Reg.t option
@@ -44,6 +47,13 @@ module type Domain = sig
     -> from_call
     -> t
     -> t
+
+  type term_code [@@deriving compare, sexp_of]
+
+  val term :
+    ThreadID.t -> Llair.Reg.t iarray -> Llair.Reg.t option -> t -> term_code
+
+  val move_term_code : ThreadID.t -> Llair.Reg.t -> term_code -> t -> t
 
   val resolve_callee :
        (string -> Llair.func option)

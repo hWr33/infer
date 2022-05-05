@@ -11,21 +11,17 @@ open Fol
 let%test_module _ =
   ( module struct
     let () =
-      Trace.init ~margin:68
-        ~config:(Result.get_ok (Trace.parse "+Solver.infer_frame"))
-        ()
+      Trace.init ~margin:68 ~config:(Trace.parse "+Solver.infer_frame") ()
 
     (* let () =
      *   Trace.init ~margin:160
-     *     ~config:
-     *       (Result.get_ok (Trace.parse "+Solver.infer_frame+Solver.excise"))
+     *     ~config:(Trace.parse "+Solver.infer_frame+Solver.excise")
      *     () *)
 
     [@@@warning "-32"]
 
     let infer_frame p xs q =
-      Solver.infer_frame p (Var.Set.of_list xs) q
-      |> (ignore : Sh.t option -> _)
+      Solver.infer_frame p (Var.Set.of_list xs) q |> ignore
 
     let check_frame p xs q =
       Solver.infer_frame p (Var.Set.of_list xs) q
@@ -198,7 +194,7 @@ let%test_module _ =
             %a_2 = %a0_10
           ∧ 16 = %m_8 = %n_9
           ∧ (⟨16,%a_2⟩^⟨16,%a1_11⟩) = %a_1
-          ∧ (16 + %k_5) -[ %k_5, 16 )-> ⟨16,%a1_11⟩ |}]
+          ∧ (%k_5 + 16) -[ %k_5, 16 )-> ⟨16,%a1_11⟩ |}]
 
     let%expect_test _ =
       infer_frame
@@ -220,7 +216,7 @@ let%test_module _ =
             %a_2 = %a0_10
           ∧ 16 = %m_8 = %n_9
           ∧ (⟨16,%a_2⟩^⟨16,%a1_11⟩) = %a_1
-          ∧ (16 + %k_5) -[ %k_5, 16 )-> ⟨16,%a1_11⟩ |}]
+          ∧ (%k_5 + 16) -[ %k_5, 16 )-> ⟨16,%a1_11⟩ |}]
 
     let seg_split_symbolically =
       Sh.star
@@ -238,19 +234,19 @@ let%test_module _ =
       [%expect
         {|
         ( Solver.infer_frame: 12
-            %l_6 -[ %l_6, 16 )-> ⟨8×%n_9,%a_2⟩^⟨(16 + -8×%n_9),%a_3⟩
-          * ( (  1 = %n_9 ∧ emp)
-            ∨ (  0 = %n_9 ∧ emp)
+            %l_6 -[ %l_6, 16 )-> ⟨8×%n_9,%a_2⟩^⟨(-8×%n_9 + 16),%a_3⟩
+          * ( (  0 = %n_9 ∧ emp)
             ∨ (  2 = %n_9 ∧ emp)
+            ∨ (  1 = %n_9 ∧ emp)
             )
           \- ∃ %a_1, %m_8 .
               %l_6 -[ %l_6, %m_8 )-> ⟨%m_8,%a_1⟩
         ) Solver.infer_frame:
-            ( (  %a_1 = %a_2
+            ( (  1 = %n_9 ∧ 16 = %m_8 ∧ (⟨8,%a_2⟩^⟨8,%a_3⟩) = %a_1 ∧ emp)
+            ∨ (  %a_1 = %a_2
                ∧ 2 = %n_9
                ∧ 16 = %m_8
-               ∧ (16 + %l_6) -[ %l_6, 16 )-> ⟨0,%a_3⟩)
-            ∨ (  1 = %n_9 ∧ 16 = %m_8 ∧ (⟨8,%a_2⟩^⟨8,%a_3⟩) = %a_1 ∧ emp)
+               ∧ (%l_6 + 16) -[ %l_6, 16 )-> ⟨0,%a_3⟩)
             ) |}]
 
     (* Incompleteness: equivalent to above but using ≤ instead of ∨ *)
@@ -263,7 +259,7 @@ let%test_module _ =
         {|
         ( Solver.infer_frame: 13
             (2 ≥ %n_9)
-          ∧ %l_6 -[ %l_6, 16 )-> ⟨8×%n_9,%a_2⟩^⟨(16 + -8×%n_9),%a_3⟩
+          ∧ %l_6 -[ %l_6, 16 )-> ⟨8×%n_9,%a_2⟩^⟨(-8×%n_9 + 16),%a_3⟩
           \- ∃ %a_1, %m_8 .
               %l_6 -[ %l_6, %m_8 )-> ⟨%m_8,%a_1⟩
         ) Solver.infer_frame: |}]

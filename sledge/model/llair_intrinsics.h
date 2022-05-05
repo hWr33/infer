@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include <stdbool.h>
 #include <stdlib.h>
 
 #ifdef __cplusplus
@@ -35,24 +36,19 @@ __attribute__((noreturn)) void __llair_unreachable();
 
 typedef int thread_t;
 
-typedef void (*thread_create_routine)();
+typedef int (*thread_create_routine)(void*);
 
-thread_t sledge_thread_create(thread_create_routine entry);
+thread_t sledge_thread_create(thread_create_routine entry, void* arg);
 
-void sledge_thread_join(thread_t thread);
+void sledge_thread_resume(thread_t thread);
 
-typedef uint32_t error_t;
+int sledge_thread_join(thread_t thread);
 
-error_t thread_create(thread_t** t, thread_create_routine entry) {
-  thread_t child = sledge_thread_create(entry);
-  **t = child;
-  return 0;
-}
+/*
+ * cct
+ */
 
-error_t thread_join(thread_t* t) {
-  sledge_thread_join(*t);
-  return 0;
-}
+void cct_point(void);
 
 #ifdef __cplusplus
 }

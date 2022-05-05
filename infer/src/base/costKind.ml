@@ -31,22 +31,22 @@ let pp f k =
   let k_str =
     match k with
     | OperationCost ->
-        "Execution Cost"
+        "Execution cost"
     | AllocationCost ->
-        "Allocation Cost"
+        "Allocation cost"
     | AutoreleasepoolSize ->
-        "Autoreleasepool Size"
+        "Autoreleasepool size"
   in
   F.pp_print_string f k_str
 
 
 let to_json_cost_info c = function
   | OperationCost ->
-      c.Jsonbug_t.exec_cost
+      c.Jsoncost_t.exec_cost
   | AllocationCost ->
       assert false
   | AutoreleasepoolSize ->
-      c.Jsonbug_t.autoreleasepool_size
+      c.Jsoncost_t.autoreleasepool_size
 
 
 type kind_spec = {kind: t; (* for non-diff analysis *) top_and_unreachable: bool; expensive: bool}

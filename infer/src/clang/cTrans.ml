@@ -73,7 +73,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     | BlockExpr _ ->
         true
     (* the block can be wrapped in ExprWithCleanups  or ImplicitCastExpr*)
-    | ImplicitCastExpr (_, [s'], _, _) | ExprWithCleanups (_, [s'], _, _) ->
+    | ImplicitCastExpr (_, [s'], _, _, _) | ExprWithCleanups (_, [s'], _, _) ->
         is_block_expr s'
     | _ ->
         false
@@ -81,9 +81,8 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
 
   let objc_exp_of_type_block fun_exp_stmt =
     match fun_exp_stmt with
-    | Clang_ast_t.ImplicitCastExpr (_, _, ei, _)
-      when CType.is_block_type ei.Clang_ast_t.ei_qual_type ->
-        true
+    | Clang_ast_t.ImplicitCastExpr (_, _, ei, _, _) | Clang_ast_t.PseudoObjectExpr (_, _, ei) ->
+        CType.is_block_type ei.Clang_ast_t.ei_qual_type
     | _ ->
         false
 
@@ -224,7 +223,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     let procname = Procdesc.get_proc_name pdesc in
     attr.formals (* remove this, which should always be the first formal parameter *) |> List.tl_exn
     |> List.fold_right ~init:([], [])
-         ~f:(fun (formal, typ) (forwarded_params, forwarded_init_exps) ->
+         ~f:(fun (formal, typ, _) (forwarded_params, forwarded_init_exps) ->
            let pvar = Pvar.mk formal procname in
            let id = Ident.create_fresh Ident.knormal in
            ( (Exp.Var id, typ) :: forwarded_params
@@ -634,6 +633,17 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
           None
     in
     match CAst_utils.get_decl decl_ref.Clang_ast_t.dr_decl_pointer with
+    | Some (CXXDestructorDecl ({di_is_implicit= true}, _, _, {fdi_body= None}, _)) ->
+        (* trivial destructor (i.e. the destructor isn't user-defined and is a no-op as none of the
+           fields of the object need to be destructed, e.g. the object is POD): pretend there is no
+           destructor at all as we won't get a chance to translate it due to its empty body (which
+           makes it "undefined" according to the frontend's logic for such things) and doing nothing
+           at all is equivalent anyway. Note that returning [Some _] here would cause "unknown
+           calls" at the call site.
+
+           Note: For some reason empty implicit trivial constructors *do* get a body in the AST so
+           do not suffer from this issue. *)
+        None
     | Some (CXXDestructorDecl _) ->
         Some decl_ref
     | _ ->
@@ -834,8 +844,8 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     let typ =
       if Procname.is_cpp_lambda procname || Procname.is_objc_block procname then
         let pvar_name = Pvar.get_name pvar in
-        List.find (Procdesc.get_captured context.procdesc)
-          ~f:(fun {CapturedVar.name= captured_var} -> Mangled.equal captured_var pvar_name)
+        List.find (Procdesc.get_captured context.procdesc) ~f:(fun {CapturedVar.pvar= captured} ->
+            Mangled.equal (Pvar.get_name captured) pvar_name )
         |> Option.value_map ~f:(fun {CapturedVar.typ} -> typ) ~default:typ
       else typ
     in
@@ -1003,7 +1013,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
       CType_decl.qual_type_to_sil_type context.CContext.tenv expr_info.Clang_ast_t.ei_qual_type
     in
     match (stmt_list, res_typ.desc, binary_operator_info.Clang_ast_t.boi_kind) with
-    | ( [s1; Clang_ast_t.ImplicitCastExpr (_, [s2], _, _)]
+    | ( [s1; Clang_ast_t.ImplicitCastExpr (_, [s2], _, _, _)]
       , Tstruct (CStruct _ as struct_name)
       , `Assign ) ->
         let res_trans_e1, res_trans_e2 =
@@ -1081,7 +1091,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
               true
           | UnaryOperator (_, stmts, _, _)
           | BinaryOperator (_, stmts, _, _)
-          | ImplicitCastExpr (_, stmts, _, _)
+          | ImplicitCastExpr (_, stmts, _, _, _)
           | ParenExpr (_, stmts, _) ->
               List.exists stmts ~f:is_complex_rhs
           | _ ->
@@ -1412,7 +1422,9 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
           ; Sil.Load {id= expected_id; e= expected_exp; root_typ= typ; typ; loc= sil_loc} ]
           @ desired_instrs
         in
-        let join_node = Procdesc.create_node context.procdesc sil_loc Join_node [] in
+        let join_node =
+          Procdesc.create_node context.procdesc sil_loc Join_node [Sil.Metadata EndBranches]
+        in
         Procdesc.node_set_succs context.procdesc join_node ~normal:trans_state.succ_nodes ~exn:[] ;
         let var_exp_typ =
           match trans_state.var_exp_typ with
@@ -2089,7 +2101,8 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     in
     let var_typ = add_reference_if_glvalue typ expr_info in
     let join_node =
-      Procdesc.create_node trans_state.context.CContext.procdesc sil_loc Join_node []
+      Procdesc.create_node trans_state.context.CContext.procdesc sil_loc Join_node
+        [Sil.Metadata EndBranches]
     in
     Procdesc.node_set_succs context.procdesc join_node ~normal:succ_nodes ~exn:[] ;
     let var_exp_typ =
@@ -2115,7 +2128,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
         {trans_state with continuation= continuation'; succ_nodes= []; var_exp_typ= None}
       in
       exec_with_priority_exception trans_state' cond
-        (cond_trans ~if_kind:Sil.Ik_bexp ~negate_cond:false)
+        (cond_trans ~if_kind:(Sil.Ik_bexp {terminated= true}) ~negate_cond:false)
     in
     let trans_state = {trans_state with succ_nodes= [join_node]} in
     (* Note: by contruction prune nodes are leafs_nodes_cond *)
@@ -2343,11 +2356,12 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
       in
       let prune_nodes_t, prune_nodes_f = List.partition_tf ~f:is_true_prune_node prune_nodes in
       let prune_nodes' = if branch then prune_nodes_t else prune_nodes_f in
-      List.iter
-        ~f:(fun n -> Procdesc.node_set_succs context.procdesc n ~normal:nodes_branch ~exn:[])
-        prune_nodes'
+      List.iter prune_nodes' ~f:(fun n ->
+          Procdesc.node_set_succs context.procdesc n ~normal:nodes_branch ~exn:[] )
     in
-    let join_node = Procdesc.create_node context.procdesc sil_loc Join_node [] in
+    let join_node =
+      Procdesc.create_node context.procdesc sil_loc Join_node [Sil.Metadata EndBranches]
+    in
     Procdesc.node_set_succs context.procdesc join_node ~normal:trans_state.succ_nodes ~exn:[] ;
     let trans_state_join_succ = {trans_state with succ_nodes= [join_node]} in
     (* translate the condition expression *)
@@ -2356,7 +2370,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
       let continuation' = mk_cond_continuation trans_state.continuation in
       let trans_state'' = {trans_state with continuation= continuation'; succ_nodes= []} in
       let cond_stmt = CAst_utils.get_stmt_exn if_stmt_info.isi_cond source_range in
-      cond_trans ~if_kind:Sil.Ik_if ~negate_cond:false trans_state'' cond_stmt
+      cond_trans ~if_kind:(Sil.Ik_if {terminated= true}) ~negate_cond:false trans_state'' cond_stmt
     in
     (* translate the variable declaration inside the condition if present *)
     let res_trans_cond_var =
@@ -2480,36 +2494,47 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     let switch_cases, (_ : trans_result) =
       SwitchCase.in_switch_body ~f:(instruction inner_trans_state) body
     in
-    let link_up_switch_cases curr_succ_nodes case =
+    let is_all_enum_cases_covered = switch_stmt_info.Clang_ast_t.ssi_is_all_enum_cases_covered in
+    let link_up_switch_cases (curr_succ_nodes, is_last_case) case =
       L.debug Capture Verbose "switch: curr_succ_nodes=[%a], linking case %a@\n"
         (Pp.semicolon_seq Procdesc.Node.pp)
         curr_succ_nodes SwitchCase.pp case ;
-      match (case : SwitchCase.t) with
-      | {SwitchCase.condition= Case case_condition; stmt_info; root_nodes} ->
-          (* create case prune nodes, link the then branch to [root_nodes], the else branch to
-             [curr_succ_nodes] *)
-          let trans_state_pri = PriorityNode.try_claim_priority_node inner_trans_state stmt_info in
-          let res_trans_case_const = instruction trans_state_pri case_condition in
-          let e_const, _ = res_trans_case_const.return in
-          let sil_eq_cond = Exp.BinOp (Binop.Eq, condition_exp, e_const) in
-          let sil_loc =
-            CLocation.location_of_stmt_info context.translation_unit_context.source_file stmt_info
-          in
-          let true_prune_node =
-            create_prune_node context.procdesc ~branch:true ~negate_cond:false sil_eq_cond
-              res_trans_case_const.control.instrs sil_loc Sil.Ik_switch
-          in
-          let false_prune_node =
-            create_prune_node context.procdesc ~branch:false ~negate_cond:true sil_eq_cond
-              res_trans_case_const.control.instrs sil_loc Sil.Ik_switch
-          in
-          Procdesc.node_set_succs context.procdesc true_prune_node ~normal:root_nodes ~exn:[] ;
-          Procdesc.node_set_succs context.procdesc false_prune_node ~normal:curr_succ_nodes ~exn:[] ;
-          (* return prune nodes as next roots *)
-          [true_prune_node; false_prune_node]
-      | {SwitchCase.condition= Default; root_nodes} ->
-          (* just return the [root_nodes] to be linked to the previous case's fallthrough *)
-          root_nodes
+      let curr_succ_nodes =
+        match (case : SwitchCase.t) with
+        | {SwitchCase.condition= Case case_condition; stmt_info; root_nodes} ->
+            (* create case prune nodes, link the then branch to [root_nodes], the else branch to
+               [curr_succ_nodes] *)
+            let trans_state_pri =
+              PriorityNode.try_claim_priority_node inner_trans_state stmt_info
+            in
+            let res_trans_case_const = instruction trans_state_pri case_condition in
+            let e_const, _ = res_trans_case_const.return in
+            let sil_eq_cond = Exp.BinOp (Binop.Eq, condition_exp, e_const) in
+            let sil_loc =
+              CLocation.location_of_stmt_info context.translation_unit_context.source_file stmt_info
+            in
+            let true_prune_node =
+              create_prune_node context.procdesc ~branch:true ~negate_cond:false sil_eq_cond
+                res_trans_case_const.control.instrs sil_loc Sil.Ik_switch
+            in
+            Procdesc.node_set_succs context.procdesc true_prune_node ~normal:root_nodes ~exn:[] ;
+            if is_last_case && is_all_enum_cases_covered then
+              (* return only the true branch as next roots because the false branch is infeasible *)
+              [true_prune_node]
+            else
+              let false_prune_node =
+                create_prune_node context.procdesc ~branch:false ~negate_cond:true sil_eq_cond
+                  res_trans_case_const.control.instrs sil_loc Sil.Ik_switch
+              in
+              Procdesc.node_set_succs context.procdesc false_prune_node ~normal:curr_succ_nodes
+                ~exn:[] ;
+              (* return prune nodes as next roots *)
+              [true_prune_node; false_prune_node]
+        | {SwitchCase.condition= Default; root_nodes} ->
+            (* just return the [root_nodes] to be linked to the previous case's fallthrough *)
+            root_nodes
+      in
+      (curr_succ_nodes, false)
     in
     let switch_cases =
       (* move the default case to the last in the list of cases, which is the first in
@@ -2521,10 +2546,13 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
           | {SwitchCase.condition= Case _} ->
               false )
       in
-      default @ cases
+      if is_all_enum_cases_covered then
+        (* when all enum cases covered, the default case is infeasible *)
+        cases
+      else default @ cases
     in
-    let cases_root_nodes =
-      List.fold switch_cases ~init:trans_state.succ_nodes ~f:link_up_switch_cases
+    let cases_root_nodes, _ =
+      List.fold switch_cases ~init:(trans_state.succ_nodes, true) ~f:link_up_switch_cases
     in
     Procdesc.node_set_succs context.procdesc switch_node ~normal:cases_root_nodes ~exn:[] ;
     let top_nodes = variable_result.control.root_nodes in
@@ -2612,18 +2640,24 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
       CLocation.location_of_stmt_info context.translation_unit_context.source_file stmt_info
     in
     let join_node = Procdesc.create_node context.procdesc sil_loc Join_node [] in
-    let continuation = Some {break= succ_nodes; continue= [join_node]; return_temp= false} in
+    let continuation = {break= succ_nodes; continue= [join_node]; return_temp= false} in
     (* set the flag to inform that we are translating a condition of a if *)
     let continuation_cond = mk_cond_continuation outer_continuation in
-    let init_incr_nodes =
+    let init_nodes, incr_nodes =
       match loop_kind with
       | Loops.For {init; increment} ->
-          let trans_state' = {trans_state with succ_nodes= [join_node]; continuation} in
-          let res_trans_init = instruction trans_state' init in
-          let res_trans_incr = instruction trans_state' increment in
-          Some (res_trans_init.control.root_nodes, res_trans_incr.control.root_nodes)
+          let trans_state' =
+            {trans_state with succ_nodes= [join_node]; continuation= Some continuation}
+          in
+          let res_trans_init =
+            exec_with_node_creation LoopIterInit ~f:instruction trans_state' init
+          in
+          let res_trans_incr =
+            exec_with_node_creation LoopIterIncr ~f:instruction trans_state' increment
+          in
+          (Some res_trans_init.control.root_nodes, Some res_trans_incr.control.root_nodes)
       | _ ->
-          None
+          (None, None)
     in
     let cond_stmt = Loops.get_cond loop_kind in
     let trans_state_cond = {trans_state with continuation= continuation_cond; succ_nodes= []} in
@@ -2646,25 +2680,25 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     in
     let body_succ_nodes =
       match loop_kind with
-      | Loops.For _ -> (
-        match init_incr_nodes with Some (_, nodes_incr) -> nodes_incr | None -> assert false )
+      | Loops.For _ ->
+          Option.value_exn incr_nodes
       | Loops.While _ ->
           [join_node]
       | Loops.DoWhile _ ->
           res_trans_cond.control.root_nodes
     in
     let body_continuation =
-      match (loop_kind, continuation, init_incr_nodes) with
-      | Loops.DoWhile _, Some c, _ ->
-          Some {c with continue= res_trans_cond.control.root_nodes}
-      | _, Some c, Some (_, nodes_incr) ->
-          Some {c with continue= nodes_incr}
+      match loop_kind with
+      | Loops.DoWhile _ ->
+          {continuation with continue= res_trans_cond.control.root_nodes}
+      | Loops.For _ ->
+          {continuation with continue= Option.value_exn incr_nodes}
       | _ ->
           continuation
     in
     let res_trans_body =
       let trans_state_body =
-        {trans_state with succ_nodes= body_succ_nodes; continuation= body_continuation}
+        {trans_state with succ_nodes= body_succ_nodes; continuation= Some body_continuation}
       in
       exec_with_node_creation LoopBody ~f:instruction trans_state_body (Loops.get_body loop_kind)
     in
@@ -2695,12 +2729,9 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
       prune_nodes_f ;
     let root_nodes =
       match loop_kind with
-      | Loops.For _ -> (
-        match init_incr_nodes with
-        | Some (nodes_init, _) ->
-            if List.is_empty nodes_init then [join_node] else nodes_init
-        | None ->
-            assert false )
+      | Loops.For _ ->
+          let init_nodes = Option.value_exn init_nodes in
+          if List.is_empty init_nodes then [join_node] else init_nodes
       | Loops.While _ | Loops.DoWhile _ ->
           [join_node]
     in
@@ -3004,8 +3035,8 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
       let instruction' = exec_with_glvalue_as_reference instruction in
       let init_expr =
         match init_expr with
-        | Clang_ast_t.ImplicitCastExpr (_, [init_expr], _, _) when Option.is_some cstruct_name_opt
-          ->
+        | Clang_ast_t.ImplicitCastExpr (_, [init_expr], _, _, _)
+          when Option.is_some cstruct_name_opt ->
             init_expr
         | _ ->
             init_expr
@@ -3238,6 +3269,24 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
       extract_stmt_from_singleton stmt_list stmt_info.Clang_ast_t.si_source_range
         "In CastExpr There must be only one stmt defining the expression to be cast."
     in
+    let stmt =
+      match stmt with
+      | ImplicitCastExpr
+          ( inner_stmt_info
+          , inner_stmt_list
+          , inner_expr_info
+          , inner_cast_expr_info
+          , part_of_explicit_cast )
+        when part_of_explicit_cast ->
+          Clang_ast_t.ImplicitCastExpr
+            ( inner_stmt_info
+            , inner_stmt_list
+            , {inner_expr_info with ei_qual_type= expr_info.Clang_ast_t.ei_qual_type}
+            , inner_cast_expr_info
+            , part_of_explicit_cast )
+      | _ ->
+          stmt
+    in
     let cast_kind = cast_expr_info.Clang_ast_t.cei_cast_kind in
     let trans_state =
       match cast_kind with
@@ -3421,7 +3470,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
       |> mk_trans_result res_trans_stmt.return
     in
     match (stmt_list, context.CContext.return_param_typ) with
-    | ( ([Clang_ast_t.ImplicitCastExpr (_, [stmt], _, _)] | [stmt])
+    | ( ([Clang_ast_t.ImplicitCastExpr (_, [stmt], _, _, _)] | [stmt])
       , Some {desc= Tptr ({desc= Tstruct (CStruct _ as struct_name)}, _)} ) ->
         (* return (exp:struct); *)
         return_stmt stmt ~mk_ret_instrs:(fun ret_exp _root_typ ret_typ res_trans_stmt ->
@@ -4419,7 +4468,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
           (* simple case: no marker instrumentation: unconditionally destroy the temporary variable
              now *)
           (false, dtor_call stmt_info trans_state dtor_decl_ref temporary)
-      | Some marker_var ->
+      | Some (marker_var, if_kind) ->
           (* generate [if marker_var then destroy_temporary() ;], i.e.:
 
              - a prune node [prune_true] for the case where [marker_var] is true
@@ -4432,7 +4481,10 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
              - [join_node] to join [dtor_trans_result] and [prune_false] and continue with the
              successor node(s) of the translation [trans_state.succ_nodes] *)
           let proc_desc = trans_state.context.procdesc in
-          let join_node = Procdesc.create_node proc_desc sil_loc Join_node [] in
+          let join_node =
+            Procdesc.create_node proc_desc sil_loc Join_node
+            @@ if Sil.is_terminated_if_kind if_kind then [Sil.Metadata EndBranches] else []
+          in
           Procdesc.node_set_succs proc_desc join_node ~normal:trans_state.succ_nodes ~exn:[] ;
           (* create dtor call as a new node connected to the join node, force new node creation by
              creating a fresh pointer and calling [force_claim_priority_node] *)
@@ -4460,11 +4512,11 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
           in
           let prune_true =
             create_prune_node proc_desc ~branch:true ~negate_cond:false (Var marker_id)
-              deref_marker_var sil_loc Ik_if
+              deref_marker_var sil_loc if_kind
           in
           let prune_false =
             create_prune_node proc_desc ~branch:false ~negate_cond:true (Var marker_id)
-              deref_marker_var sil_loc Ik_if
+              deref_marker_var sil_loc if_kind
           in
           Procdesc.node_set_succs proc_desc prune_false ~normal:[join_node] ~exn:[] ;
           Procdesc.node_set_succs proc_desc prune_true ~normal:dtor_trans_result.control.root_nodes
@@ -4500,7 +4552,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     L.debug Capture Verbose "Destroying [%a] in state %a@\n"
       (Pp.seq ~sep:";" (fun fmt (temporary : CContext.cxx_temporary) ->
            Format.fprintf fmt "(%a,%a)" (Pvar.pp Pp.text_break) temporary.pvar
-             (Pp.option (Pvar.pp Pp.text_break))
+             (Pp.option (Pp.pair ~fst:(Pvar.pp Pp.text_break) ~snd:Sil.pp_if_kind))
              temporary.marker ) )
       temporaries pp_trans_state trans_state ;
     match destroy_all stmt_info [] trans_state (List.rev temporaries) with
@@ -4536,7 +4588,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
           match marker with
           | None ->
               markers
-          | Some marker_pvar ->
+          | Some (marker_pvar, _if_kind) ->
               Pvar.Map.add pvar (marker_pvar, typ) markers )
     in
     (* translate the sub-expression in its own node(s) so we can inject code for managing
@@ -4559,7 +4611,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
           match marker with
           | None ->
               instrs
-          | Some marker_pvar ->
+          | Some (marker_pvar, _if_kind) ->
               Sil.Metadata (VariableLifetimeBegins (marker_pvar, StdTyp.boolean, loc))
               :: Sil.Store
                    { e1= Lvar marker_pvar
@@ -4574,7 +4626,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
           match marker with
           | None ->
               vds
-          | Some marker_pvar ->
+          | Some (marker_pvar, _if_kind) ->
               { ProcAttributes.name= Pvar.get_name marker_pvar
               ; typ= StdTyp.boolean
               ; modify_in_block= false
@@ -4851,7 +4903,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
         pseudoObjectExpr_trans trans_state stmt_list
     | UnaryExprOrTypeTraitExpr (_, _, _, unary_expr_or_type_trait_expr_info) ->
         unaryExprOrTypeTraitExpr_trans trans_state unary_expr_or_type_trait_expr_info
-    | ImplicitCastExpr (stmt_info, stmt_list, expr_info, cast_kind)
+    | ImplicitCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _)
     | BuiltinBitCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _)
     | CStyleCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _)
     | CXXReinterpretCastExpr (stmt_info, stmt_list, expr_info, cast_kind, _, _)
@@ -5066,8 +5118,10 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     | OMPBarrierDirective _
     | OMPCancelDirective _
     | OMPCancellationPointDirective _
+    | OMPCanonicalLoop _
     | OMPCriticalDirective _
     | OMPDepobjDirective _
+    | OMPDispatchDirective _
     | OMPDistributeDirective _
     | OMPDistributeParallelForDirective _
     | OMPDistributeParallelForSimdDirective _
@@ -5075,7 +5129,9 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     | OMPFlushDirective _
     | OMPForDirective _
     | OMPForSimdDirective _
+    | OMPInteropDirective _
     | OMPIteratorExpr _
+    | OMPMaskedDirective _
     | OMPMasterDirective _
     | OMPMasterTaskLoopDirective _
     | OMPMasterTaskLoopSimdDirective _
@@ -5117,6 +5173,8 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     | OMPTeamsDistributeParallelForDirective _
     | OMPTeamsDistributeParallelForSimdDirective _
     | OMPTeamsDistributeSimdDirective _
+    | OMPTileDirective _
+    | OMPUnrollDirective _
     | PackExpansionExpr _
     | ParenListExpr _
     | RecoveryExpr _
@@ -5127,6 +5185,7 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
     | SEHTryStmt _
     | ShuffleVectorExpr _
     | SourceLocExpr _
+    | SYCLUniqueStableNameExpr _
     | TypoExpr _
     | UnresolvedLookupExpr _
     | UnresolvedMemberExpr _ ->
@@ -5208,7 +5267,10 @@ module CTrans_funct (F : CModule_type.CFrontend) : CModule_type.CTranslation = s
             exec_trans_instrs_rev trans_state' trans_stmt_fun_list'
           in
           ( { root_nodes= control_tail_rev.root_nodes
-            ; leaf_nodes= res_trans_s.control.leaf_nodes
+            ; leaf_nodes=
+                ( if not (List.is_empty res_trans_s.control.leaf_nodes) then
+                  res_trans_s.control.leaf_nodes
+                else control_tail_rev.leaf_nodes )
             ; instrs= List.rev_append res_trans_s.control.instrs control_tail_rev.instrs
             ; initd_exps= List.rev_append res_trans_s.control.initd_exps control_tail_rev.initd_exps
             ; cxx_temporary_markers_set=

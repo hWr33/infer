@@ -56,10 +56,10 @@ A property is a nondeterministic automaton that can remember values in registers
 The general form of a property is the following:
 
 ```
-property *Name
-*  message "Optional error message" // This line can be missing
+property Name
+  message "Optional error message" // This line can be missing
   prefix "Prefix" // There can be zero, one, or more prefix declarations
-  sourceState -> targetState: *Pattern*(Arg1,...,ArgN,Ret) when *Condition* => *Action*
+  sourceState -> targetState: Pattern(Arg1,...,ArgN,Ret) when Condition => Action
 ```
 
 The property name and the optional error message are used for reporting issues. The prefix declarations are used to simplify Patterns. The core of the property is the list of transitions.
@@ -87,7 +87,7 @@ There are two types of patterns:
     * for a method with n arguments, there must be n+1 transition variables to get a match. The first n transition variables get bound to the argument values, and the last transition variable gets bound to the return value. *This is true even for the case in which the return type is void*.
 * the special keyword **#ArrayWrite**. In that case, there should be two transition variables like “(Array, Index)” — Array gets bound to the array object, and Index gets bound to the index at which the write happens.
 
-For several examples, see https://github.com/facebook/infer/tree/master/infer/tests/codetoanalyze/java/topl
+For several examples, see https://github.com/facebook/infer/tree/main/infer/tests/codetoanalyze/java/topl
 
 ## Limitations
 

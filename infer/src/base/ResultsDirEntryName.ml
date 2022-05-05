@@ -16,6 +16,7 @@ type id =
   | CaptureDBWal
   | CaptureDependencies
   | ChangedFunctions
+  | ChangedFunctionsTempResults
   | Debug
   | Differential
   | DuplicateFunctions
@@ -32,6 +33,7 @@ type id =
   | ReportCostsJson
   | ReportHtml
   | ReportJson
+  | ReportSarif
   | ReportText
   | ReportXML
   | RetainCycles
@@ -84,6 +86,11 @@ let of_id = function
   | ChangedFunctions ->
       { rel_path= "changed_functions.json"
       ; kind= File
+      ; before_incremental_analysis= Delete
+      ; before_caching_capture= Keep }
+  | ChangedFunctionsTempResults ->
+      { rel_path= "changed_functions_results"
+      ; kind= Directory
       ; before_incremental_analysis= Delete
       ; before_caching_capture= Keep }
   | Debug ->
@@ -163,6 +170,11 @@ let of_id = function
       ; before_caching_capture= Delete }
   | ReportJson ->
       { rel_path= "report.json"
+      ; kind= File
+      ; before_incremental_analysis= Delete
+      ; before_caching_capture= Delete }
+  | ReportSarif ->
+      { rel_path= "report.sarif"
       ; kind= File
       ; before_incremental_analysis= Delete
       ; before_caching_capture= Delete }

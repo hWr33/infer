@@ -18,7 +18,7 @@ module T = struct
     (* array/struct operations *)
     | Splat
     | Select of int
-  [@@deriving compare, equal, hash, sexp]
+  [@@deriving compare, equal, sexp]
 
   type op2 =
     (* comparison *)
@@ -51,15 +51,15 @@ module T = struct
     | Ashr
     (* array/struct operations *)
     | Update of int
-  [@@deriving compare, equal, hash, sexp]
+  [@@deriving compare, equal, sexp]
 
   type op3 = (* if-then-else *)
     | Conditional
-  [@@deriving compare, equal, hash, sexp]
+  [@@deriving compare, equal, sexp]
 
   type opN = (* array/struct constants *)
     | Record
-  [@@deriving compare, equal, hash, sexp]
+  [@@deriving compare, equal, sexp]
 
   type t =
     | Reg of {id: int; name: string; typ: Typ.t}
@@ -72,8 +72,9 @@ module T = struct
     | Ap2 of op2 * Typ.t * t * t
     | Ap3 of op3 * Typ.t * t * t * t
     | ApN of opN * Typ.t * t iarray
-  [@@deriving compare, equal, hash, sexp]
+  [@@deriving compare, equal, sexp]
 
+  let hash = Poly.hash
   let demangle = ref (fun _ -> None)
 
   let pp_demangled ppf name =
@@ -135,10 +136,8 @@ module T = struct
     | Ap1 (Select idx, _, rcd) -> pf "%a[%i]" pp rcd idx
     | Ap2 (Update idx, _, rcd, elt) ->
         pf "[%a@ @[| %i → %a@]]" pp rcd idx pp elt
-    | Ap2 (Xor, Integer {bits= 1}, Integer {data}, x) when Z.is_true data ->
-        pf "¬%a" pp x
-    | Ap2 (Xor, Integer {bits= 1}, x, Integer {data}) when Z.is_true data ->
-        pf "¬%a" pp x
+    | Ap2 (Xor, _, Integer {data}, x) when Z.is_true data -> pf "¬%a" pp x
+    | Ap2 (Xor, _, x, Integer {data}) when Z.is_true data -> pf "¬%a" pp x
     | Ap2 (op, _, x, y) -> pf "(%a@ %a %a)" pp x pp_op2 op pp y
     | Ap3 (Conditional, _, cnd, thn, els) ->
         pf "(%a@ ? %a@ : %a)" pp cnd pp thn pp els
@@ -162,7 +161,6 @@ include T
 
 module Set = struct
   include Set.Make (T)
-  include Provide_hash (T)
   include Provide_of_sexp (T)
 end
 

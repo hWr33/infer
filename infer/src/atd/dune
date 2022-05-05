@@ -25,11 +25,53 @@
  (targets jsonbug_j.ml jsonbug_j.mli)
  (deps jsonbug.atd)
  (action
-  (run atdgen -j -j-std %{deps})))
+  (run atdgen -open !AtdDeps -deriving-conv equal -j -j-std %{deps})))
 
 (rule
  (targets jsonbug_t.ml jsonbug_t.mli)
  (deps jsonbug.atd)
+ (action
+  (run atdgen -open !AtdDeps -deriving-conv equal -t %{deps})))
+
+; ATD for jsoncost
+
+(rule
+ (targets jsoncost_j.ml jsoncost_j.mli)
+ (deps jsoncost.atd)
+ (action
+  (run atdgen -open !AtdDeps -deriving-conv equal -j -j-std %{deps})))
+
+(rule
+ (targets jsoncost_t.ml jsoncost_t.mli)
+ (deps jsoncost.atd)
+ (action
+  (run atdgen -open !AtdDeps -deriving-conv equal -t %{deps})))
+
+; ATD for jsonconfigimpact
+
+(rule
+ (targets jsonconfigimpact_j.ml jsonconfigimpact_j.mli)
+ (deps jsonconfigimpact.atd)
+ (action
+  (run atdgen -open !AtdDeps -deriving-conv equal -j -j-std %{deps})))
+
+(rule
+ (targets jsonconfigimpact_t.ml jsonconfigimpact_t.mli)
+ (deps jsonconfigimpact.atd)
+ (action
+  (run atdgen -open !AtdDeps -deriving-conv equal -t %{deps})))
+
+; ATD for sarif
+
+(rule
+ (targets sarifbug_j.ml sarifbug_j.mli)
+ (deps sarifbug.atd)
+ (action
+  (run atdgen -j -j-std %{deps})))
+
+(rule
+ (targets sarifbug_t.ml sarifbug_t.mli)
+ (deps sarifbug.atd)
  (action
   (run atdgen -t %{deps})))
 
@@ -100,5 +142,19 @@
 (rule
  (targets clang_profiler_samples_t.ml clang_profiler_samples_t.mli)
  (deps clang_profiler_samples.atd)
+ (action
+  (run atdgen -t %{deps})))
+
+; ATD for pulse_config
+
+(rule
+ (targets pulse_config_j.ml pulse_config_j.mli)
+ (deps pulse_config.atd)
+ (action
+  (run atdgen -j -j-std %{deps})))
+
+(rule
+ (targets pulse_config_t.ml pulse_config_t.mli)
+ (deps pulse_config.atd)
  (action
   (run atdgen -t %{deps})))

@@ -151,12 +151,13 @@ infer results directory. (Conversely:
 
 <p style="margin-left:17%;">Proceed as if the first
 argument after <b>--</b> was <i>command</i>. Possible
-values: <i>ant</i>, <i>buck</i>, <i>gradle</i>,
-<i>gradlew</i>, <i>java</i>, <i>javac</i>, <i>cc</i>,
-<i>clang</i>, <i>gcc</i>, <i>clang++</i>, <i>c++</i>,
-<i>g++</i>, <i>make</i>, <i>configure</i>, <i>cmake</i>,
-<i>waf</i>, <i>mvn</i>, <i>mvnw</i>, <i>ndk-build</i>,
-<i>rebar3</i>, <i>xcodebuild</i>.</p>
+values: <i>ant</i>, <i>buck</i>, <i>buck2</i>,
+<i>gradle</i>, <i>gradlew</i>, <i>java</i>, <i>javac</i>,
+<i>cc</i>, <i>clang</i>, <i>gcc</i>, <i>clang++</i>,
+<i>c++</i>, <i>g++</i>, <i>make</i>, <i>configure</i>,
+<i>cmake</i>, <i>waf</i>, <i>mvn</i>, <i>mvnw</i>,
+<i>ndk-build</i>, <i>rebar3</i>, <i>erlc</i>,
+<i>xcodebuild</i>.</p>
 
 <p style="margin-left:11%;"><b>--help</b></p>
 
@@ -182,6 +183,15 @@ internal options in the INTERNAL OPTIONS section</p>
 <p style="margin-left:17%;">Do not start new parallel jobs
 if the load average is greater than that specified (Buck and
 make only)</p>
+
+<p style="margin-left:11%;"><b>--merge-infer-out</b>
+<i>+string</i></p>
+
+<p style="margin-left:17%;">Specifies an Infer results
+directory. The files and procedures captured in it will be
+merged together into the results directory specified with
+<b>-o</b>. Relative paths are interpreted as relative to
+<b>project-root/buck-out</b>.</p>
 
 <p style="margin-left:11%;"><b>--print-logs</b></p>
 
@@ -209,10 +219,11 @@ the project</p>
 files in the specified directory</p>
 
 <p style="margin-left:11%;"><b>--skip-analysis-in-path</b>
-<i>+path_prefix_OCaml_regex</i></p>
+<i>+regex</i></p>
 
 <p style="margin-left:17%;">Ignore files whose path matches
-the given prefix (can be specified multiple times)</p>
+a given regex (can be specified multiple times, but you must
+make sure each regex is properly bracketed)</p>
 
 <p style="margin-left:11%;"><b>--sqlite-cache-size</b>
 <i>int</i></p>
@@ -272,7 +283,7 @@ build command</p></td></tr>
 append to targets discovered by the
 <b>--buck-compilation-database</b> option.</p>
 
-<p style="margin-left:11%;"><b>--buck-blacklist</b>
+<p style="margin-left:11%;"><b>--buck-block-list</b>
 <i>+regex</i></p>
 
 <p style="margin-left:17%;">Skip capture of files matched
@@ -286,6 +297,15 @@ not Java. <b><br>
 <p style="margin-left:17%;">Activates: Buck integration for
 clang-based targets (C/C++/Objective-C/Objective-C++).
 (Conversely: <b>--no-buck-clang</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--buck-clang-use-toolchain-config</b></p>
+
+<p style="margin-left:17%;">Activates: Suppress setting
+buck config values for the infer binary and other values in
+the buck-clang-flavor integration and instead rely on buck
+toolchain configuration options. (Conversely:
+<b>--no-buck-clang-use-toolchain-config</b>)</p>
 
 
 <p style="margin-left:11%;"><b>--buck-compilation-database</b>
@@ -312,6 +332,16 @@ of genrules like buck-java. (Conversely:
 <b>--no-buck-java-flavor</b>)</p>
 
 
+<p style="margin-left:11%;"><b>--buck-java-flavor-dependency-depth</b>
+<i>int</i></p>
+
+<p style="margin-left:17%;">Capture dependencies only if
+they are at most the depth provided, or all transitive
+dependencies if depth is not provided (the default). In
+particular, depth zero means capture exactly the targets
+provided and nothing else.</p>
+
+
 <p style="margin-left:11%;"><b>--buck-java-flavor-suppress-config</b></p>
 
 <p style="margin-left:17%;">Activates: Suppress setting
@@ -336,7 +366,7 @@ capture. Only valid for <b>--buck-clang</b>. (Conversely:
 <b>--no-buck-merge-all-deps</b>)</p>
 
 
-<p style="margin-left:11%;"><b>--buck-targets-blacklist</b>
+<p style="margin-left:11%;"><b>--buck-targets-block-list</b>
 <i>+regex</i></p>
 
 <p style="margin-left:17%;">Skip capture of buck targets
@@ -357,6 +387,21 @@ Only valid for <b>--buck-clang</b>.</p>
 arguments to invocations of <i>&lsquo;buck build&lsquo;</i>,
 don't inline any args starting with '@'. Only valid for
 <b>--buck-clang</b>.</p>
+
+<p style="margin-left:11%;"><b>--Xbuck2</b>
+<i>+string</i></p>
+
+<p style="margin-left:17%;">Pass values as command-line
+arguments to invocations of <i>&lsquo;buck2
+build&lsquo;</i>. Only valid for <b>--buck-clang</b>.</p>
+
+<p style="margin-left:11%;"><b>--Xbuck2-no-inline</b>
+<i>+string</i></p>
+
+<p style="margin-left:17%;">Pass values as command-line
+arguments to invocations of <i>&lsquo;buck2
+build&lsquo;</i>, don't inline any args starting with '@'.
+Only valid for <b>--buck-clang</b>.</p>
 
 <p style="margin-left:11%;"><b>--xcode-developer-dir</b>
 <i>XCODE_DEVELOPER_DIR</i></p>
@@ -450,13 +495,13 @@ AST of the program, in biniou format. Please note you still
 need to provide a compilation command.</p>
 
 
-<p style="margin-left:11%;"><b>--clang-blacklisted-flags</b>
+<p style="margin-left:11%;"><b>--clang-block-listed-flags</b>
 <i>+string</i></p>
 
 <p style="margin-left:17%;">Clang flags to filter out</p>
 
 
-<p style="margin-left:11%;"><b>--clang-blacklisted-flags-with-arg</b>
+<p style="margin-left:11%;"><b>--clang-block-listed-flags-with-arg</b>
 <i>+string</i></p>
 
 <p style="margin-left:17%;">Clang flags (taking args) to
@@ -579,7 +624,7 @@ to save time. It is useful together with
 <p style="margin-left:17%;">Specify the Java
 bootclasspath</p>
 
-<p style="margin-left:11%;"><b>--capture-blacklist</b>
+<p style="margin-left:11%;"><b>--capture-block-list</b>
 <i>regex</i></p>
 
 <p style="margin-left:17%;">Skip capture of files matched
@@ -610,6 +655,19 @@ used to generate the bytecode</p>
 
 <p style="margin-left:17%;">The version of Java being used.
 Set it to your Java version if mvn is failing.</p>
+
+<p style="margin-left:11%;"><b>--kotlin-capture</b></p>
+
+<p style="margin-left:17%;">Activates: Enable Kotlin
+capture (experimental, do not use). (Conversely:
+<b>--no-kotlin-capture</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--no-mask-sawja-exceptions</b></p>
+
+<p style="margin-left:17%;">Deactivates: Mask exceptions
+thrown by Sawja/Javalib during Java capture (Conversely:
+<b>--mask-sawja-exceptions</b>)</p>
 
 <h2>ENVIRONMENT
 <a name="ENVIRONMENT"></a>

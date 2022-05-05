@@ -13,7 +13,6 @@ type t =
   ; biabduction: BiabductionSummary.t option
   ; buffer_overrun_analysis: BufferOverrunAnalysisSummary.t option
   ; buffer_overrun_checker: BufferOverrunCheckerSummary.t option
-  ; config_checks_between_markers: ConfigChecksBetweenMarkers.Summary.t option
   ; config_impact_analysis: ConfigImpactAnalysis.Summary.t option
   ; cost: CostDomain.summary option
   ; disjunctive_demo: DisjunctiveDemo.domain option
@@ -25,6 +24,7 @@ type t =
   ; quandary: QuandarySummary.t option
   ; racerd: RacerDDomain.summary option
   ; siof: SiofDomain.Summary.t option
+  ; simple_lineage: SimpleLineage.Summary.t option
   ; starvation: StarvationDomain.summary option
   ; nullsafe: NullsafeSummary.t option
   ; uninit: UninitDomain.Summary.t option }
@@ -46,8 +46,6 @@ let fields =
     ~biabduction:(fun f -> mk_pe f "Biabduction" BiabductionSummary.pp)
     ~buffer_overrun_analysis:(fun f -> mk f "BufferOverrunAnalysis" BufferOverrunAnalysisSummary.pp)
     ~buffer_overrun_checker:(fun f -> mk f "BufferOverrunChecker" BufferOverrunCheckerSummary.pp)
-    ~config_checks_between_markers:(fun f ->
-      mk f "ConfigChecksBetweenMarkers" ConfigChecksBetweenMarkers.Summary.pp )
     ~config_impact_analysis:(fun f -> mk f "ConfigImpactAnalysis" ConfigImpactAnalysis.Summary.pp)
     ~cost:(fun f -> mk f "Cost" CostDomain.pp_summary)
     ~disjunctive_demo:(fun f -> mk f "Disjunctive Demo" DisjunctiveDemo.pp_domain)
@@ -59,6 +57,7 @@ let fields =
     ~lab_resource_leaks:(fun f -> mk f "Resource Leaks Lab" ResourceLeakDomain.pp)
     ~dotnet_resource_leaks:(fun f -> mk f "DOTNET Resource Leaks" ResourceLeakCSDomain.Summary.pp)
     ~siof:(fun f -> mk f "Siof" SiofDomain.Summary.pp)
+    ~simple_lineage:(fun f -> mk f "SimpleLineage" SimpleLineage.Summary.pp)
     ~starvation:(fun f -> mk f "Starvation" StarvationDomain.pp_summary)
     ~nullsafe:(fun f -> mk f "Nullsafe" NullsafeSummary.pp)
     ~uninit:(fun f -> mk f "Uninitialised" UninitDomain.Summary.pp)
@@ -74,7 +73,6 @@ let empty =
   ; biabduction= None
   ; buffer_overrun_analysis= None
   ; buffer_overrun_checker= None
-  ; config_checks_between_markers= None
   ; config_impact_analysis= None
   ; cost= None
   ; disjunctive_demo= None
@@ -86,6 +84,7 @@ let empty =
   ; quandary= None
   ; racerd= None
   ; siof= None
+  ; simple_lineage= None
   ; starvation= None
   ; nullsafe= None
   ; uninit= None }

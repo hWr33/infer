@@ -45,6 +45,7 @@ module TypeKind = struct
   | Token
   | ScalableVector
   | BFloat
+  | X86_amx
 end
 
 module Linkage = struct
@@ -320,6 +321,7 @@ module ValueKind = struct
   | GlobalIFunc
   | GlobalVariable
   | UndefValue
+  | PoisonValue
   | Instruction of Opcode.t
 end
 
@@ -574,8 +576,10 @@ external const_null : lltype -> llvalue = "LLVMConstNull"
 external const_all_ones : (*int|vec*)lltype -> llvalue = "LLVMConstAllOnes"
 external const_pointer_null : lltype -> llvalue = "LLVMConstPointerNull"
 external undef : lltype -> llvalue = "LLVMGetUndef"
+external poison : lltype -> llvalue = "LLVMGetPoison"
 external is_null : llvalue -> bool = "llvm_is_null"
 external is_undef : llvalue -> bool = "llvm_is_undef"
+external is_poison : llvalue -> bool = "llvm_is_poison"
 external constexpr_opcode : llvalue -> Opcode.t = "llvm_constexpr_get_opcode"
 
 (*--... Operations on instructions .........................................--*)
@@ -1024,6 +1028,7 @@ external instr_pred : llvalue -> (llbasicblock, llvalue) llrev_pos
 external instr_opcode : llvalue -> Opcode.t = "llvm_instr_get_opcode"
 external icmp_predicate : llvalue -> Icmp.t option = "llvm_instr_icmp_predicate"
 external fcmp_predicate : llvalue -> Fcmp.t option = "llvm_instr_fcmp_predicate"
+external atomicrmw_binop : llvalue -> AtomicRMWBinOp.t = "llvm_instr_get_atomicrmw_binop"
 external instr_clone : llvalue -> llvalue = "llvm_instr_clone"
 
 let rec iter_instrs_range f i e =

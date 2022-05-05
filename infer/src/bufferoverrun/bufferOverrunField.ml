@@ -45,6 +45,8 @@ let c_strlen () =
   if Language.curr_language_is Java then mk "length" StdTyp.uint else mk "c.strlen" StdTyp.uint
 
 
+let cpp_collection_internal_array = mk "cpp.container.elements" Typ.(mk_array StdTyp.void)
+
 let cpp_vector_elem_str = "cpp.vector_elem"
 
 let cpp_vector_elem ~vec_typ =
@@ -63,7 +65,7 @@ let cpp_vector_elem ~vec_typ =
   Fieldname.make classname cpp_vector_elem_str
 
 
-let is_cpp_vector_elem fn = String.equal (Fieldname.to_simplified_string fn) cpp_vector_elem_str
+let is_cpp_vector_elem fn = String.equal (Fieldname.get_field_name fn) cpp_vector_elem_str
 
 (** Field domain constructor *)
 

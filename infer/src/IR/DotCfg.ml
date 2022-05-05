@@ -16,15 +16,16 @@ let pp_cfgnodename pname fmt (n : Procdesc.Node.t) =
 
 
 let pp_etlist fmt etl =
-  List.iter etl ~f:(fun (id, typ) ->
+  List.iter etl ~f:(fun (id, typ, annot) ->
+      if not (Annot.Item.is_empty annot) then Format.fprintf fmt " %a" Annot.Item.pp annot ;
       Format.fprintf fmt " %a:%a" Mangled.pp id (Typ.pp_full Pp.text) typ )
 
 
 let pp_var_list fmt etl =
-  List.iter etl ~f:(fun {CapturedVar.name; typ; capture_mode} ->
+  List.iter etl ~f:(fun {CapturedVar.pvar; typ; capture_mode} ->
       Format.fprintf fmt " [%s]%a:%a"
         (CapturedVar.string_of_capture_mode capture_mode)
-        Mangled.pp name (Typ.pp_full Pp.text) typ )
+        (Pvar.pp Pp.text) pvar (Typ.pp_full Pp.text) typ )
 
 
 let pp_local_list fmt etl = List.iter ~f:(Procdesc.pp_local fmt) etl
@@ -40,16 +41,16 @@ let pp_cfgnodelabel pdesc fmt (n : Procdesc.Node.t) =
           (Procdesc.get_formals pdesc) pp_local_list (Procdesc.get_locals pdesc) ;
         if not (List.is_empty (Procdesc.get_captured pdesc)) then
           Format.fprintf fmt "\\nCaptured: %a" pp_var_list (Procdesc.get_captured pdesc) ;
-        let method_annotation = attributes.ProcAttributes.method_annotation in
-        if not (Annot.Method.is_empty method_annotation) then
-          Format.fprintf fmt "\\nAnnotation: %a" (Annot.Method.pp pname_string) method_annotation
+        let ret_annots = attributes.ProcAttributes.ret_annots in
+        if not (Annot.Item.is_empty ret_annots) then
+          Format.fprintf fmt "\\nReturn annotations: %a" Annot.Item.pp ret_annots
     | Exit_node ->
         let pname = Procdesc.Node.get_proc_name n in
         Format.fprintf fmt "Exit %s" (Escape.escape_dotty (Procname.to_string pname))
     | Join_node ->
         Format.pp_print_char fmt '+'
     | Prune_node (is_true_branch, if_kind, _) ->
-        Format.fprintf fmt "Prune (%b branch, %s)" is_true_branch (Sil.if_kind_to_string if_kind)
+        Format.fprintf fmt "Prune (%b branch, %a)" is_true_branch Sil.pp_if_kind if_kind
     | Stmt_node s ->
         Format.fprintf fmt " %a" Procdesc.Node.pp_stmt s
     | Skip_node s ->

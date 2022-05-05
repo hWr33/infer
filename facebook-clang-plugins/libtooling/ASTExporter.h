@@ -390,6 +390,7 @@ class ASTExporter : public ConstDeclVisitor<ASTExporter<ATDWriter>>,
   DECLARE_VISITOR(Expr)
   DECLARE_VISITOR(CastExpr)
   DECLARE_VISITOR(ExplicitCastExpr)
+  DECLARE_VISITOR(ImplicitCastExpr)
   DECLARE_VISITOR(DeclRefExpr)
   DECLARE_VISITOR(PredefinedExpr)
   DECLARE_VISITOR(CharacterLiteral)
@@ -1322,6 +1323,9 @@ void ASTExporter<ATDWriter>::dumpInputKind(InputKind kind) {
   case Language::OpenCL:
     OF.emitSimpleVariant("IK_OpenCL");
     break;
+  case Language::OpenCLCXX:
+    OF.emitSimpleVariant("IK_OpenCLCXX");
+    break;
   case Language::CUDA:
     OF.emitSimpleVariant("IK_CUDA");
     break;
@@ -2014,7 +2018,9 @@ void ASTExporter<ATDWriter>::dumpTemplateArgument(const TemplateArgument &Arg) {
     break;
   case TemplateArgument::Integral: {
     VariantScope Scope(OF, "Integral");
-    OF.emitString(Arg.getAsIntegral().toString(10));
+    llvm::SmallString<64> buf;
+    Arg.getAsIntegral().toString(buf, 10);
+    OF.emitString(buf.str().str());
     break;
   }
   case TemplateArgument::Template: {
@@ -2095,6 +2101,8 @@ int ASTExporter<ATDWriter>::CXXMethodDeclTupleSize() {
 //@atd type cxx_method_decl_info = {
 //@atd   ~is_virtual : bool;
 //@atd   ~is_static : bool;
+//@atd   ~is_const : bool;
+//@atd   ~is_copy_constructor : bool;
 //@atd   ~cxx_ctor_initializers : cxx_ctor_initializer list;
 //@atd   ~overriden_methods : decl_ref list;
 //@atd } <ocaml field_prefix="xmdi_">
@@ -2104,14 +2112,18 @@ void ASTExporter<ATDWriter>::VisitCXXMethodDecl(const CXXMethodDecl *D) {
   bool IsVirtual = D->isVirtual();
   bool IsStatic = D->isStatic();
   const CXXConstructorDecl *C = dyn_cast<CXXConstructorDecl>(D);
+  bool isCopyConstructor = C && C->isCopyConstructor();
+  bool isConst = D->isConst();
   bool HasCtorInitializers = C && C->init_begin() != C->init_end();
   auto OB = D->begin_overridden_methods();
   auto OE = D->end_overridden_methods();
-  ObjectScope Scope(
-      OF,
-                    IsVirtual + IsStatic + HasCtorInitializers + (OB != OE));
+  ObjectScope Scope(OF,
+                    IsVirtual + IsStatic + isConst + isCopyConstructor +
+                        HasCtorInitializers + (OB != OE));
   OF.emitFlag("is_virtual", IsVirtual);
   OF.emitFlag("is_static", IsStatic);
+  OF.emitFlag("is_const", isConst);
+  OF.emitFlag("is_copy_constructor", isCopyConstructor);
   if (HasCtorInitializers) {
     OF.emitTag("cxx_ctor_initializers");
     ArrayScope Scope(OF, std::distance(C->init_begin(), C->init_end()));
@@ -3186,13 +3198,15 @@ int ASTExporter<ATDWriter>::SwitchStmtTupleSize() {
 //@atd   ?cond_var : stmt option;
 //@atd   cond : pointer;
 //@atd   body : pointer;
+//@atd   ~is_all_enum_cases_covered : bool;
 //@atd } <ocaml field_prefix="ssi_">
 template <class ATDWriter>
 void ASTExporter<ATDWriter>::VisitSwitchStmt(const SwitchStmt *Node) {
   VisitStmt(Node);
   const Stmt *Init = Node->getInit();
   const DeclStmt *CondVar = Node->getConditionVariableDeclStmt();
-  ObjectScope Scope(OF, 2 + (bool)Init + (bool)CondVar);
+  const bool IsAllEnumCasesCovered = Node->isAllEnumCasesCovered();
+  ObjectScope Scope(OF, 2 + (bool)Init + (bool)CondVar + IsAllEnumCasesCovered);
   if (Init) {
     OF.emitTag("init");
     dumpPointer(Init);
@@ -3205,6 +3219,7 @@ void ASTExporter<ATDWriter>::VisitSwitchStmt(const SwitchStmt *Node) {
   dumpPointer(Node->getCond());
   OF.emitTag("body");
   dumpPointer(Node->getBody());
+  OF.emitFlag("is_all_enum_cases_covered", IsAllEnumCasesCovered);
 }
 
 template <class ATDWriter>
@@ -3295,7 +3310,7 @@ void ASTExporter<ATDWriter>::VisitExpr(const Expr *Node) {
   VisitStmt(Node);
 
   ExprValueKind VK = Node->getValueKind();
-  bool HasNonDefaultValueKind = VK != VK_RValue;
+  bool HasNonDefaultValueKind = VK != VK_PRValue;
   ExprObjectKind OK = Node->getObjectKind();
   bool HasNonDefaultObjectKind = OK != OK_Ordinary;
   ObjectScope Scope(OF, 1 + HasNonDefaultValueKind + HasNonDefaultObjectKind);
@@ -3312,7 +3327,7 @@ void ASTExporter<ATDWriter>::VisitExpr(const Expr *Node) {
     case VK_XValue:
       OF.emitSimpleVariant("XValue");
       break;
-    case VK_RValue:
+    case VK_PRValue:
       llvm_unreachable("unreachable");
       break;
     }
@@ -3398,6 +3413,18 @@ void ASTExporter<ATDWriter>::VisitExplicitCastExpr(
     const ExplicitCastExpr *Node) {
   VisitCastExpr(Node);
   dumpQualType(Node->getTypeAsWritten());
+}
+
+template <class ATDWriter>
+int ASTExporter<ATDWriter>::ImplicitCastExprTupleSize() {
+  return CastExprTupleSize() + 1;
+}
+//@atd #define implicit_cast_expr_tuple cast_expr_tuple * bool
+template <class ATDWriter>
+void ASTExporter<ATDWriter>::VisitImplicitCastExpr(
+    const ImplicitCastExpr *Node) {
+  VisitCastExpr(Node);
+  OF.emitBoolean(Node->isPartOfExplicitCast());
 }
 
 template <class ATDWriter>
@@ -3612,7 +3639,9 @@ void ASTExporter<ATDWriter>::emitAPInt(bool isSigned,
   OF.emitTag("bitwidth");
   OF.emitInteger(value.getBitWidth());
   OF.emitTag("value");
-  OF.emitString(value.toString(10, isSigned));
+  llvm::SmallString<64> buf;
+  value.toString(buf, 10, isSigned);
+  OF.emitString(buf.str().str());
 }
 
 template <class ATDWriter>

@@ -107,6 +107,7 @@ let make_meta_issue modes_and_issues top_level_class_mode top_level_class_name =
   let meta_issue_info =
     Jsonbug_t.
       { num_issues= currently_reportable_issue_count
+      ; num_fixmes= 0
       ; curr_nullsafe_mode= mode_to_json top_level_class_mode
       ; can_be_promoted_to= Option.map mode_to_promote_to ~f:mode_to_json }
   in
@@ -196,7 +197,8 @@ let report_meta_issue_for_top_level_class tenv source_file class_name class_stru
         ; unvetted_3rd_party= None
         ; nullable_methods= None
         ; field= None
-        ; annotation_graph= None }
+        ; annotation_graph= None
+        ; redundant_fixme_info= None }
     in
     log_issue ~issue_log ~loc:class_loc ~severity ~nullsafe_extra issue_type description
 
@@ -231,7 +233,8 @@ let analyze_nullsafe_annotations tenv source_file class_name class_struct issue_
       ; unvetted_3rd_party= None
       ; nullable_methods= None
       ; field= None
-      ; annotation_graph= None }
+      ; annotation_graph= None
+      ; redundant_fixme_info= None }
   in
   match NullsafeMode.check_problematic_class_annotation tenv class_name with
   | Ok () ->
@@ -282,7 +285,8 @@ let report_annotation_graph source_file class_name class_struct annotation_graph
       ; unvetted_3rd_party= None
       ; nullable_methods= None
       ; field= None
-      ; annotation_graph= Some annotation_graph }
+      ; annotation_graph= Some annotation_graph
+      ; redundant_fixme_info= None }
   in
   log_issue ~issue_log ~loc:class_loc ~severity:IssueType.Info ~nullsafe_extra
     IssueType.eradicate_annotation_graph ""
@@ -313,12 +317,14 @@ let analyze_class_impl tenv source_file class_name class_struct class_info issue
 
 
 let analyze_class tenv source_file class_info issue_log =
-  let class_name = AggregatedSummaries.ClassInfo.get_class_name class_info in
-  match Tenv.lookup tenv (Typ.JavaClass class_name) with
-  | Some class_struct ->
-      analyze_class_impl tenv source_file class_name class_struct class_info issue_log
-  | None ->
-      L.debug Analysis Medium
-        "%a: could not load class info in environment: skipping class analysis@\n" JavaClassName.pp
-        class_name ;
-      issue_log
+  if SourceFile.has_extension ~ext:Config.kotlin_source_extension source_file then issue_log
+  else
+    let class_name = AggregatedSummaries.ClassInfo.get_class_name class_info in
+    match Tenv.lookup tenv (Typ.JavaClass class_name) with
+    | Some class_struct ->
+        analyze_class_impl tenv source_file class_name class_struct class_info issue_log
+    | None ->
+        L.debug Analysis Medium
+          "%a: could not load class info in environment: skipping class analysis@\n"
+          JavaClassName.pp class_name ;
+        issue_log

@@ -20,35 +20,47 @@ module BuildMethodSignature = struct
         None
 
 
-  let param_type_of_qual_type qual_type_to_sil_type tenv name qual_type =
+  let param_type_of_qual_type ?(is_const_member_function = false) qual_type_to_sil_type tenv name
+      qual_type =
     let typ = qual_type_to_sil_type tenv qual_type in
     let is_pointer_to_const = CType.is_pointer_to_const qual_type in
+    (* non-static member functions declared as const cannot modify their this*
+       object parameter, hence should have pointer to const type
+       https://en.cppreference.com/w/cpp/language/member_functions *)
+    let typ =
+      if Mangled.is_this name && is_const_member_function then Typ.set_ptr_to_const typ else typ
+    in
     let annot = CAst_utils.sil_annot_of_type qual_type in
     Some (CMethodSignature.mk_param_type ~is_pointer_to_const ~annot name typ)
 
 
   let get_class_param qual_type_to_sil_type tenv method_decl =
+    let aux ~is_const_member_function parent_pointer =
+      let method_kind = CMethodProperties.get_method_kind method_decl in
+      match method_kind with
+      | ClangMethodKind.CPP_INSTANCE | ClangMethodKind.OBJC_INSTANCE -> (
+        match (get_class_parameter_name method_kind, parent_pointer) with
+        | Some name, Some parent_pointer ->
+            let qual_type = CAst_utils.qual_type_of_decl_ptr parent_pointer in
+            let pointer_qual_type = Ast_expressions.create_pointer_qual_type qual_type in
+            param_type_of_qual_type ~is_const_member_function qual_type_to_sil_type tenv name
+              pointer_qual_type
+        | _ ->
+            None )
+      | _ ->
+          None
+    in
     let open Clang_ast_t in
     match method_decl with
     | FunctionDecl _ | BlockDecl _ ->
         None
-    | CXXMethodDecl (decl_info, _, _, _, _)
+    | CXXMethodDecl (decl_info, _, _, _, cmdi) ->
+        aux ~is_const_member_function:cmdi.Clang_ast_t.xmdi_is_const decl_info.di_parent_pointer
     | CXXConstructorDecl (decl_info, _, _, _, _)
     | CXXConversionDecl (decl_info, _, _, _, _)
     | CXXDestructorDecl (decl_info, _, _, _, _)
-    | ObjCMethodDecl (decl_info, _, _) -> (
-        let method_kind = CMethodProperties.get_method_kind method_decl in
-        match method_kind with
-        | ClangMethodKind.CPP_INSTANCE | ClangMethodKind.OBJC_INSTANCE -> (
-          match (get_class_parameter_name method_kind, decl_info.di_parent_pointer) with
-          | Some name, Some parent_pointer ->
-              let qual_type = CAst_utils.qual_type_of_decl_ptr parent_pointer in
-              let pointer_qual_type = Ast_expressions.create_pointer_qual_type qual_type in
-              param_type_of_qual_type qual_type_to_sil_type tenv name pointer_qual_type
-          | _ ->
-              None )
-        | _ ->
-            None )
+    | ObjCMethodDecl (decl_info, _, _) ->
+        aux ~is_const_member_function:false decl_info.di_parent_pointer
     | _ ->
         raise CFrontend_errors.Invalid_declaration
 
@@ -282,10 +294,12 @@ let get_struct_decls decl =
   | TypeAliasDecl _
   | TypeAliasTemplateDecl _
   | TypedefDecl _
+  | UnresolvedUsingIfExistsDecl _
   | UnresolvedUsingTypenameDecl _
   | UnresolvedUsingValueDecl _
   | UsingDecl _
   | UsingDirectiveDecl _
+  | UsingEnumDecl _
   | UsingPackDecl _
   | UsingShadowDecl _
   | VarDecl _
@@ -604,8 +618,9 @@ and mk_cpp_method ?tenv class_name method_name ?meth_decl mangled parameters =
   let open Clang_ast_t in
   let method_kind =
     match meth_decl with
-    | Some (Clang_ast_t.CXXConstructorDecl (_, _, _, _, _)) ->
-        Procname.ObjC_Cpp.CPPConstructor {mangled}
+    | Some (Clang_ast_t.CXXConstructorDecl (_, _, _, _, {xmdi_is_copy_constructor= is_copy_ctor}))
+      ->
+        Procname.ObjC_Cpp.CPPConstructor {mangled; is_copy_ctor}
     | Some (Clang_ast_t.CXXDestructorDecl _) ->
         Procname.ObjC_Cpp.CPPDestructor {mangled}
     | _ ->
@@ -646,7 +661,7 @@ and objc_method_procname ?tenv decl_info method_name mdi =
 and objc_block_procname outer_proc_opt parameters =
   let block_type =
     Option.value_map ~f:Procname.get_block_type outer_proc_opt
-      ~default:(Procname.Block.SurroundingProc {name= ""})
+      ~default:(Procname.Block.SurroundingProc {class_name= None; name= ""})
   in
   let block_index = CFrontend_config.get_fresh_block_index () in
   let block = Procname.Block.make_in_outer_scope block_type block_index parameters in
@@ -672,18 +687,30 @@ and procname_from_decl ?tenv ?block_return_type ?outer_proc meth_decl =
     | None ->
         []
   in
+  let mk_cpp_method decl_info name_info fdi mdi =
+    let mangled = get_mangled_method_name fdi mdi in
+    let method_name = CAst_utils.get_unqualified_name name_info in
+    let class_typename = get_class_typename ?tenv decl_info in
+    mk_cpp_method ?tenv class_typename method_name ~meth_decl mangled parameters
+  in
   match meth_decl with
   | FunctionDecl (decl_info, name_info, _, fdi) ->
       let name = CAst_utils.get_qualified_name name_info in
       mk_c_function ?tenv name (Some (decl_info, fdi)) parameters
+  | CXXConstructorDecl (decl_info, {ni_name= ""; ni_qual_name= "" :: qual_names}, _, fdi, mdi) ->
+      (* For some constructors of non-class objects in C++, the clang frontend gives empty method
+         name, e.g. struct, lambda, and union.  For better readability, we replace them to a
+         constant non-empty name. *)
+      let name_info =
+        { ni_name= CFrontend_config.cxx_constructor
+        ; ni_qual_name= CFrontend_config.cxx_constructor :: qual_names }
+      in
+      mk_cpp_method decl_info name_info fdi mdi
   | CXXMethodDecl (decl_info, name_info, _, fdi, mdi)
   | CXXConstructorDecl (decl_info, name_info, _, fdi, mdi)
   | CXXConversionDecl (decl_info, name_info, _, fdi, mdi)
   | CXXDestructorDecl (decl_info, name_info, _, fdi, mdi) ->
-      let mangled = get_mangled_method_name fdi mdi in
-      let method_name = CAst_utils.get_unqualified_name name_info in
-      let class_typename = get_class_typename ?tenv decl_info in
-      mk_cpp_method ?tenv class_typename method_name ~meth_decl mangled parameters
+      mk_cpp_method decl_info name_info fdi mdi
   | ObjCMethodDecl (decl_info, name_info, mdi) ->
       objc_method_procname ?tenv decl_info name_info.Clang_ast_t.ni_name mdi parameters
   | BlockDecl _ ->
@@ -731,7 +758,16 @@ and get_record_struct_type tenv definition_decl : Typ.desc =
             (* Note: We treat static field same as global variables *)
             let statics = [] in
             let methods = get_struct_methods definition_decl tenv in
-            let supers = get_superclass_list_cpp tenv definition_decl in
+            let supers =
+              get_superclass_list_cpp tenv definition_decl
+              (* Mitigation: Sometimes the list of super classes includes the root type. *)
+              |> List.filter ~f:(fun super ->
+                     let is_sil_typename = Typ.Name.equal sil_typename super in
+                     if is_sil_typename then
+                       Logging.internal_error "The type %a has a super class of itself.@\n"
+                         Typ.Name.pp sil_typename ;
+                     not is_sil_typename )
+            in
             let annots =
               if Typ.Name.Cpp.is_class sil_typename then Annot.Class.cpp
               else (* No annotations for structs *) Annot.Item.empty
@@ -789,7 +825,7 @@ module CProcname = struct
         in
         objc_method_procname decl_info method_name mdi []
     | BlockDecl _ ->
-        Procname.Block (Procname.Block.make_surrounding Config.anonymous_block_prefix [])
+        Procname.Block (Procname.Block.make_surrounding None Config.anonymous_block_prefix [])
     | _ ->
         from_decl method_decl
 end

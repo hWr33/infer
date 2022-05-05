@@ -6,9 +6,9 @@
  *)
 
 open! IStd
-open PulseBasicInterface
 module AbductiveDomain = PulseAbductiveDomain
 module Arithmetic = PulseArithmetic
+module Diagnostic = PulseDiagnostic
 
 type t =
   | AccessToInvalidAddress of Diagnostic.access_to_invalid_address
@@ -28,6 +28,10 @@ let to_diagnostic = function
 let add_call call_and_loc = function
   | AccessToInvalidAddress access ->
       AccessToInvalidAddress {access with calling_context= call_and_loc :: access.calling_context}
+  | ErlangError (Badkey {calling_context; location}) ->
+      ErlangError (Badkey {calling_context= call_and_loc :: calling_context; location})
+  | ErlangError (Badmap {calling_context; location}) ->
+      ErlangError (Badmap {calling_context= call_and_loc :: calling_context; location})
   | ErlangError (Badmatch {calling_context; location}) ->
       ErlangError (Badmatch {calling_context= call_and_loc :: calling_context; location})
   | ErlangError (Badrecord {calling_context; location}) ->
@@ -38,6 +42,8 @@ let add_call call_and_loc = function
       ErlangError (Function_clause {calling_context= call_and_loc :: calling_context; location})
   | ErlangError (If_clause {calling_context; location}) ->
       ErlangError (If_clause {calling_context= call_and_loc :: calling_context; location})
+  | ErlangError (Try_clause {calling_context; location}) ->
+      ErlangError (Try_clause {calling_context= call_and_loc :: calling_context; location})
   | ReadUninitializedValue read ->
       ReadUninitializedValue {read with calling_context= call_and_loc :: read.calling_context}
 
@@ -54,7 +60,12 @@ let is_manifest (astate : AbductiveDomain.summary) =
    not true as calling context cannot possibly influence such conditions *)
 let should_report (astate : AbductiveDomain.summary) (diagnostic : Diagnostic.t) =
   match diagnostic with
-  | MemoryLeak _ | StackVariableAddressEscape _ ->
+  | MemoryLeak _
+  | ResourceLeak _
+  | RetainCycle _
+  | StackVariableAddressEscape _
+  | TaintFlow _
+  | UnnecessaryCopy _ ->
       (* these issues are reported regardless of the calling context, not sure if that's the right
          decision yet *)
       `ReportNow

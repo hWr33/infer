@@ -12,6 +12,8 @@ open Fol
 
 type t = Sh.t [@@deriving compare, equal, sexp]
 
+module Set = Sh.Set
+
 let pp fs q = Format.fprintf fs "@[{ %a@ }@]" Sh.pp q
 
 (* set by cli *)
@@ -43,7 +45,10 @@ let join p q =
 let joinN qs =
   [%Trace.call fun {pf} -> pf "@ %a" Sh.pp_djn qs]
   ;
-  (match qs with [q] -> q | _ -> Sh.orN qs |> simplify)
+  ( match Sh.Set.classify qs with
+  | Zero -> Sh.orN qs
+  | One q -> q
+  | Many -> Sh.orN qs |> simplify )
   |>
   [%Trace.retn fun {pf} -> pf "%a" pp]
 
@@ -67,10 +72,7 @@ let exec_move tid res q =
 
 let exec_inst tid inst pre =
   let alarm kind =
-    { Alarm.kind
-    ; loc= Llair.Inst.loc inst
-    ; pp_action= Fun.flip Llair.Inst.pp inst
-    ; pp_state= Fun.flip pp pre }
+    Alarm.v kind (Llair.Inst.loc inst) Llair.Inst.pp inst pp pre
   in
   let or_alarm = function
     | Some post -> Ok post
@@ -90,16 +92,24 @@ let exec_inst tid inst pre =
       Exec.store pre ~ptr:(X.term tid ptr) ~exp:(X.term tid exp)
         ~len:(X.term tid len)
       |> or_alarm
+  | AtomicRMW {reg; ptr; exp; len; _} ->
+      Exec.atomic_rmw pre ~reg:(X.reg tid reg) ~ptr:(X.term tid ptr)
+        ~exp:(X.term tid exp) ~len:(X.term tid len)
+      |> or_alarm
+  | AtomicCmpXchg {reg; ptr; cmp; exp; len; len1; _} ->
+      Exec.atomic_cmpxchg pre ~reg:(X.reg tid reg) ~ptr:(X.term tid ptr)
+        ~cmp:(X.term tid cmp) ~exp:(X.term tid exp) ~len:(X.term tid len)
+        ~len1:(X.term tid len1)
+      |> or_alarm
   | Alloc {reg; num; len; _} ->
       Exec.alloc pre ~reg:(X.reg tid reg) ~num:(X.term tid num) ~len
       |> or_alarm
   | Free {ptr; _} -> Exec.free pre ~ptr:(X.term tid ptr) |> or_alarm
   | Nondet {reg; _} -> Ok (Exec.nondet pre (Option.map ~f:(X.reg tid) reg))
-  | Abort _ -> Error (alarm Abort)
-  | Intrinsic {reg; name; args; _} ->
+  | Builtin {reg; name; args; _} ->
       let areturn = Option.map ~f:(X.reg tid) reg in
       let actuals = IArray.map ~f:(X.term tid) args in
-      Exec.intrinsic pre areturn name actuals |> or_alarm )
+      Exec.builtin pre areturn name actuals |> or_alarm )
   |> Or_alarm.map ~f:simplify
 
 let enter_scope tid regs q =
@@ -120,7 +130,7 @@ let garbage_collect (q : Sh.t) ~wrt =
     if Term.Set.equal previous current then current
     else
       let new_set =
-        List.fold q.heap current ~f:(fun seg current ->
+        Iter.fold (Sh.Segs.to_iter q.heap) current ~f:(fun seg current ->
             if value_determined_by q.ctx current seg.loc then
               List.fold (Context.class_of q.ctx seg.cnt) current
                 ~f:(fun e c ->
@@ -135,11 +145,11 @@ let garbage_collect (q : Sh.t) ~wrt =
   [%Trace.retn fun {pf} -> pf "%a" pp]
 
 let and_eqs sub formals actuals q =
-  let and_eq formal actual q =
+  let and_eq formal actual eqs =
     let actual' = Term.rename sub actual in
-    Sh.and_ (Formula.eq (Term.var formal) actual') q
+    Formula.eq (Term.var formal) actual' :: eqs
   in
-  IArray.fold2_exn ~f:and_eq formals actuals q
+  Sh.andN (IArray.fold2_exn ~f:and_eq formals actuals []) q
 
 let localize_entry tid globals actuals formals freturn locals shadow pre
     entry =
@@ -175,8 +185,8 @@ type from_call = {areturn: Var.t option; unshadow: Var.Subst.t; frame: Sh.t}
 (** Express formula in terms of formals instead of actuals, and enter scope
     of locals: rename formals to fresh vars in formula and actuals, add
     equations between each formal and actual, and quantify fresh vars. *)
-let call ~summaries tid ~globals ~actuals ~areturn ~formals ~freturn ~locals
-    q =
+let call ~summaries tid ?(child = tid) ~globals ~actuals ~areturn ~formals
+    ~freturn ~locals q =
   [%Trace.call fun {pf} ->
     pf "@ @[<hv>locals: {@[%a@]}@ globals: {@[%a@]}@ q: %a@]"
       Llair.Reg.Set.pp locals Llair.Global.Set.pp globals pp q ;
@@ -194,9 +204,9 @@ let call ~summaries tid ~globals ~actuals ~areturn ~formals ~freturn ~locals
   ;
   let actuals = IArray.map ~f:(X.term tid) actuals in
   let areturn = Option.map ~f:(X.reg tid) areturn in
-  let formals = IArray.map ~f:(X.reg tid) formals in
+  let formals = IArray.map ~f:(X.reg child) formals in
   let freturn_locals =
-    X.regs tid (Llair.Reg.Set.add_option freturn locals)
+    X.regs child (Llair.Reg.Set.add_option freturn locals)
   in
   let modifs = Var.Set.of_option areturn in
   (* quantify modifs, their current values will be overwritten and so should
@@ -218,7 +228,7 @@ let call ~summaries tid ~globals ~actuals ~areturn ~formals ~freturn ~locals
   ( if not summaries then (entry, {areturn; unshadow; frame= Sh.emp})
   else
     let q, frame =
-      localize_entry tid globals actuals formals freturn locals shadow q
+      localize_entry child globals actuals formals freturn locals shadow q
         entry
     in
     (q, {areturn; unshadow; frame}) )
@@ -280,6 +290,26 @@ let retn tid formals freturn {areturn; unshadow; frame} q =
   |> simplify
   |>
   [%Trace.retn fun {pf} -> pf "%a" pp]
+
+type term_code = Term.t option [@@deriving compare, sexp_of]
+
+let term tid formals freturn q =
+  let* freturn = freturn in
+  let formals =
+    Var.Set.of_iter (Iter.map ~f:(X.reg tid) (IArray.to_iter formals))
+  in
+  let freturn = X.reg tid freturn in
+  let xs, q = Sh.bind_exists q ~wrt:Var.Set.empty in
+  let outscoped = Var.Set.union formals (Var.Set.of_ freturn) in
+  let xs = Var.Set.union xs outscoped in
+  let retn_val_cls = Context.class_of q.ctx (Term.var freturn) in
+  List.find retn_val_cls ~f:(fun retn_val ->
+      Var.Set.disjoint xs (Term.fv retn_val) )
+
+let move_term_code tid reg code q =
+  match code with
+  | Some retn_val -> Exec.move q (IArray.of_ (X.reg tid reg, retn_val))
+  | None -> q
 
 let resolve_callee lookup tid ptr (q : Sh.t) =
   Context.class_of q.ctx (X.term tid ptr)

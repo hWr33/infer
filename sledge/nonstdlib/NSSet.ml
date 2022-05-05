@@ -30,25 +30,6 @@ struct
   let comparer = S.comparer
 
   include S.Provide_equal (Elt)
-
-  module Provide_hash (Elt : sig
-    type t = elt [@@deriving hash]
-  end) =
-  struct
-    let hash_fold_t h s =
-      let length = ref 0 in
-      let s =
-        S.fold
-          (fun x h ->
-            incr length ;
-            Elt.hash_fold_t h x )
-          s h
-      in
-      Hash.fold_int s !length
-
-    let hash = Hash.of_fold hash_fold_t
-  end
-
   include S.Provide_sexp_of (Elt)
   module Provide_of_sexp = S.Provide_of_sexp
 
@@ -85,11 +66,22 @@ struct
   let map s ~f = S.map f s
   let flat_map s ~f = S.fold (fun x s -> S.union (f x) s) s S.empty
   let filter s ~f = S.filter f s
+  let filter_map s ~f = S.filter_map f s
   let partition s ~f = S.partition f s
   let iter s ~f = S.iter f s
   let exists s ~f = S.exists f s
   let for_all s ~f = S.for_all f s
   let fold s z ~f = S.fold f s z
+
+  let fold_map s z ~f =
+    let z = ref z in
+    let f x =
+      let x', z' = f x !z in
+      z := z' ;
+      x'
+    in
+    let s' = map s ~f in
+    (s', !z)
 
   let reduce xs ~f =
     match pop xs with Some (x, xs) -> Some (fold ~f xs x) | None -> None
@@ -111,8 +103,11 @@ struct
     let pp = pp_full Elt.pp
 
     let pp_diff fs (xs, ys) =
-      let lose = diff xs ys and gain = diff ys xs in
-      if not (is_empty lose) then Format.fprintf fs "-- %a" pp lose ;
+      let lose = diff xs ys in
+      let gain = diff ys xs in
+      if not (is_empty lose) then (
+        Format.fprintf fs "-- %a" pp lose ;
+        if not (is_empty gain) then Format.fprintf fs "@ " ) ;
       if not (is_empty gain) then Format.fprintf fs "++ %a" pp gain
   end
 end

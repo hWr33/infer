@@ -38,10 +38,7 @@ val add : Var.Set.t -> Formula.t -> t -> Var.Set.t * t
 val union : Var.Set.t -> t -> t -> Var.Set.t * t
 (** Union (that is, conjoin) two contexts of assumptions. *)
 
-val inter : Var.Set.t -> t -> t -> Var.Set.t * t
-(** Intersect (that is, disjoin) contexts of assumptions. *)
-
-val interN : Var.Set.t -> t list -> Var.Set.t * t
+val interN : Var.Set.t -> (Var.Set.t * t) list -> Var.Set.t * t
 (** Intersect contexts of assumptions. Possibly weaker than logical
     disjunction. *)
 
@@ -72,6 +69,8 @@ val normalize : t -> Term.t -> Term.t
     assumptions, where [e'] and its subterms are expressed in terms of the
     canonical representatives of each equivalence class. *)
 
+val fold_eqs : t -> 's -> f:(Formula.t -> 's -> 's) -> 's
+
 val class_of : t -> Term.t -> Term.t list
 (** Equivalence class of [e]: all the terms [f] in the context such that
     [e = f] is implied by the assumptions. *)
@@ -90,6 +89,7 @@ module Subst : sig
   val empty : t
   val compose : t -> t -> t
   val is_empty : t -> bool
+  val fv : t -> Var.Set.t
   val fold_eqs : t -> 's -> f:(Formula.t -> 's -> 's) -> 's
 
   val subst : t -> Term.t -> Term.t

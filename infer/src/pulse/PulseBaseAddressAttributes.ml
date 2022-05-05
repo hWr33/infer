@@ -42,7 +42,8 @@ let remove_one addr attribute attrs =
       attrs
   | Some old_attrs ->
       let new_attrs = Attributes.remove attribute old_attrs in
-      Graph.add addr new_attrs attrs
+      if Attributes.is_empty new_attrs then Graph.remove addr attrs
+      else Graph.add addr new_attrs attrs
 
 
 let add addr attributes attrs =
@@ -62,10 +63,32 @@ let empty = Graph.empty
 
 let filter = Graph.filter
 
-let filter_with_discarded_addrs f x =
+let filter_with_discarded_addrs f_keep memory =
   fold
-    (fun k v ((x, discarded) as acc) -> if f k v then acc else (Graph.remove k x, k :: discarded))
-    x (x, [])
+    (fun addr attrs ((memory, discarded) as acc) ->
+      if f_keep addr then
+        let attrs' =
+          Attributes.fold attrs ~init:attrs ~f:(fun attrs' attr ->
+              match Attribute.filter_unreachable f_keep attr with
+              | None ->
+                  Attributes.remove attr attrs'
+              | Some attr' ->
+                  if phys_equal attr attr' then attrs'
+                  else
+                    let attrs' = Attributes.remove attr attrs' in
+                    Attributes.add attrs' attr' )
+        in
+        if phys_equal attrs attrs' then acc
+        else
+          ( Graph.update addr
+              (fun _ -> if Attributes.is_empty attrs' then None else Some attrs')
+              memory
+          , (* HACK: don't add to the discarded addresses even if we did discard all the attributes
+               of the address; this is ok because the list of discarded addresses is only relevant
+               to allocation attributes, which are not affected by this filtering... sorry! *)
+            discarded )
+      else (Graph.remove addr memory, addr :: discarded) )
+    memory (memory, [])
 
 
 let pp = Graph.pp
@@ -74,9 +97,15 @@ let invalidate (address, history) invalidation location memory =
   add_one address (Attribute.Invalid (invalidation, Immediate {location; history})) memory
 
 
-let allocate allocator (address, history) location memory =
-  add_one address (Attribute.Allocated (allocator, Immediate {location; history})) memory
+let always_reachable address memory = add_one address Attribute.AlwaysReachable memory
 
+let allocate allocator address location memory =
+  add_one address
+    (Attribute.Allocated (allocator, Immediate {location; history= ValueHistory.epoch}))
+    memory
+
+
+let java_resource_release address memory = add_one address Attribute.JavaResourceReleased memory
 
 let mark_as_end_of_collection address memory = add_one address Attribute.EndOfCollection memory
 
@@ -86,12 +115,15 @@ let check_valid address attrs =
   | None ->
       Ok ()
   | Some invalidation ->
+      L.d_printfln ~color:Red "INVALID: %a" Invalidation.pp (fst invalidation) ;
       Error invalidation
 
 
 let check_initialized address attrs =
   L.d_printfln "Checking if %a is initialized" AbstractValue.pp address ;
-  if Graph.find_opt address attrs |> Option.exists ~f:Attributes.is_uninitialized then Error ()
+  if Graph.find_opt address attrs |> Option.exists ~f:Attributes.is_uninitialized then (
+    L.d_printfln ~color:Red "UNINITIALIZED" ;
+    Error () )
   else Ok ()
 
 
@@ -124,6 +156,12 @@ let remove_must_be_valid_attr address memory =
       memory
 
 
+let remove_unsuitable_for_summary =
+  Graph.filter_map (fun _addr attrs ->
+      let new_attrs = Attributes.remove_unsuitable_for_summary attrs in
+      if Attributes.is_empty new_attrs then None else Some new_attrs )
+
+
 let initialize address attrs =
   if Graph.find_opt address attrs |> Option.exists ~f:Attributes.is_uninitialized then
     remove_one address Attribute.Uninitialized attrs
@@ -134,9 +172,15 @@ let get_allocation = get_attribute Attributes.get_allocation
 
 let get_closure_proc_name = get_attribute Attributes.get_closure_proc_name
 
+let get_copied_var = get_attribute Attributes.get_copied_var
+
+let get_source_origin_of_copy = get_attribute Attributes.get_source_origin_of_copy
+
 let get_invalid = get_attribute Attributes.get_invalid
 
 let get_must_be_valid = get_attribute Attributes.get_must_be_valid
+
+let get_must_not_be_tainted = get_attribute Attributes.get_must_not_be_tainted
 
 let is_must_be_valid_or_allocated_isl address attrs =
   Option.is_some (get_must_be_valid address attrs)
@@ -146,9 +190,17 @@ let is_must_be_valid_or_allocated_isl address attrs =
 
 let get_must_be_initialized = get_attribute Attributes.get_must_be_initialized
 
+let get_written_to = get_attribute Attributes.get_written_to
+
 let add_dynamic_type typ address memory = add_one address (Attribute.DynamicType typ) memory
 
 let get_dynamic_type attrs v = get_attribute Attributes.get_dynamic_type v attrs
+
+let add_ref_counted address memory = add_one address Attribute.RefCounted memory
+
+let is_ref_counted address attrs =
+  Graph.find_opt address attrs |> Option.exists ~f:Attributes.is_ref_counted
+
 
 let std_vector_reserve address memory = add_one address Attribute.StdVectorReserve memory
 
@@ -156,6 +208,10 @@ let add_unreachable_at address location memory = add_one address (UnreachableAt 
 
 let is_end_of_collection address attrs =
   Graph.find_opt address attrs |> Option.exists ~f:Attributes.is_end_of_collection
+
+
+let is_java_resource_released adress attrs =
+  Graph.find_opt adress attrs |> Option.exists ~f:Attributes.is_java_resource_released
 
 
 let is_std_vector_reserved address attrs =
@@ -181,7 +237,8 @@ let canonicalize ~get_var_repr attrs_map =
                  Attributes.union_prefer_left attrs' attrs )
         in
         add addr' attrs' g )
-    attrs_map Graph.empty
+    (remove_unsuitable_for_summary attrs_map)
+    Graph.empty
 
 
 let subst_var (v, v') attrs_map =

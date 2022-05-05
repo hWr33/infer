@@ -15,6 +15,7 @@ type mode =
   | Analyze
   | AnalyzeJson
   | Ant of {prog: string; args: string list}
+  | Buck2 of {build_cmd: string list}
   | BuckClangFlavor of {build_cmd: string list}
   | BuckCompilationDB of {deps: BuckMode.clang_compilation_db_deps; prog: string; args: string list}
   | BuckGenrule of {prog: string}
@@ -26,6 +27,7 @@ type mode =
   | Maven of {prog: string; args: string list}
   | NdkBuild of {build_cmd: string list}
   | Rebar3 of {args: string list}
+  | Erlc of {args: string list}
   | XcodeBuild of {prog: string; args: string list}
   | XcodeXcpretty of {prog: string; args: string list}
 

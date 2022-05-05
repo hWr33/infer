@@ -7,11 +7,9 @@
 
 (** Global namespace intended to be opened in each source file *)
 
-(** Support for [@@deriving compare, equal, hash, sexp] on builtin types *)
+(** Support for [@@deriving compare, equal, sexp] on builtin types *)
 
 include module type of Ppx_compare_lib.Builtin
-module Hash = Ppx_hash_lib.Std.Hash
-include module type of Hash.Builtin
 module Sexp = Sexplib.Sexp
 include module type of Ppx_sexp_conv_lib.Conv
 
@@ -100,6 +98,16 @@ val map2 : ('a -> 'a) -> 'b -> ('a -> 'a -> 'b) -> 'a -> 'a -> 'b
 val map3 :
   ('a -> 'a) -> 'b -> ('a -> 'a -> 'a -> 'b) -> 'a -> 'a -> 'a -> 'b
 
+val map4 :
+     ('a -> 'a)
+  -> 'b
+  -> ('a -> 'a -> 'a -> 'a -> 'b)
+  -> 'a
+  -> 'a
+  -> 'a
+  -> 'a
+  -> 'b
+
 val mapN : ('a -> 'a) -> 'b -> ('a array -> 'b) -> 'a array -> 'b
 
 val fold_map_from_map :
@@ -173,13 +181,6 @@ module Set = NSSet
 module Map = NSMap
 module Multiset = Multiset
 module Bijection = CCBijection [@@warning "-49"]
-
-module FHeap : sig
-  include module type of Fheap
-
-  val remove_top_exn : 'a t -> 'a t
-end
-
 module HashSet = HashSet
 module HashTable = HashTable
 module HashQueue = Core_kernel.Hash_queue
@@ -238,6 +239,10 @@ val check : ('a -> unit) -> 'a -> 'a
 
 val violates : ('a -> unit) -> 'a -> _
 (** Assert that function raises on argument. *)
+
+val register_sexp_of_exn : exn -> (exn -> Sexp.t) -> unit
+(** Register a function to convert exceptions with the same constructor as
+    the given one to sexps. *)
 
 (**)
 

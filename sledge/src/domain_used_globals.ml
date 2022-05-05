@@ -7,7 +7,12 @@
 
 (** Used-globals abstract domain *)
 
-type t = Llair.Global.Set.t [@@deriving compare, equal, sexp]
+module T = struct
+  type t = Llair.Global.Set.t [@@deriving compare, equal, sexp]
+end
+
+include T
+module Set = Set.Make (T)
 
 let pp = Llair.Global.Set.pp
 let empty = Llair.Global.Set.empty
@@ -18,12 +23,17 @@ let init globals =
   empty
 
 let join l r = Llair.Global.Set.union l r
-let joinN = function [] -> empty | x :: xs -> List.fold ~f:join xs x
+let joinN xs = Set.fold ~f:join xs empty
 let enter_scope _ _ state = state
 let recursion_beyond_bound = `skip
 let post _ _ _ state = state
 let retn _ _ _ from_call post = Llair.Global.Set.union from_call post
-let dnf t = [t]
+
+type term_code = unit [@@deriving compare, sexp_of]
+
+let term _ _ _ _ = ()
+let move_term_code _ _ () q = q
+let dnf t = Set.of_ t
 
 let used_globals exp s =
   Llair.Exp.fold_exps exp s ~f:(fun e s ->
@@ -49,8 +59,8 @@ let exec_inst _ inst st =
 type from_call = t [@@deriving sexp]
 
 (* Set abstract state to bottom (i.e. empty set) at function entry *)
-let call ~summaries:_ _ ~globals:_ ~actuals ~areturn:_ ~formals:_ ~freturn:_
-    ~locals:_ st =
+let call ~summaries:_ _ ?child:_ ~globals:_ ~actuals ~areturn:_ ~formals:_
+    ~freturn:_ ~locals:_ st =
   (empty, IArray.fold ~f:used_globals actuals st)
 
 let resolve_callee _ _ _ _ = []

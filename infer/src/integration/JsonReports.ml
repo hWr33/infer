@@ -77,11 +77,7 @@ let should_report issue_type error_desc =
     let issue_type_is_null_deref =
       let null_deref_issue_types =
         let open IssueType in
-        [ field_not_null_checked
-        ; null_dereference
-        ; parameter_not_null_checked
-        ; premature_nil_termination
-        ; empty_vector_access ]
+        [null_dereference; premature_nil_termination; empty_vector_access]
       in
       List.mem ~equal:IssueType.equal null_deref_issue_types issue_type
     in
@@ -152,7 +148,7 @@ end
 type json_issue_printer_typ =
   { error_filter: SourceFile.t -> IssueType.t -> bool
   ; proc_name: Procname.t
-  ; proc_loc_opt: Location.t option
+  ; proc_location_opt: Location.t option
   ; err_key: Errlog.err_key
   ; err_data: Errlog.err_data }
 
@@ -164,12 +160,18 @@ let procedure_id_of_procname proc_name =
       Procname.to_string proc_name
 
 
+let is_in_clang_header source_file =
+  String.is_substring
+    (SourceFile.to_string source_file)
+    ~substring:"/facebook-clang-plugins/clang/install/include/"
+
+
 module JsonIssuePrinter = MakeJsonListPrinter (struct
   type elt = json_issue_printer_typ
 
-  let to_string ({error_filter; proc_name; proc_loc_opt; err_key; err_data} : elt) =
+  let to_string ({error_filter; proc_name; proc_location_opt; err_key; err_data} : elt) =
     let source_file, procedure_start_line =
-      match proc_loc_opt with
+      match proc_location_opt with
       | Some proc_loc ->
           (proc_loc.Location.file, proc_loc.Location.line)
       | None ->
@@ -186,6 +188,7 @@ module JsonIssuePrinter = MakeJsonListPrinter (struct
       error_filter source_file err_key.issue_type
       && should_report_proc_name
       && should_report err_key.issue_type err_key.err_desc
+      && not (is_in_clang_header source_file)
     then
       let severity = IssueType.string_of_severity err_key.severity in
       let bug_type = err_key.issue_type.unique_id in
@@ -240,16 +243,6 @@ module JsonIssuePrinter = MakeJsonListPrinter (struct
     else None
 end)
 
-module IssuesJson = struct
-  include JsonIssuePrinter
-
-  (** Write bug report in JSON format *)
-  let pp_issues_of_error_log fmt error_filter _ proc_loc_opt proc_name err_log =
-    Errlog.iter
-      (fun err_key err_data -> pp fmt {error_filter; proc_name; proc_loc_opt; err_key; err_data})
-      err_log
-end
-
 module NoQualifierHashProcInfo = struct
   type t = {hash: string; loc: Jsonbug_t.loc; procedure_name: string; procedure_id: string}
 
@@ -269,10 +262,11 @@ module JsonCostsPrinterElt = struct
 
   let to_string {loc; proc_name; cost_opt} =
     match cost_opt with
-    | Some {post; is_on_ui_thread} when not (Procname.is_java_access_method proc_name) ->
+    | Some {post; is_on_ui_thread}
+      when (not (Procname.is_java_access_method proc_name)) && not (is_in_clang_header loc.file) ->
         let hum cost =
           let degree_with_term = CostDomain.BasicCost.get_degree_with_term cost in
-          { Jsonbug_t.hum_polynomial= Format.asprintf "%a" CostDomain.BasicCost.pp_hum cost
+          { Jsoncost_t.hum_polynomial= Format.asprintf "%a" CostDomain.BasicCost.pp_hum cost
           ; hum_degree=
               Format.asprintf "%a"
                 (CostDomain.BasicCost.pp_degree ~only_bigO:false)
@@ -282,7 +276,7 @@ module JsonCostsPrinterElt = struct
           }
         in
         let cost_info ?is_autoreleasepool_trace cost =
-          { Jsonbug_t.polynomial_version= CostDomain.BasicCost.version
+          { Jsoncost_t.polynomial_version= CostDomain.BasicCost.version
           ; polynomial= CostDomain.BasicCost.encode cost
           ; degree=
               Option.map (CostDomain.BasicCost.degree cost) ~f:Polynomials.Degree.encode_to_int
@@ -296,7 +290,7 @@ module JsonCostsPrinterElt = struct
           let {NoQualifierHashProcInfo.hash; loc; procedure_name; procedure_id} =
             NoQualifierHashProcInfo.get loc proc_name
           in
-          { Jsonbug_t.hash
+          { Jsoncost_t.hash
           ; loc
           ; procedure_name
           ; procedure_id
@@ -306,7 +300,7 @@ module JsonCostsPrinterElt = struct
               cost_info ~is_autoreleasepool_trace:true
                 (CostDomain.get_cost_kind CostKind.AutoreleasepoolSize post).cost }
         in
-        Some (Jsonbug_j.string_of_cost_item cost_item)
+        Some (Jsoncost_j.string_of_item cost_item)
     | _ ->
         None
 end
@@ -318,19 +312,21 @@ module JsonConfigImpactPrinterElt = struct
     { loc: Location.t
     ; proc_name: Procname.t
     ; config_impact_opt: ConfigImpactAnalysis.Summary.t option
-    ; is_strict: bool }
+    ; mode: Jsonconfigimpact_t.config_impact_mode }
 
-  let to_string {loc; proc_name; config_impact_opt; is_strict} =
-    Option.map config_impact_opt ~f:(fun config_impact ->
-        let {NoQualifierHashProcInfo.hash; loc; procedure_name; procedure_id} =
-          NoQualifierHashProcInfo.get loc proc_name
-        in
-        let unchecked_callees =
-          ConfigImpactAnalysis.Summary.get_unchecked_callees config_impact
-          |> ConfigImpactAnalysis.UncheckedCallees.encode
-        in
-        Jsonbug_j.string_of_config_impact_item
-          {Jsonbug_t.hash; loc; procedure_name; procedure_id; unchecked_callees; is_strict} )
+  let to_string {loc; proc_name; config_impact_opt; mode} =
+    if is_in_clang_header loc.file then None
+    else
+      Option.map config_impact_opt ~f:(fun config_impact ->
+          let {NoQualifierHashProcInfo.hash; loc; procedure_name; procedure_id} =
+            NoQualifierHashProcInfo.get loc proc_name
+          in
+          let unchecked_callees =
+            ConfigImpactAnalysis.Summary.get_unchecked_callees config_impact
+            |> ConfigImpactAnalysis.UncheckedCallees.encode
+          in
+          Jsonconfigimpact_j.string_of_item
+            {Jsonconfigimpact_t.hash; loc; procedure_name; procedure_id; unchecked_callees; mode} )
 end
 
 module JsonConfigImpactPrinter = MakeJsonListPrinter (JsonConfigImpactPrinterElt)
@@ -351,9 +347,9 @@ let mk_error_filter filters proc_name file error_name =
   && filters.Inferconfig.proc_filter proc_name
 
 
-let collect_issues proc_name proc_location err_log issues_acc =
+let collect_issues proc_name proc_location_opt err_log issues_acc =
   Errlog.fold
-    (fun err_key err_data acc -> {Issue.proc_name; proc_location; err_key; err_data} :: acc)
+    (fun err_key err_data acc -> {Issue.proc_name; proc_location_opt; err_key; err_data} :: acc)
     err_log issues_acc
 
 
@@ -362,70 +358,50 @@ let write_costs proc_name loc cost_opt (outfile : Utils.outfile) =
     JsonCostsPrinter.pp outfile.fmt {loc; proc_name; cost_opt}
 
 
-let get_all_config_fields () =
-  lazy
-    (let all_config_fields = ref ConfigImpactAnalysis.Fields.empty in
-     Summary.OnDisk.iter_specs ~f:(fun summary ->
-         Payloads.config_impact_analysis summary.payloads
-         |> Option.iter ~f:(fun summary ->
-                all_config_fields :=
-                  ConfigImpactAnalysis.Fields.union !all_config_fields
-                    (ConfigImpactAnalysis.Summary.get_config_fields summary) ) ) ;
-     !all_config_fields )
-
-
-let write_config_impact all_config_fields proc_name loc config_impact_opt (outfile : Utils.outfile)
-    =
+let write_config_impact proc_name loc config_impact_opt (outfile : Utils.outfile) =
   if
     ( ExternalConfigImpactData.is_in_config_data_file proc_name
     || (Config.config_impact_strict_mode && List.is_empty Config.config_impact_strict_mode_paths)
-    || ConfigImpactAnalysis.is_in_strict_mode_paths loc.Location.file )
+    || ConfigImpactAnalysis.is_in_strict_mode_paths loc.Location.file
+    || ConfigImpactAnalysis.is_in_strict_beta_mode_paths loc.Location.file )
     && is_in_changed_files loc
   then
-    let config_impact_opt =
-      Option.map config_impact_opt
-        ~f:
-          (ConfigImpactAnalysis.Summary.instantiate_unchecked_callees_cond
-             ~all_config_fields:(Lazy.force all_config_fields) )
-    in
-    JsonConfigImpactPrinter.pp outfile.fmt
-      {loc; proc_name; config_impact_opt; is_strict= ConfigImpactAnalysis.strict_mode}
-
-
-(** Process lint issues of a procedure *)
-let write_lint_issues filters (issues_outf : Utils.outfile) linereader procname error_log =
-  let error_filter = mk_error_filter filters procname in
-  IssuesJson.pp_issues_of_error_log issues_outf.fmt error_filter linereader None procname error_log
+    if ConfigImpactPostProcess.is_in_gated_classes proc_name then ()
+      (* Ignore reporting methods of gated classes *)
+    else
+      let config_impact_opt =
+        Option.map config_impact_opt ~f:ConfigImpactPostProcess.instantiate_unchecked_callees_cond
+      in
+      JsonConfigImpactPrinter.pp outfile.fmt
+        {loc; proc_name; config_impact_opt; mode= ConfigImpactAnalysis.mode}
 
 
 let process_summary proc_name loc ~cost:(cost_opt, costs_outf)
-    ~config_impact:(config_impact_opt, config_impact_outf, all_config_fields) err_log issues_acc =
+    ~config_impact:(config_impact_opt, config_impact_outf) err_log issues_acc =
   write_costs proc_name loc cost_opt costs_outf ;
-  write_config_impact all_config_fields proc_name loc config_impact_opt config_impact_outf ;
-  collect_issues proc_name loc err_log issues_acc
+  write_config_impact proc_name loc config_impact_opt config_impact_outf ;
+  collect_issues proc_name (Some loc) err_log issues_acc
 
 
 let process_all_summaries_and_issues ~issues_outf ~costs_outf ~config_impact_outf =
-  let linereader = LineReader.create () in
   let filters = Inferconfig.create_filters () in
   let all_issues = ref [] in
-  let all_config_fields = get_all_config_fields () in
   Summary.OnDisk.iter_report_summaries_from_config
     ~f:(fun proc_name loc cost_opt config_impact_opt err_log ->
       all_issues :=
         process_summary proc_name loc ~cost:(cost_opt, costs_outf)
-          ~config_impact:(config_impact_opt, config_impact_outf, all_config_fields)
+          ~config_impact:(config_impact_opt, config_impact_outf)
           err_log !all_issues ) ;
-  all_issues := Issue.sort_filter_issues !all_issues ;
-  List.iter
-    ~f:(fun {Issue.proc_name; proc_location; err_key; err_data} ->
-      let error_filter = mk_error_filter filters proc_name in
-      IssuesJson.pp issues_outf.Utils.fmt
-        {error_filter; proc_name; proc_loc_opt= Some proc_location; err_key; err_data} )
-    !all_issues ;
   (* Issues that are generated and stored outside of summaries by linter and checkers *)
   List.iter (ResultsDirEntryName.get_issues_directories ()) ~f:(fun dir_name ->
-      IssueLog.load dir_name |> IssueLog.iter ~f:(write_lint_issues filters issues_outf linereader) ) ;
+      IssueLog.load dir_name
+      |> IssueLog.iter ~f:(fun proc_name errlog ->
+             all_issues := collect_issues proc_name None errlog !all_issues ) ) ;
+  let all_issues = Issue.sort_filter_issues !all_issues in
+  List.iter all_issues ~f:(fun {Issue.proc_name; proc_location_opt; err_key; err_data} ->
+      let error_filter = mk_error_filter filters proc_name in
+      JsonIssuePrinter.pp issues_outf.Utils.fmt
+        {error_filter; proc_name; proc_location_opt; err_key; err_data} ) ;
   ()
 
 
@@ -439,11 +415,11 @@ let write_reports ~issues_json ~costs_json ~config_impact_json =
   in
   let open_outfile_and_fmt json =
     let outf = mk_outfile json in
-    IssuesJson.pp_open outf.fmt () ;
+    JsonIssuePrinter.pp_open outf.fmt () ;
     outf
   in
   let close_fmt_and_outfile outf =
-    IssuesJson.pp_close outf.Utils.fmt () ;
+    JsonIssuePrinter.pp_close outf.Utils.fmt () ;
     Utils.close_outf outf
   in
   let issues_outf = open_outfile_and_fmt issues_json in

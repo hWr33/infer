@@ -68,6 +68,8 @@ let all_checkers =
   (* The order of the list is important for those checkers that depend on other checkers having run
      before them. *)
   [ {checker= SelfInBlock; callbacks= [(intraprocedural SelfInBlock.checker, Clang)]}
+  ; { checker= ParameterNotNullChecked
+    ; callbacks= [(intraprocedural ParameterNotNullChecked.checker, Clang)] }
   ; { checker= BufferOverrunAnalysis
     ; callbacks=
         (let bo_analysis =
@@ -158,7 +160,7 @@ let all_checkers =
   ; { checker= Pulse
     ; callbacks=
         (let pulse = interprocedural Payloads.Fields.pulse Pulse.checker in
-         [(pulse, Clang); (pulse, Erlang); (pulse, Java)] ) }
+         [(pulse, Clang); (pulse, Erlang); (pulse, Java); (pulse, CIL)] ) }
   ; { checker= Impurity
     ; callbacks=
         (let impurity =
@@ -192,13 +194,6 @@ let all_checkers =
            interprocedural Payloads.Fields.annot_map AnnotationReachability.checker
          in
          [(annot_reach, Java); (annot_reach, Clang)] ) }
-  ; { checker= ConfigChecksBetweenMarkers
-    ; callbacks=
-        (let checker =
-           interprocedural Payloads.Fields.config_checks_between_markers
-             ConfigChecksBetweenMarkers.checker
-         in
-         [(checker, Clang); (checker, Java)] ) }
   ; { checker= ConfigImpactAnalysis
     ; callbacks=
         (let checker =
@@ -207,7 +202,11 @@ let all_checkers =
              Payloads.Fields.buffer_overrun_analysis Payloads.Fields.config_impact_analysis
              Payloads.Fields.cost ConfigImpactAnalysis.checker
          in
-         [(checker, Clang); (checker, Java)] ) } ]
+         [(checker, Clang); (checker, Java)] ) }
+  ; { checker= SimpleLineage
+    ; callbacks=
+        (let checker = interprocedural Payloads.Fields.simple_lineage SimpleLineage.checker in
+         [(checker, Erlang)] ) } ]
 
 
 let get_active_checkers () =

@@ -11,6 +11,10 @@ include Array
 
 type 'a t = 'a array [@@deriving compare, equal, sexp]
 
+let sub ?(pos = 0) ?len arr =
+  let len = match len with Some i -> i | None -> length arr - pos in
+  sub ~pos ~len arr
+
 let of_ x = [|x|]
 let of_iter = Iter.to_array
 
@@ -61,28 +65,6 @@ let reduce_adjacent xs ~f =
     else sub xs ~pos:0 ~len:(n + 1 - j)
   in
   reduce_adjacent_ 0 0 xs
-
-let split xys =
-  let n = length xys in
-  if n = 0 then ([||], [||])
-  else
-    let x0, y0 = xys.(0) in
-    let xs = make n x0 in
-    let ys = make n y0 in
-    for i = 1 to n - 1 do
-      let xI, yI = xys.(i) in
-      xs.(i) <- xI ;
-      ys.(i) <- yI
-    done ;
-    (xs, ys)
-
-let combine_exn xs ys =
-  let len = length xs in
-  if len <> length ys then invalid_arg "Array.combine_exn" ;
-  init len ~f:(fun i -> (xs.(i), ys.(i)))
-
-let combine xs ys =
-  try Some (combine_exn xs ys) with Invalid_argument _ -> None
 
 let mem x xs ~eq = mem ~eq x xs
 let iter xs ~f = iter ~f xs
@@ -135,5 +117,6 @@ let fold_map_until xs s ~f ~finish =
 
 let for_all2_exn xs ys ~f = for_all2 ~f xs ys
 let fold2_exn xs ys init ~f = fold2 ~f:(fun s x y -> f x y s) ~init xs ys
+let to_list_rev xs = fold ~f:(fun x ys -> x :: ys) xs []
 let to_list_rev_map xs ~f = fold ~f:(fun x ys -> f x :: ys) xs []
 let pp sep pp_elt fs a = List.pp sep pp_elt fs (to_list a)

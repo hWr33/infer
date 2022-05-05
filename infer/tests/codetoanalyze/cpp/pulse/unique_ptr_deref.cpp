@@ -72,15 +72,6 @@ void unique_ptr_release_bad() {
   x.release();
 }
 
-int make_unique_ptr_use_ok() {
-  std::unique_ptr<X> x = std::make_unique<X>();
-  return x->get();
-}
-
-void make_unique_ptr_release_bad() {
-  std::unique_ptr<X> x = std::make_unique<X>();
-  x.release();
-}
 
 int reset_ptr_null_deref_bad() {
   std::unique_ptr<int> x(new int);
@@ -141,6 +132,7 @@ int unique_ptr_move_null_deref_bad() {
   return *p1;
 }
 
+// Deleter that doesn't actually call delete
 template <class T>
 struct Deleter {
   using pointer = T*;
@@ -148,16 +140,10 @@ struct Deleter {
   void operator()(pointer ptr) const {}
 };
 
+// leaky because the deleter doesn't delete the managed pointer
 template <class T>
-using my_unique_ptr = std::unique_ptr<T, Deleter<T>>;
+using leaky_unique_ptr = std::unique_ptr<T, Deleter<T>>;
 
-bool instantiate() {
-  my_unique_ptr<int> p;
-  my_unique_ptr<int[]> q;
-  return p != nullptr && q != nullptr;
-}
-
-// FN because skipped methods create a DeepDeallocate masking the leak
-void FN_no_deleter_construct_bad() { my_unique_ptr<X> p(new X()); }
+void no_delete_in_leaky_unique_ptr_bad() { leaky_unique_ptr<X> p(new X()); }
 
 } // namespace unique_ptr

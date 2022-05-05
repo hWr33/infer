@@ -69,8 +69,15 @@ infer analyze</b> <i>[options]</i></p>
 
 
 
-<p style="margin-left:11%; margin-top: 1em"><i><b>--censor-report</b>
-+string</i></p>
+<p style="margin-left:11%; margin-top: 1em"><i><b>--no-censor-report</b>
++issue_type_regex</i></p>
+
+<p style="margin-left:17%;">For debugging/experimentation
+only: Specify issues not to be censored by
+<b>--censor-report</b>.</p>
+
+<p style="margin-left:11%;"><b>--censor-report</b>
+<i>+string</i></p>
 
 <p style="margin-left:17%;">Specify a filter for issues to
 be censored by adding a 'censored_reason' field in the json
@@ -85,8 +92,8 @@ are reported. Each filter is of the form:
 The first two components are OCaml Str regular expressions,
 with an optional &lsquo;!&lsquo; character prefix. If a
 regex has a &lsquo;!&lsquo; prefix, the polarity is
-inverted, and the filter becomes a &quot;blacklist&quot;
-instead of a &quot;whitelist&quot;. Each filter is
+inverted, and the filter becomes a &quot;block list&quot;
+instead of a &quot;allow list&quot;. Each filter is
 interpreted as an implication: an issue matches if it does
 not match the &lsquo;issue_type_regex&lsquo; or if it does
 match the &lsquo;filename_regex&lsquo;. The filenames that
@@ -154,12 +161,13 @@ infer results directory. (Conversely:
 
 <p style="margin-left:17%;">Proceed as if the first
 argument after <b>--</b> was <i>command</i>. Possible
-values: <i>ant</i>, <i>buck</i>, <i>gradle</i>,
-<i>gradlew</i>, <i>java</i>, <i>javac</i>, <i>cc</i>,
-<i>clang</i>, <i>gcc</i>, <i>clang++</i>, <i>c++</i>,
-<i>g++</i>, <i>make</i>, <i>configure</i>, <i>cmake</i>,
-<i>waf</i>, <i>mvn</i>, <i>mvnw</i>, <i>ndk-build</i>,
-<i>rebar3</i>, <i>xcodebuild</i>.</p>
+values: <i>ant</i>, <i>buck</i>, <i>buck2</i>,
+<i>gradle</i>, <i>gradlew</i>, <i>java</i>, <i>javac</i>,
+<i>cc</i>, <i>clang</i>, <i>gcc</i>, <i>clang++</i>,
+<i>c++</i>, <i>g++</i>, <i>make</i>, <i>configure</i>,
+<i>cmake</i>, <i>waf</i>, <i>mvn</i>, <i>mvnw</i>,
+<i>ndk-build</i>, <i>rebar3</i>, <i>erlc</i>,
+<i>xcodebuild</i>.</p>
 
 <p style="margin-left:11%;"><b>--help</b></p>
 
@@ -209,20 +217,29 @@ phase once the analysis has completed (Conversely:
 <b>--report</b>)</p>
 
 
-<p style="margin-left:11%;"><b>--report-blacklist-files-containing</b>
+<p style="margin-left:11%;"><b>--report-allow-list-path-regex</b>
+<i>+path_regex</i></p>
+
+<p style="margin-left:17%;">Report issues only on files
+whose relative path matches the specified OCaml regex (and
+which do not match
+<b>--report-block-list-path-regex</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--report-block-list-files-containing</b>
 <i>+string</i></p>
 
 <p style="margin-left:17%;">Do not report any issues on
 files containing the specified string</p>
 
 
-<p style="margin-left:11%;"><b>--report-blacklist-path-regex</b>
+<p style="margin-left:11%;"><b>--report-block-list-path-regex</b>
 <i>+path_regex</i></p>
 
 <p style="margin-left:17%;">Do not report any issues on
 files whose relative path matches the specified OCaml regex,
-even if they match the whitelist specified by
-<b>--report-whitelist-path-regex</b></p>
+even if they match the allow list specified by
+<b>--report-allow-list-path-regex</b></p>
 
 
 <p style="margin-left:11%;"><b>--report-force-relative-path</b></p>
@@ -238,25 +255,24 @@ absolute path to a relative path to the root directory
 <p style="margin-left:17%;">do not report a type of
 errors</p>
 
-
-<p style="margin-left:11%;"><b>--report-whitelist-path-regex</b>
-<i>+path_regex</i></p>
-
-<p style="margin-left:17%;">Report issues only on files
-whose relative path matches the specified OCaml regex (and
-which do not match <b>--report-blacklist-path-regex</b>)</p>
-
 <p style="margin-left:11%;"><b>--results-dir</b>,<b>-o</b>
 <i>dir</i></p>
 
 <p style="margin-left:17%;">Write results and internal
 files in the specified directory</p>
 
+<p style="margin-left:11%;"><b>--sarif</b></p>
+
+<p style="margin-left:17%;">Activates: Output issues in
+SARIF (Static Analysis Results Interchange Format) in
+infer-out/report.sarif (Conversely: <b>--no-sarif</b>)</p>
+
 <p style="margin-left:11%;"><b>--skip-analysis-in-path</b>
-<i>+path_prefix_OCaml_regex</i></p>
+<i>+regex</i></p>
 
 <p style="margin-left:17%;">Ignore files whose path matches
-the given prefix (can be specified multiple times)</p>
+a given regex (can be specified multiple times, but you must
+make sure each regex is properly bracketed)</p>
 
 <p style="margin-left:11%;"><b>--sqlite-cache-size</b>
 <i>int</i></p>
@@ -309,7 +325,7 @@ build command</p></td></tr>
 
 
 
-<p style="margin-left:11%; margin-top: 1em"><b>--buck-blacklist</b>
+<p style="margin-left:11%; margin-top: 1em"><b>--buck-block-list</b>
 <i>+regex</i></p>
 
 <p style="margin-left:17%;">Skip capture of files matched
@@ -318,7 +334,7 @@ non-compilation-database</p>
 
 <p style="margin-left:11%;">Buck integration is supported,
 not Java. <b><br>
---buck-targets-blacklist</b> <i>+regex</i></p>
+--buck-targets-block-list</b> <i>+regex</i></p>
 
 <p style="margin-left:17%;">Skip capture of buck targets
 matched by the specified regular expression. Only valid for
@@ -330,7 +346,7 @@ matched by the specified regular expression. Only valid for
 
 
 
-<p style="margin-left:11%; margin-top: 1em"><b>--capture-blacklist</b>
+<p style="margin-left:11%; margin-top: 1em"><b>--capture-block-list</b>
 <i>regex</i></p>
 
 <p style="margin-left:17%;">Skip capture of files matched

@@ -16,6 +16,7 @@ type os_type = Unix | Win32 | Cygwin
 type build_system =
   | BAnt
   | BBuck
+  | BBuck2
   | BClang
   | BGradle
   | BJava
@@ -24,6 +25,7 @@ type build_system =
   | BMvn
   | BNdk
   | BRebar3
+  | BErlc
   | BXcode
 
 type scheduler = File | Restart | SyntacticCallGraph [@@deriving equal]
@@ -71,9 +73,6 @@ val fcp_dir : string
 val idempotent_getters : bool
 
 val initial_analysis_time : float
-
-val is_WSL : bool
-(** Windows Subsystem for Linux *)
 
 val ivar_attributes : string
 
@@ -167,9 +166,15 @@ val bo_debug : int
 
 val bo_field_depth_limit : int option
 
+val bo_max_cfg_size : int
+
 val bootclasspath : string option
 
 val buck : bool
+
+val buck2_build_args : string list
+
+val buck2_build_args_no_inline : string list
 
 val buck_block_list : string list
 
@@ -180,6 +185,8 @@ val buck_build_args_no_inline : string list
 val buck_cache_mode : bool
 
 val buck_clang_use_toolchain_config : bool
+
+val buck_java_flavor_dependency_depth : int option
 
 val buck_java_flavor_suppress_config : bool
 
@@ -231,6 +238,12 @@ val classpath : string option
 
 val command : InferCommand.t
 
+val config_impact_config_field_patterns : Re.Str.regexp list
+
+val config_impact_config_function_patterns : Re.Str.regexp list
+
+val config_impact_config_param_patterns : Re.Str.regexp list
+
 val config_impact_current : string option
 
 val config_impact_data_file : string option
@@ -244,6 +257,10 @@ val config_impact_previous : string option
 val config_impact_strict_mode : bool
 
 val config_impact_strict_mode_paths : Str.regexp list
+
+val config_impact_strict_beta_mode_paths : Str.regexp list
+
+val config_impact_test_paths : Str.regexp list
 
 val continue_analysis : bool
 
@@ -306,6 +323,10 @@ val eradicate_verbose : bool
 val erlang_ast_dir : string option
 
 val erlang_skip_rebar3 : bool
+
+val erlang_with_otp_specs : bool
+
+val erlang_list_unfold_depth : int
 
 val fail_on_bug : bool
 
@@ -428,6 +449,10 @@ val memtrace_sampling_rate : float
 
 val merge : bool
 
+val merge_infer_out : string list
+
+val merge_report : string list
+
 val method_decls_info : string option
 
 val modified_lines : string option
@@ -478,6 +503,8 @@ val procedures : bool
 
 val procedures_attributes : bool
 
+val procedures_call_graph : bool
+
 val procedures_cfg : bool
 
 val procedures_definedness : bool
@@ -502,13 +529,19 @@ val project_root : string
 
 val pulse_cut_to_one_path_procedures_pattern : Str.regexp option
 
+val pulse_inline_global_init_func_pointer : bool
+
 val pulse_intraprocedural_only : bool
 
 val pulse_isl : bool
 
 val pulse_manifest_emp : bool
 
+val pulse_max_cfg_size : int
+
 val pulse_max_disjuncts : int
+
+val pulse_max_heap : int option
 
 val pulse_model_abort : string list
 
@@ -522,13 +555,15 @@ val pulse_model_realloc_pattern : Str.regexp option
 
 val pulse_model_release_pattern : Str.regexp option
 
+val pulse_model_returns_copy_pattern : Str.regexp option
+
 val pulse_model_return_first_arg : Str.regexp option
 
 val pulse_model_return_nonnull : Str.regexp option
 
 val pulse_model_skip_pattern : Str.regexp option
 
-val pulse_prune_unsupported_arithmetic : bool
+val pulse_models_for_erlang : Yojson.Basic.t
 
 val pulse_report_ignore_unknown_java_methods_patterns : Str.regexp option
 
@@ -538,7 +573,21 @@ val pulse_model_transfer_ownership : string list
 
 val pulse_report_latent_issues : bool
 
+val pulse_report_issues_for_tests : bool
+
 val pulse_recency_limit : int
+
+val pulse_scuba_logging : bool
+
+val pulse_skip_procedures : Str.regexp option
+
+val pulse_taint_policies : Yojson.Basic.t
+
+val pulse_taint_sanitizers : Yojson.Basic.t
+
+val pulse_taint_sinks : Yojson.Basic.t
+
+val pulse_taint_sources : Yojson.Basic.t
 
 val pulse_widen_threshold : int
 
@@ -559,6 +608,8 @@ val quandary_sources : Yojson.Basic.t
 val quiet : bool
 
 val racerd_guardedby : bool
+
+val racerd_ignore_classes : String.Set.t
 
 val reactive_mode : bool
 
@@ -596,6 +647,8 @@ val rest : string list
 
 val results_dir : string
 
+val sarif : bool
+
 val scheduler : scheduler
 
 val scuba_logging : bool
@@ -608,11 +661,21 @@ val select : [`All | `Select of int] option
 
 val show_buckets : bool
 
+val simple_lineage_json_report : bool
+
+val simple_lineage_keep_temporaries : bool
+
+val simple_lineage_max_cfg_size : int option
+
+val simple_lineage_dedup : bool
+
+val simple_lineage_seed : int
+
 val siof_check_iostreams : bool
 
 val siof_safe_methods : string list
 
-val skip_analysis_in_path : string list
+val skip_analysis_in_path : Str.regexp option
 
 val skip_analysis_in_path_skips_compilation : bool
 
@@ -670,6 +733,8 @@ val testing_mode : bool
 
 val threadsafe_aliases : Yojson.Basic.t
 
+val top_longest_proc_duration_size : int option
+
 val topl_max_conjuncts : int
 
 val topl_max_disjuncts : int
@@ -726,6 +791,9 @@ val java_package_is_external : string -> bool
 
 val scuba_execution_id : Int64.t option
 (** a random number to (hopefully) uniquely identify this run *)
+
+val is_originator : bool
+(** is the current process (forked from) the root of the Infer process tree *)
 
 (** {2 Global variables with initial values specified by command-line options} *)
 

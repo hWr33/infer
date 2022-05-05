@@ -109,8 +109,7 @@ and name =
   | CSharpClass of CSharpClassName.t
   | ErlangType of ErlangTypeName.t
   | JavaClass of JavaClassName.t
-  | ObjcClass of QualifiedCppName.t * name list
-      (** ObjC class that conforms to a list of protocols, e.g. id<NSFastEnumeration, NSCopying> *)
+  | ObjcClass of QualifiedCppName.t  (** ObjC class *)
   | ObjcProtocol of QualifiedCppName.t
 
 and template_arg = TType of t | TInt of Int64.t | TNull | TNullPtr | TOpaque
@@ -138,6 +137,8 @@ val mk_struct : name -> t
 
 val mk_ptr : ?ptr_kind:ptr_kind -> t -> t
 (** make a pointer to [t], default kind is [Pk_pointer] *)
+
+val set_ptr_to_const : t -> t
 
 val get_ikind_opt : t -> ikind option
 (** Get ikind if the type is integer. *)
@@ -169,6 +170,9 @@ module Name : sig
 
   val pp : Format.formatter -> t -> unit
 
+  val pp_name_only : Format.formatter -> t -> unit
+  (** Print name only without prefix *)
+
   val is_class : t -> bool
   (** [is_class name] holds if [name] names CPP/Objc/Java class *)
 
@@ -177,6 +181,9 @@ module Name : sig
 
   val is_same_type : t -> t -> bool
   (** [is_class name1 name2] holds if [name1] and [name2] name same kind of type *)
+
+  val name_without_templates : t -> string
+  (** name of the c++ typename without qualifier *)
 
   val name : t -> string
   (** name of the typename without qualifier *)
@@ -277,8 +284,6 @@ val pp_java : verbose:bool -> F.formatter -> t -> unit
 val pp_cs : verbose:bool -> F.formatter -> t -> unit
 (** Pretty print a Java type. Raises if type isn't produced by the CSharp frontend *)
 
-val pp_protocols : Pp.env -> F.formatter -> name list -> unit
-
 val to_string : t -> string
 
 val desc_to_string : desc -> string
@@ -332,9 +337,6 @@ val is_char : t -> bool
 
 val is_csharp_type : t -> bool
 (** is [t] a type produced by the Java frontend? *)
-
-val is_java_primitive_type : t -> bool
-(** is [t] a primitive type produced by the Java frontend? *)
 
 val is_java_type : t -> bool
 (** is [t] a type produced by the Java frontend? *)

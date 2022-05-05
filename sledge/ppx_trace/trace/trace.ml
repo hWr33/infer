@@ -13,9 +13,7 @@ module Char = struct
 end
 
 module String = struct
-  include StringLabels
-
-  let is_empty str = length str = 0
+  include CCStringLabels
 
   let lsplit2 str ~on =
     match index_opt str on with
@@ -51,62 +49,67 @@ let none = {trace_all= false; trace_mods_funs= Map.empty; colors= false}
 let all = {none with trace_all= true}
 let config = ref none
 
+exception Parse_failure of string
+
 let parse s =
-  try
-    if String.equal s "*" then Ok all
-    else
-      let default = Map.empty in
-      let index_from s i =
-        match
-          (String.index_from_opt s i '+', String.index_from_opt s i '-')
-        with
-        | None, o | o, None -> o
-        | Some m, Some n -> Some (min m n)
-      in
-      let rec split s rev_parts i =
-        match index_from s (i + 1) with
-        | Some j when j = i -> split s rev_parts j
-        | Some j ->
-            split s (String.sub s ~pos:i ~len:(j - i) :: rev_parts) j
-        | _ -> List.rev (String.subo s ~pos:i :: rev_parts)
-      in
-      let parts = split s [] 0 in
-      let trace_mods_funs =
-        List.fold_left
-          (fun m part ->
-            let parse_part part =
-              let sign, rest =
-                match part.[0] with
-                | '-' -> (false, String.subo part ~pos:1)
-                | '+' -> (true, String.subo part ~pos:1)
-                | _ -> (true, part)
-              in
-              assert (not (String.is_empty rest)) ;
-              assert (Char.is_uppercase rest.[0]) ;
-              match String.lsplit2 rest ~on:'.' with
-              | Some (mod_name, fun_name) ->
-                  assert (Char.is_lowercase fun_name.[0]) ;
-                  (mod_name, Some fun_name, sign)
-              | None -> (rest, None, sign)
+  if String.equal s "*" then all
+  else
+    let default = Map.empty in
+    let index_from s i =
+      match
+        (String.index_from_opt s i '+', String.index_from_opt s i '-')
+      with
+      | None, o | o, None -> o
+      | Some m, Some n -> Some (min m n)
+    in
+    let rec split s rev_parts i =
+      match index_from s (i + 1) with
+      | Some j when j = i -> split s rev_parts j
+      | Some j -> split s (String.sub s ~pos:i ~len:(j - i) :: rev_parts) j
+      | _ -> List.rev (String.subo s ~pos:i :: rev_parts)
+    in
+    let parts = split s [] 0 in
+    let trace_mods_funs =
+      List.fold_left
+        (fun m part ->
+          let parse_part part =
+            let sign, rest =
+              match part.[0] with
+              | '-' -> (false, String.subo part ~pos:1)
+              | '+' -> (true, String.subo part ~pos:1)
+              | _ -> (true, part)
             in
-            match parse_part part with
-            | mod_name, Some fun_name, enabled ->
-                let {trace_mod; trace_funs} =
-                  try Map.find mod_name m
-                  with Not_found -> {trace_mod= None; trace_funs= default}
-                in
-                Map.add mod_name
-                  { trace_mod
-                  ; trace_funs= Map.add fun_name enabled trace_funs }
-                  m
-            | mod_name, None, enabled ->
-                Map.add mod_name
-                  {trace_mod= Some enabled; trace_funs= default}
-                  m )
-          default parts
-      in
-      Ok {none with trace_mods_funs}
-  with Assert_failure _ as exn -> Error exn
+            if String.is_empty rest then
+              raise (Parse_failure ("missing module name after: " ^ part)) ;
+            if not (Char.is_uppercase rest.[0]) then
+              raise
+                (Parse_failure ("module name must be capitalized: " ^ rest)) ;
+            match String.lsplit2 rest ~on:'.' with
+            | Some (mod_name, fun_name) ->
+                if not (Char.is_lowercase fun_name.[0]) then
+                  raise
+                    (Parse_failure
+                       ("function name must not be capitalized: " ^ fun_name)
+                    ) ;
+                (mod_name, Some fun_name, sign)
+            | None -> (rest, None, sign)
+          in
+          match parse_part part with
+          | mod_name, Some fun_name, enabled ->
+              let {trace_mod; trace_funs} =
+                try Map.find mod_name m
+                with Not_found -> {trace_mod= None; trace_funs= default}
+              in
+              Map.add mod_name
+                {trace_mod; trace_funs= Map.add fun_name enabled trace_funs}
+                m
+          | mod_name, None, enabled ->
+              Map.add mod_name
+                {trace_mod= Some enabled; trace_funs= default}
+                m )
+        default parts
+    in
+    {none with trace_mods_funs}
 
 let pp_styled style fmt fs =
   Format.pp_open_box fs 2 ;
@@ -136,6 +139,12 @@ let init ?(colors = false) ?(margin = 240) ?config:(c = none) () =
     [Dune__exe__Module.Submodule.Subsubmodule.function.subfunction] into
     [(Module, function.subfunction)] *)
 let split_mod_fun_name s =
+  let rec chop_anon s =
+    match String.chop_suffix s ~suf:".(fun)" with
+    | Some s -> chop_anon s
+    | None -> s
+  in
+  let s = chop_anon s in
   let fun_name_end = String.length s in
   let rec fun_name_start_ s i =
     match String.rindex_from_opt s i '.' with

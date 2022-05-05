@@ -49,6 +49,7 @@ const poweredByImages = [
     url: "/blog/2016/03/17/collaboration-with-spotify",
     image: "/img/who/spotify.png",
   },
+  { url: "https://tangramflex.com", image: "/img/who/tangramflex.png" },
   { url: "https://www.uber.com", image: "/img/who/uber.svg" },
   { url: "https://www.whatsapp.com", image: "/img/who/whatsapp.svg" },
 ];
@@ -65,6 +66,29 @@ const poweredByItems = [
   { url: "https://vuo.org", name: "Vuo" },
   { url: "https://wolfssl.com", name: "wolfSSL" },
 ];
+
+function VideoContainer() {
+  return (
+    <div className="container text--center margin-bottom--xl margin-top--lg">
+      <div className="row">
+        <div className="col">
+          <h2>Check it out in the intro video</h2>
+          <div className={styles.ytVideo}>
+            <iframe
+              width="560"
+              height="315"
+              src="https://www.youtube.com/embed/swrmPTJAGqQ"
+              title="Explain Like I'm 5: Infer"
+              frameBorder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Home() {
   const context = useDocusaurusContext();
@@ -124,6 +148,7 @@ function Home() {
         </div>
       </header>
       <main>
+      <VideoContainer />
         {features && features.length && (
           <section className={styles.features}>
             <div className="container">
@@ -203,8 +228,8 @@ function Home() {
               </div>
             </div>
             <span>
-              Does your app use Infer? Add it to this list with{" "}
-              <a href="https://github.com/facebook/infer/edit/master/website/src/pages/index.js">
+              Does your project use Infer? Add it to this list with{" "}
+              <a href="https://github.com/facebook/infer/edit/main/website/src/pages/index.js">
                 a pull request!
               </a>
             </span>

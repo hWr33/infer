@@ -15,10 +15,10 @@
 
 open! NS0
 
-type 'a t [@@deriving compare, equal, hash, sexp]
+type 'a t [@@deriving compare, equal, sexp]
 
 module Import : sig
-  type 'a iarray = 'a t [@@deriving compare, equal, hash, sexp]
+  type 'a iarray = 'a t [@@deriving compare, equal, sexp]
 end
 
 val pp : (unit, unit) fmt -> 'a pp -> 'a t pp
@@ -39,7 +39,7 @@ val of_iter : 'a iter -> 'a t
 val of_list : 'a list -> 'a t
 val of_list_rev : 'a list -> 'a t
 val init : int -> f:(int -> 'a) -> 'a t
-val sub : 'a t -> pos:int -> len:int -> 'a t
+val sub : ?pos:int -> ?len:int -> 'a t -> 'a t
 val concat : 'a t list -> 'a t
 val map : 'a t -> f:('a -> 'b) -> 'b t
 val mapi : 'a t -> f:(int -> 'a -> 'b) -> 'b t
@@ -50,8 +50,7 @@ val map_endo : 'a t -> f:('a -> 'a) -> 'a t
 
 val reduce_adjacent : 'a t -> f:('a -> 'a -> 'a option) -> 'a t
 val split : ('a * 'b) t -> 'a t * 'b t
-val combine : 'a t -> 'b t -> ('a * 'b) t option
-val combine_exn : 'a t -> 'b t -> ('a * 'b) t
+val combine : 'a t -> 'b t -> ('a * 'b) t
 val is_empty : 'a t -> bool
 val length : 'a t -> int
 val get : 'a t -> int -> 'a

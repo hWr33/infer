@@ -5,15 +5,24 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+#include "thread.h"
+
 int count = 0;
 
-void child_routine() { count++; }
+int
+child_routine(void* arg)
+{
+  return count++;
+}
 
-int main() {
-  thread_t child_data;
-  thread_t* child = &child_data;
-  error_t err = thread_create(&child, &child_routine);
-  count++;
-  err = thread_join(child);
+int
+main()
+{
+  thread_t* child;
+  error_t err = thread_create(&child, "child", &child_routine, NULL);
+  thread_resume(child);
+  int ret_code;
+  err = thread_join(child, &ret_code, TIME_INFINITE);
+  count += ret_code;
   return count;
 }

@@ -27,19 +27,54 @@ let linear = cost_of_exp ~degree_kind:Polynomials.DegreeKind.Linear
 
 let log = cost_of_exp ~degree_kind:Polynomials.DegreeKind.Log
 
+module Iterator = struct
+  let get_iter_itv begin_exp end_exp inferbo_mem =
+    let begin_v =
+      BufferOverrunDomain.Mem.find_set
+        (BufferOverrunSemantics.eval_locs begin_exp inferbo_mem)
+        inferbo_mem
+    in
+    let begin_itv = BufferOverrunDomain.Val.get_itv begin_v in
+    let end_v =
+      BufferOverrunDomain.Mem.find_set
+        (BufferOverrunSemantics.eval_locs end_exp inferbo_mem)
+        inferbo_mem
+    in
+    let end_itv = BufferOverrunDomain.Val.get_itv end_v in
+    let () =
+      Logging.d_printfln_escaped "length of begin_iter=%a and end_iter=%a"
+        BufferOverrunDomain.Val.pp begin_v BufferOverrunDomain.Val.pp end_v
+    in
+    Itv.minus end_itv begin_itv
+end
+
 module BoundsOf (Container : CostUtils.S) = struct
   let of_length exp {model_env= {location}} ~ret:_ mem ~of_function ~degree_kind =
     let itv = Container.length exp mem |> BufferOverrunDomain.Val.get_itv in
     CostUtils.of_itv ~itv ~degree_kind ~of_function location
 
 
+  let of_length_itv itv {model_env= {location}} ~ret:_ ~of_function ~degree_kind =
+    CostUtils.of_itv ~itv ~degree_kind ~of_function location
+
+
   let linear_length = of_length ~degree_kind:Polynomials.DegreeKind.Linear
+
+  let linear_length_itv itv = of_length_itv itv ~degree_kind:Polynomials.DegreeKind.Linear
+
+  let logarithmic_length_itv itv = of_length_itv itv ~degree_kind:Polynomials.DegreeKind.Log
 
   let logarithmic_length = of_length ~degree_kind:Polynomials.DegreeKind.Log
 
   let n_log_n_length exp cost_model_env ~ret mem ~of_function =
     let log_n = logarithmic_length exp ~of_function cost_model_env mem ~ret in
     let n = linear_length exp ~of_function cost_model_env mem ~ret in
+    BasicCost.mult n log_n
+
+
+  let n_log_n_length_itv itv cost_model_env ~ret ~of_function =
+    let log_n = logarithmic_length_itv itv ~of_function cost_model_env ~ret in
+    let n = linear_length_itv itv ~of_function cost_model_env ~ret in
     BasicCost.mult n log_n
 
 
@@ -140,9 +175,31 @@ module JavaString = struct
 end
 
 module BoundsOfCollection = BoundsOf (CostUtils.Collection)
+module BoundsOfContainer = BoundsOf (CostUtils.Container)
 module BoundsOfNSCollection = BoundsOf (CostUtils.NSCollection)
 module BoundsOfArray = BoundsOf (CostUtils.Array)
 module BoundsOfCString = BoundsOf (CostUtils.CString)
+
+module Algorithm = struct
+  let binary_search begin_arg end_arg cost_model_env ~ret inferbo_mem ~of_function =
+    let itv = Iterator.get_iter_itv begin_arg end_arg inferbo_mem in
+    BoundsOfContainer.logarithmic_length_itv itv cost_model_env ~ret ~of_function
+
+
+  let find begin_arg end_arg cost_model_env ~ret inferbo_mem ~of_function =
+    let itv = Iterator.get_iter_itv begin_arg end_arg inferbo_mem in
+    BoundsOfContainer.linear_length_itv itv cost_model_env ~ret ~of_function
+
+
+  let erase begin_arg end_arg cost_model_env ~ret inferbo_mem ~of_function =
+    let itv = Iterator.get_iter_itv begin_arg end_arg inferbo_mem in
+    BoundsOfContainer.linear_length_itv itv cost_model_env ~ret ~of_function
+
+
+  let sort begin_arg end_arg cost_model_env ~ret inferbo_mem ~of_function =
+    let itv = Iterator.get_iter_itv begin_arg end_arg inferbo_mem in
+    BoundsOfContainer.n_log_n_length_itv itv cost_model_env ~ret ~of_function
+end
 
 module NSString = struct
   let get_length str ~of_function {model_env= {location} as model_env} ~ret:_ mem =
@@ -231,6 +288,10 @@ module ImmutableSet = struct
   let choose_table_size = log ~of_function:"ImmutableSet.chooseTableSize"
 end
 
+let std_container_ord _ str =
+  List.exists ~f:(String.equal str) ["map"; "multimap"; "multiset"; "set"]
+
+
 module Call = struct
   let dispatch : (Tenv.t, CostUtils.model, unit) ProcnameDispatcher.Call.dispatcher =
     let open ProcnameDispatcher.Call in
@@ -313,6 +374,26 @@ module Call = struct
         ; +PatternMatch.ObjectiveC.implements "NSAttributedString"
           &:: "enumerateAttribute:inRange:options:usingBlock:"
           &::.*++> NSAttributedString.enumerate_using_block
+          (* C++ Cost Models *)
+        ; -"std" &:: "binary_search" $ capt_exp $+ capt_exp
+          $+...$--> Algorithm.binary_search ~of_function:"Container.binary_search"
+        ; -"std" &:: "sort" $ capt_exp $+ capt_exp
+          $+...$--> Algorithm.sort ~of_function:"Container.sort"
+        ; -"std" &:: "find" $ capt_exp $+ capt_exp
+          $+...$--> Algorithm.find ~of_function:"Container.find"
+        ; -"std" &::+ std_container_ord &:: "find" $ capt_exp
+          $+...$--> BoundsOfContainer.logarithmic_length ~of_function:"Container.find"
+        ; -"std" &::+ std_container_ord &:: "count" $ capt_exp
+          $+...$--> BoundsOfContainer.logarithmic_length ~of_function:"Container.count"
+        ; -"std" &::+ std_container_ord &:: "emplace" $ capt_exp
+          $+...$--> BoundsOfContainer.logarithmic_length ~of_function:"Container.emplace"
+        ; -"std" &::+ std_container_ord &:: "emplace_hint" $ capt_exp
+          $+...$--> BoundsOfContainer.logarithmic_length ~of_function:"Container.emplace_hint"
+        ; -"std" &::+ std_container_ord &:: "erase" $ capt_exp $+ any_arg
+          $--> BoundsOfContainer.logarithmic_length ~of_function:"Container.erase"
+        ; -"std" &::+ std_container_ord &:: "erase" $ any_arg $+ capt_exp $+ capt_exp
+          $+...$--> Algorithm.erase ~of_function:"Container.erase"
+          (* Java Cost Models *)
         ; +PatternMatch.Java.implements_collections
           &:: "sort" $ capt_exp
           $+...$--> BoundsOfCollection.n_log_n_length ~of_function:"Collections.sort"

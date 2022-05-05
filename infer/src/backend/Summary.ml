@@ -8,6 +8,7 @@
 
 open! IStd
 module F = Format
+module BStats = Stats
 
 module Stats = struct
   type t =
@@ -95,7 +96,7 @@ let pp_errlog fmt err_log =
 
 
 let pp_signature fmt summary =
-  let pp_formal fmt (p, typ) = F.fprintf fmt "%a %a" (Typ.pp_full Pp.text) typ Mangled.pp p in
+  let pp_formal fmt (p, typ, _) = F.fprintf fmt "%a %a" (Typ.pp_full Pp.text) typ Mangled.pp p in
   F.fprintf fmt "%a %a(%a)" (Typ.pp_full Pp.text) (get_ret_type summary) Procname.pp
     (get_proc_name summary) (Pp.seq ~sep:", " pp_formal) (get_formals summary)
 
@@ -112,13 +113,14 @@ let pp_text fmt summary =
 
 
 let pp_html source fmt summary =
+  let pp_escaped pp fmt x = F.fprintf fmt "%s" (Escape.escape_xml (F.asprintf "%a" pp x)) in
   F.pp_force_newline fmt () ;
-  Pp.html_with_color Black pp_no_stats_specs fmt summary ;
+  Pp.html_with_color Black (pp_escaped pp_no_stats_specs) fmt summary ;
   F.fprintf fmt "<br />%a<br />@\n" Stats.pp summary.stats ;
   Errlog.pp_html source [] fmt (get_err_log summary) ;
   Io_infer.Html.pp_hline fmt () ;
   F.fprintf fmt "<LISTING>@\n" ;
-  Payloads.pp (Pp.html Black) fmt summary.payloads ;
+  pp_escaped (Payloads.pp (Pp.html Black)) fmt summary.payloads ;
   F.fprintf fmt "</LISTING>@\n"
 
 
@@ -221,9 +223,9 @@ module OnDisk = struct
           "SELECT analysis_summary, report_summary FROM specs WHERE proc_uid = :k"
       in
       fun proc_name ->
-        BackendStats.incr_summary_file_try_load () ;
+        BStats.incr_summary_file_try_load () ;
         let opt = load_spec ~load_statement proc_name in
-        if Option.is_some opt then BackendStats.incr_summary_read_from_disk () ;
+        if Option.is_some opt then BStats.incr_summary_read_from_disk () ;
         opt
     in
     let spec_of_model =
@@ -252,10 +254,10 @@ module OnDisk = struct
   let get proc_name =
     match Procname.Hash.find cache proc_name with
     | summary ->
-        BackendStats.incr_summary_cache_hits () ;
+        BStats.incr_summary_cache_hits () ;
         Some summary
     | exception Caml.Not_found ->
-        BackendStats.incr_summary_cache_misses () ;
+        BStats.incr_summary_cache_misses () ;
         load_summary_to_spec_table proc_name
 
 
@@ -353,11 +355,5 @@ module OnDisk = struct
     make_filtered_iterator_from_config ~iter:iter_filtered_report_summaries ~f
 
 
-  let iter_specs_from_config ~f = make_filtered_iterator_from_config ~iter:iter_filtered_specs ~f
-
   let iter_specs ~f = iter_filtered_specs ~filter:(fun _ _ -> true) ~f
-
-  let pp_specs_from_config fmt =
-    iter_specs_from_config ~f:(fun summary ->
-        F.fprintf fmt "Procedure: %a@\n%a@." Procname.pp (get_proc_name summary) pp_text summary )
 end

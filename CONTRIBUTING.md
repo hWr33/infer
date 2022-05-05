@@ -12,8 +12,8 @@ We welcome contributions via [pull requests on GitHub](https://github.com/facebo
 
 ### Development Dependencies
 
-You'll want to install a few more dependencies to comfortably hack on the infer codebase. Simply
-run:
+You'll want to install a few more dependencies to comfortably hack on the infer codebase;
+in order to do this run `./build_infer.sh` which will allow you to then run:
 ```sh
 make devsetup
 ```
@@ -173,7 +173,7 @@ Follow `clang-format` (see ".clang-format" at the root of the repository).
 ## Testing your Changes
 
 - Make sure infer builds: `make -j test_build`. Refer to the [installation
-  document](https://github.com/facebook/infer/blob/master/INSTALL.md) for details.
+  document](https://github.com/facebook/infer/blob/main/INSTALL.md) for details.
 
 - Run the tests: `make -j 4 test` (adjust 4 to the number of cores available of your machine). The
   tests (almost) all consist of the same three ingredients:
@@ -220,11 +220,11 @@ $ firefox infer-out/captured/hello.c.*.html
 
 ## Updating infer.opam and infer.opam.locked
 
-tl; dr: Run `make opam/infer.opam.locked`.
+`opam/infer.opam.locked` records fixed versions of the opam
+dependencies known to work with infer and to respect the constraints
+in opam. This prevents unpredictable breakages of infer or its
+dependencies, especially for infer releases, for which it is more
+difficult to change their package constraints after the fact.
 
-infer.opam.locked records fixed versions of the opam dependencies known to work with infer and to respect
-the constraints in opam. This prevents unpredictable breakages of infer or its dependencies,
-especially for infer releases, for which it is more difficult to change their package constraints
-after the fact.
-
-To add an opam package or update its version constraints, edit 'infer.opam' then run `make infer.opam.locked`.
+To add an opam package or update its version constraints, edit
+`opam/infer.opam` then run `make` in directory `opam/`.

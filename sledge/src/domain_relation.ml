@@ -23,8 +23,13 @@ module type State_domain_sig = sig
 end
 
 module Make (State_domain : State_domain_sig) = struct
-  type t = State_domain.t * State_domain.t
-  [@@deriving compare, equal, sexp_of]
+  module T = struct
+    type t = State_domain.t * State_domain.t
+    [@@deriving compare, equal, sexp_of]
+  end
+
+  include T
+  module Set = Set.Make (T)
 
   let embed b = (b, b)
 
@@ -41,7 +46,12 @@ module Make (State_domain : State_domain_sig) = struct
     , State_domain.join current_a current_b )
 
   let joinN rs =
-    let entrys, currents = List.split rs in
+    let entrys, currents =
+      Set.fold rs (State_domain.Set.empty, State_domain.Set.empty)
+        ~f:(fun (entry, current) (entrys, currents) ->
+          ( State_domain.Set.add entry entrys
+          , State_domain.Set.add current currents ) )
+    in
     (State_domain.joinN entrys, State_domain.joinN currents)
 
   let resolve_int tid (_, current) = State_domain.resolve_int tid current
@@ -70,8 +80,8 @@ module Make (State_domain : State_domain_sig) = struct
 
   let recursion_beyond_bound = State_domain.recursion_beyond_bound
 
-  let call ~summaries tid ~globals ~actuals ~areturn ~formals ~freturn
-      ~locals (entry, current) =
+  let call ~summaries tid ?child ~globals ~actuals ~areturn ~formals
+      ~freturn ~locals (entry, current) =
     [%Trace.call fun {pf} ->
       pf
         "@ @[<v>@[actuals: (@[%a@])@ formals: (@[%a@])@]@ locals: \
@@ -83,8 +93,8 @@ module Make (State_domain : State_domain_sig) = struct
         State_domain.pp current]
     ;
     let caller_current, state_from_call =
-      State_domain.call tid ~summaries ~globals ~actuals ~areturn ~formals
-        ~freturn ~locals current
+      State_domain.call tid ?child ~summaries ~globals ~actuals ~areturn
+        ~formals ~freturn ~locals current
     in
     ( (caller_current, caller_current)
     , {state_from_call; caller_entry= entry} )
@@ -107,8 +117,17 @@ module Make (State_domain : State_domain_sig) = struct
     |>
     [%Trace.retn fun {pf} -> pf "%a" pp]
 
+  type term_code = State_domain.term_code [@@deriving compare, sexp_of]
+
+  let term tid formals freturn (_, current) =
+    State_domain.term tid formals freturn current
+
+  let move_term_code tid reg code (entry, current) =
+    (entry, State_domain.move_term_code tid reg code current)
+
   let dnf (entry, current) =
-    List.map ~f:(fun c -> (entry, c)) (State_domain.dnf current)
+    State_domain.Set.fold (State_domain.dnf current) Set.empty
+      ~f:(fun c rs -> Set.add (entry, c) rs)
 
   let resolve_callee f tid e (_, current) =
     State_domain.resolve_callee f tid e current

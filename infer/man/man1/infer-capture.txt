@@ -62,9 +62,9 @@ OPTIONS
 
        --force-integration command
            Proceed as if the first argument after -- was command. Possible
-           values: ant, buck, gradle, gradlew, java, javac, cc, clang, gcc,
-           clang++, c++, g++, make, configure, cmake, waf, mvn, mvnw,
-           ndk-build, rebar3, xcodebuild.
+           values: ant, buck, buck2, gradle, gradlew, java, javac, cc, clang,
+           gcc, clang++, c++, g++, make, configure, cmake, waf, mvn, mvnw,
+           ndk-build, rebar3, erlc, xcodebuild.
 
        --help
            Show this manual
@@ -82,6 +82,12 @@ OPTIONS
            Do not start new parallel jobs if the load average is greater than
            that specified (Buck and make only)
 
+       --merge-infer-out +string
+           Specifies an Infer results directory. The files and procedures
+           captured in it will be merged together into the results directory
+           specified with -o. Relative paths are interpreted as relative to
+           project-root/buck-out.
+
        --print-logs
            Activates: Also log messages to stdout and stderr (Conversely:
            --no-print-logs)
@@ -96,9 +102,10 @@ OPTIONS
        --results-dir,-o dir
            Write results and internal files in the specified directory
 
-       --skip-analysis-in-path +path_prefix_OCaml_regex
-           Ignore files whose path matches the given prefix (can be specified
-           multiple times)
+       --skip-analysis-in-path +regex
+           Ignore files whose path matches a given regex (can be specified
+           multiple times, but you must make sure each regex is properly
+           bracketed)
 
        --sqlite-cache-size int
            SQLite cache size in pages (if positive) or kB (if negative),
@@ -153,6 +160,12 @@ BUCK OPTIONS
            #infer-java-capture instead of genrules like buck-java.
            (Conversely: --no-buck-java-flavor)
 
+       --buck-java-flavor-dependency-depth int
+           Capture dependencies only if they are at most the depth provided,
+           or all transitive dependencies if depth is not provided (the
+           default). In particular, depth zero means capture exactly the
+           targets provided and nothing else.
+
        --buck-java-flavor-suppress-config
            Activates: Suppress setting buck config values for the infer
            binary and its version in the buck-java-flavor integration.
@@ -178,6 +191,15 @@ BUCK OPTIONS
 
        --Xbuck-no-inline +string
            Pass values as command-line arguments to invocations of `buck
+           build`, don't inline any args starting with '@'. Only valid for
+           --buck-clang.
+
+       --Xbuck2 +string
+           Pass values as command-line arguments to invocations of `buck2
+           build`. Only valid for --buck-clang.
+
+       --Xbuck2-no-inline +string
+           Pass values as command-line arguments to invocations of `buck2
            build`, don't inline any args starting with '@'. Only valid for
            --buck-clang.
 
@@ -293,6 +315,11 @@ ERLANG OPTIONS
        --erlang-skip-rebar3
            Activates: Skip running rebar, to save time. It is useful together
            with --erlang-ast-dir. (Conversely: --no-erlang-skip-rebar3)
+
+       --erlang-with-otp-specs
+           Activates: [EXPERIMENTAL] Use type specs from OTP (available in
+           the system) to generate more precise Pulse summaries for unknown
+           library functions. (Conversely: --no-erlang-with-otp-specs)
 JAVA OPTIONS
        --bootclasspath string
            Specify the Java bootclasspath

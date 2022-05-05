@@ -25,9 +25,16 @@ val is_subtype : Tenv.t -> Typ.Name.t -> Typ.Name.t -> bool
 val is_subtype_of_str : Tenv.t -> Typ.Name.t -> string -> bool
 (** Resolve [typ_str] in [tenv], then check [typ] <: [typ_str] *)
 
+module CSharp : sig
+  val implements : string -> Tenv.t -> string -> bool
+end
+
 module Java : sig
   val implements : string -> Tenv.t -> string -> bool
   (** Check whether class implements a given Java class *)
+
+  val implements_one_of : string list -> Tenv.t -> string -> bool
+  (** Check whether class implements at least one of the given Java classes *)
 
   val implements_android : string -> Tenv.t -> string -> bool
   (** Check whether class implements a class of Android *)
@@ -77,6 +84,9 @@ module Java : sig
   val implements_jackson : string -> Tenv.t -> string -> bool
   (** Check whether class implements a class from Jackson *)
 
+  val implements_kotlin_intrinsics : Tenv.t -> string -> bool
+  (** Check whether class implements [kotlin.jvm.internal.Intrinsics] *)
+
   val implements_lang : string -> Tenv.t -> string -> bool
   (** Check whether class implements a Java's lang *)
 
@@ -109,6 +119,9 @@ module Java : sig
 
   val implements_queue : Tenv.t -> string -> bool
   (** Check whether class implements a Java's Queue *)
+
+  val implements_regex : string -> Tenv.t -> string -> bool
+  (** Check whether class implements a class of [java.util.regex] *)
 
   val implements_set : Tenv.t -> string -> bool
   (** Check whether class implements a Java's Set *)

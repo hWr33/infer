@@ -26,9 +26,11 @@
 <a href="#BUCK OPTIONS">BUCK OPTIONS</a><br>
 <a href="#BUFFER OVERRUN OPTIONS">BUFFER OVERRUN OPTIONS</a><br>
 <a href="#CLANG OPTIONS">CLANG OPTIONS</a><br>
+<a href="#ERLANG OPTIONS">ERLANG OPTIONS</a><br>
 <a href="#JAVA OPTIONS">JAVA OPTIONS</a><br>
 <a href="#QUANDARY CHECKER OPTIONS">QUANDARY CHECKER OPTIONS</a><br>
 <a href="#RACERD CHECKER OPTIONS">RACERD CHECKER OPTIONS</a><br>
+<a href="#SIMPLE LINEAGE OPTIONS">SIMPLE LINEAGE OPTIONS</a><br>
 <a href="#SIOF CHECKER OPTIONS">SIOF CHECKER OPTIONS</a><br>
 <a href="#ENVIRONMENT">ENVIRONMENT</a><br>
 <a href="#FILES">FILES</a><br>
@@ -130,22 +132,6 @@ start. Source files should be specified relative to project
 root or be absolute</p>
 
 
-<p style="margin-left:11%;"><b>--config-checks-between-markers</b></p>
-
-<p style="margin-left:17%;">Activates: checker
-config-checks-between-markers: [EXPERIMENTAL] Collects
-config checks between marker start and end. (Conversely:
-<b>--no-config-checks-between-markers</b>)</p>
-
-
-<p style="margin-left:11%;"><b>--config-checks-between-markers-only</b></p>
-
-<p style="margin-left:17%;">Activates: Enable
-config-checks-between-markers and disable all other checkers
-(Conversely:
-<b>--no-config-checks-between-markers-only</b>)</p>
-
-
 <p style="margin-left:11%;"><b>--config-impact-analysis</b></p>
 
 <p style="margin-left:17%;">Activates: checker
@@ -172,10 +158,10 @@ given the same before. Not compatible with
 <p style="margin-left:11%;"><b>--cost</b></p>
 
 <p style="margin-left:17%;">Activates: checker cost:
-Computes the time complexity of functions and methods. Can
-be used to detect changes in runtime complexity with
-&lsquo;infer reportdiff&lsquo;. (Conversely:
-<b>--no-cost</b>)</p>
+Computes the asymptotic complexity of functions with respect
+to execution cost or other user defined resources. Can be
+used to detect changes in the complexity with &lsquo;infer
+reportdiff&lsquo;. (Conversely: <b>--no-cost</b>)</p>
 
 <p style="margin-left:11%;"><b>--cost-only</b></p>
 
@@ -248,10 +234,10 @@ reporting. (Conversely: <b>--deduplicate</b>)</p>
 <p style="margin-left:17%;">Deactivates: Default checkers:
 <b>--biabduction</b>, <b>--fragment-retains-view</b>,
 <b>--inefficient-keyset-iterator</b>, <b>--linters</b>,
-<b>--liveness</b>, <b>--racerd</b>,
-<b>--dotnet-resource-leak</b>, <b>--siof</b>,
-<b>--self-in-block</b>, <b>--starvation</b> (Conversely:
-<b>--default-checkers</b>)</p>
+<b>--liveness</b>, <b>--parameter-not-null-checked</b>,
+<b>--racerd</b>, <b>--dotnet-resource-leak</b>,
+<b>--siof</b>, <b>--self-in-block</b>, <b>--starvation</b>
+(Conversely: <b>--default-checkers</b>)</p>
 
 <p style="margin-left:11%;"><b>--eradicate</b></p>
 
@@ -446,6 +432,23 @@ analysis allocation traces in
 allocation profiling. Default is 1e-6.</p>
 
 
+<p style="margin-left:11%;"><b>--no-parameter-not-null-checked</b></p>
+
+<p style="margin-left:17%;">Deactivates: checker
+parameter-not-null-checked: An Objective-C-specific analysis
+to detect when a block parameter is used before being
+checked for null first. (Conversely:
+<b>--parameter-not-null-checked</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--parameter-not-null-checked-only</b></p>
+
+<p style="margin-left:17%;">Activates: Enable
+parameter-not-null-checked and disable all other checkers
+(Conversely:
+<b>--no-parameter-not-null-checked-only</b>)</p>
+
+
 <p style="margin-left:11%;"><b>--print-active-checkers</b></p>
 
 <p style="margin-left:17%;">Activates: Print the active
@@ -501,6 +504,12 @@ Memory and lifetime analysis. (Conversely:
 pulse will only explore one path. Can be used on
 pathologically large procedures to prevent too-big states
 from being produced.</p>
+
+<p style="margin-left:11%;"><b>--pulse-max-cfg-size</b>
+<i>int</i></p>
+
+<p style="margin-left:17%;">Larger CFGs than the max size
+are skipped in Pulse.</p>
 
 <p style="margin-left:11%;"><b>--pulse-model-abort</b>
 <i>+string</i></p>
@@ -569,6 +578,13 @@ modelled as returning the first argument in Pulse</p>
 modelled as returning non-null in Pulse</p>
 
 
+<p style="margin-left:11%;"><b>--pulse-model-returns-copy-pattern</b>
+<i>string</i></p>
+
+<p style="margin-left:17%;">Regex of methods that should be
+modelled as creating copies in Pulse</p>
+
+
 <p style="margin-left:11%;"><b>--pulse-model-skip-pattern</b>
 <i>string</i></p>
 
@@ -583,11 +599,31 @@ modelled as &quot;skip&quot; in Pulse</p>
 as transfering memory ownership in Pulse. Accepted formats
 are method or namespace::method</p>
 
+
+<p style="margin-left:11%;"><b>--pulse-models-for-erlang</b>
+<i>json</i></p>
+
+<p style="margin-left:17%;">Provide custom models for
+Erlang code using a DSL.</p>
+
 <p style="margin-left:11%;"><b>--pulse-only</b></p>
 
 <p style="margin-left:17%;">Activates: Enable pulse and
 disable all other checkers (Conversely:
 <b>--no-pulse-only</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--pulse-prune-unsupported-arithmetic</b></p>
+
+<p style="margin-left:17%;">Activates: The arithmetic
+engine in Pulse sometimes does not detect that the
+collection of conditions on the path makes it infeasible,
+especially outside the well-supported linear arithmetic
+fragment. To avoid false positives, Pulse tries to detect
+when there is a possibility of imprecise arithmetic
+treatment and if so pessimistically assumes the path is
+infeasible. (Conversely:
+<b>--no-pulse-prune-unsupported-arithmetic</b>)</p>
 
 
 <p style="margin-left:11%;"><b>--pulse-report-ignore-unknown-java-methods-patterns</b>
@@ -601,6 +637,12 @@ list is provided with
 <b>--pulse-report-ignore-unknown-java-methods-patterns-reset</b>,
 all issues will be reported regardless the presence of
 unknown code</p>
+
+<p style="margin-left:11%;"><b>--pulse-skip-procedures</b>
+<i>regex</i></p>
+
+<p style="margin-left:17%;">Regex of procedures that should
+not be analyzed by Pulse.</p>
 
 <p style="margin-left:11%;"><b>--purity</b></p>
 
@@ -705,6 +747,19 @@ when a block captures &lsquo;self&lsquo;. (Conversely:
 and disable all other checkers (Conversely:
 <b>--no-self-in-block-only</b>)</p>
 
+<p style="margin-left:11%;"><b>--simple-lineage</b></p>
+
+<p style="margin-left:17%;">Activates: checker
+simple-lineage: Computes a dataflow graph (Conversely:
+<b>--no-simple-lineage</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--simple-lineage-only</b></p>
+
+<p style="margin-left:17%;">Activates: Enable
+simple-lineage and disable all other checkers (Conversely:
+<b>--no-simple-lineage-only</b>)</p>
+
 <p style="margin-left:11%;"><b>--no-siof</b></p>
 
 <p style="margin-left:17%;">Deactivates: checker siof:
@@ -749,6 +804,13 @@ progress is being made because of concurrency errors.
 <p style="margin-left:17%;">Activates: Enable starvation
 and disable all other checkers (Conversely:
 <b>--no-starvation-only</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--top-longest-proc-duration-size</b>
+<i>int</i></p>
+
+<p style="margin-left:17%;">Number of procedures for which
+we track longest analysis duration info.</p>
 
 <p style="margin-left:11%;"><b>--topl</b></p>
 
@@ -827,6 +889,12 @@ checker (0-4)</p>
 
 <p style="margin-left:17%;">Limit of field depth of
 abstract location in buffer-overrun checker</p>
+
+<p style="margin-left:11%;"><b>--bo-max-cfg-size</b>
+<i>int</i></p>
+
+<p style="margin-left:17%;">Larger CFGs than the max size
+are skipped in buffer overrun analysis.</p>
 
 <h2>CLANG OPTIONS
 <a name="CLANG OPTIONS"></a>
@@ -913,14 +981,26 @@ common wrappers around these types such as
 when the variables are not read explicitly by the
 program.</p>
 
+<h2>ERLANG OPTIONS
+<a name="ERLANG OPTIONS"></a>
+</h2>
+
+
+
+<p style="margin-left:11%; margin-top: 1em"><b>--erlang-list-unfold-depth</b>
+<i>int</i></p>
+
+<p style="margin-left:17%;">Unfold Erlang lists up to depth
+<i>int</i></p>
+
 <h2>JAVA OPTIONS
 <a name="JAVA OPTIONS"></a>
 </h2>
 
 
 
-<p style="margin-left:11%; margin-top: 1em"><b>--annotation-reachability-custom-pairs</b>
-<i>json</i></p>
+<p style="margin-left:11%; margin-top: 1em"><i><b>--annotation-reachability-custom-pairs</b>
+json</i></p>
 
 <p style="margin-left:17%;">Specify custom sources/sink for
 the annotation reachability checker</p>
@@ -986,18 +1066,67 @@ Quandary</p>
 annotations with RacerD (Conversely:
 <b>--no-racerd-guardedby</b>)</p>
 
+<p style="margin-left:11%;"><b>--racerd-ignore-classes</b>
+<i>+string</i></p>
 
-<p style="margin-left:11%;"><b>--no-racerd-unknown-returns-owned</b></p>
-
-<p style="margin-left:17%;">Deactivates: DEPRECATED, does
-nothing. (Conversely:
-<b>--racerd-unknown-returns-owned</b>)</p>
+<p style="margin-left:17%;">Any method in a class specified
+here will be ignored by RacerD.</p>
 
 <p style="margin-left:11%;"><b>--threadsafe-aliases</b>
 <i>json</i></p>
 
 <p style="margin-left:17%;">Specify custom annotations that
 should be considered aliases of @ThreadSafe</p>
+
+<h2>SIMPLE LINEAGE OPTIONS
+<a name="SIMPLE LINEAGE OPTIONS"></a>
+</h2>
+
+
+
+<p style="margin-left:11%; margin-top: 1em"><b>--no-simple-lineage-dedup</b></p>
+
+<p style="margin-left:17%;">Deactivates: In JSON output,
+attempt to print each entity at most once. This is the
+default. The only reason you may want to turn this off is to
+make hash collisions more visible; that is, cases in which
+distinct entities get assigned the same ID. (Conversely:
+<b>--simple-lineage-dedup</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--simple-lineage-json-report</b></p>
+
+<p style="margin-left:17%;">Activates: Enable simple
+lineage report in JSON format. (Conversely:
+<b>--no-simple-lineage-json-report</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--simple-lineage-keep-temporaries</b></p>
+
+<p style="margin-left:17%;">Activates: Normally, lineage
+summaries do not mention temporary variables introduced
+while compiling the high-level code to Infer's IR
+(intermediate representation). If this option is enabled,
+then the lineage graph produced corresponds to Infer's IR.
+(Conversely:
+<b>--no-simple-lineage-keep-temporaries</b>)</p>
+
+
+<p style="margin-left:11%;"><b>--simple-lineage-max-cfg-size</b>
+<i>int</i></p>
+
+<p style="margin-left:17%;">If set, larger CFGs are
+skipped.</p>
+
+<p style="margin-left:11%;"><b>--simple-lineage-seed</b>
+<i>int</i></p>
+
+<p style="margin-left:17%;">Set the random seed used for
+hashing. (Various entities that get reported need unique
+identifiers. To generate these unique identifiers, in a
+distributed way without communication, we use hashing. If
+you are unlucky and get collisions, you can try a different
+seed.</p>
 
 <h2>SIOF CHECKER OPTIONS
 <a name="SIOF CHECKER OPTIONS"></a>

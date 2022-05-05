@@ -19,9 +19,14 @@ void call_google_strlen_with_loop_linear(char* str) {
   }
 }
 
-void string_compare_linear(const std::string& a, const std::string& b) {
+int string_compare_linear(const std::string& a, const std::string& b) {
   if (a != b) {
     return 0;
   }
   return 1;
+}
+
+void iterate_over_string(const std::string& str) {
+  for (char const& c : str) {
+  }
 }

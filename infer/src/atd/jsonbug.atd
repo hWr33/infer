@@ -24,6 +24,7 @@ type nullsafe_mode = [Default | LocalTrustAll | LocalTrustSome | LocalTrustNone 
 
 type nullsafe_meta_issue_info = {
   num_issues: int;
+  num_fixmes: int;
   curr_nullsafe_mode: nullsafe_mode;
   can_be_promoted_to: nullsafe_mode nullable (* If present, it implies that the class is not only free of issues, but the mode can be promoted to a stricter one *)
 }
@@ -74,6 +75,12 @@ type parameter_not_nullable_info = {
   param_index: int;
 }
 
+type redundant_fixme_info = {
+  present_issue_types: string list;
+  comment_start_line: int;
+  comment_end_line: int;
+}
+
 type nullsafe_extra = {
   class_name: string;
   package: string nullable;
@@ -85,6 +92,7 @@ type nullsafe_extra = {
   ?unvetted_3rd_party: string list option; (* If the issue is related to the use of a not yet registered third-party methods, here's the list of their signatures *)
   ?meta_issue_info: nullsafe_meta_issue_info option; (* Should be present if the issue is "nullsafe meta issue" *)
   ?annotation_graph: annotation_point list option; (* Annotation graph (only for annotation mode) *)
+  ?redundant_fixme_info: redundant_fixme_info option; (* Information necessary to codemod redundant NULLSAFE_FIXME comments *)
 }
 
 type extra = {
@@ -118,39 +126,3 @@ type jsonbug = {
 }
 
 type report = jsonbug list
-
-
-type hum_info = {
-  hum_polynomial : string;
-  hum_degree : string;
-  big_o : string;
-}
-
-
-type cost_info = {
-  polynomial_version : int;
-  polynomial : string;
-  ?degree : int option;
-  hum : hum_info;
-  trace : json_trace_item list;
-}
-
-type item = {hash: string ; loc: loc ; procedure_name: string ; procedure_id: string }
-
-
-type cost_item = {
-inherit item;
-  is_on_ui_thread : bool;
-  exec_cost : cost_info;
-  autoreleasepool_size : cost_info;
-}
-
-type costs_report = cost_item list
-
-type config_impact_item = {
-  inherit item;
-  unchecked_callees : string;
-  ~is_strict : bool;
-}
-
-type config_impact_report = config_impact_item list

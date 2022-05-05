@@ -5,6 +5,27 @@
  * LICENSE file in the root directory of this source tree.
  *)
 
+(** Functional statistics *)
+
+let solver_steps = ref 0
+let step_solver () = Int.incr solver_steps
+let steps = ref 0
+let hit_insts = Llair.IP.Tbl.create ()
+let hit_terms = Llair.Block.Tbl.create ()
+
+let step_inst ip =
+  Llair.IP.Tbl.incr hit_insts ip ;
+  Int.incr steps
+
+let step_term b =
+  Llair.Block.Tbl.incr hit_terms b ;
+  Int.incr steps
+
+let bound = ref (-1)
+let hit_loop_bound n = bound := n
+let switches = ref (-1)
+let hit_switch_bound n = switches := n
+
 (** Issue reporting *)
 
 let alarm_count = ref 0
@@ -23,35 +44,26 @@ let unknown_call call =
       call
       (fun fs (call : Llair.Term.t) ->
         match call with
-        | Call {callee} -> Llair.Function.pp fs callee.name
-        | ICall {callee} -> Llair.Exp.pp fs callee
+        | Call {callee} -> Llair.Term.pp_callee fs callee
         | _ -> () )
       call Llair.Term.pp call]
 
-(** Functional statistics *)
+let reached_goal goal =
+  [%Trace.printf "@\n@[<v 2> %t@]@." goal] ;
+  Stop.on_reached_goal !steps ()
 
-let solver_steps = ref 0
-let step_solver () = Int.incr solver_steps
-let steps = ref 0
-let hit_insts = Llair.IP.Tbl.create ()
-let hit_terms = Llair.Block.Tbl.create ()
-
-let step_inst ip =
-  Llair.IP.Tbl.incr hit_insts ip ;
-  Int.incr steps
-
-let step_term b =
-  Llair.Block.Tbl.incr hit_terms b ;
-  Int.incr steps
-
-let bound = ref (-1)
-let hit_bound n = bound := n
+let unimplemented feature fn =
+  let open Llair in
+  [%Trace.printf
+    "@\n@[<v 2>%s unimplemented in %a@]@." feature Function.pp fn.name] ;
+  Stop.on_unimplemented feature fn
 
 (** Status reporting *)
 
 type status =
-  | Safe of {bound: int}
-  | Unsafe of {alarms: int; bound: int}
+  | Safe of {bound: int; switches: int}
+  | Unsafe of {alarms: int; bound: int; switches: int}
+  | Reached_goal of {steps: int}
   | Ok
   | Unsound
   | Incomplete
@@ -68,10 +80,18 @@ type status =
 let pp_status ppf stat =
   let pf fmt = Format.fprintf ppf fmt in
   match stat with
-  | Safe {bound= -1} -> pf "Safe"
-  | Safe {bound} -> pf "Safe (%i)" bound
-  | Unsafe {alarms; bound= -1} -> pf "Unsafe: %i" alarms
-  | Unsafe {alarms; bound} -> pf "Unsafe: %i (%i)" alarms bound
+  | Safe {bound= -1; switches= -1} -> pf "Safe"
+  | Safe {bound= -1; switches} -> pf "Safe (%i,_)" switches
+  | Safe {bound; switches= -1} -> pf "Safe (_,%i)" bound
+  | Safe {bound; switches} -> pf "Safe (%i,%i)" switches bound
+  | Unsafe {alarms; bound= -1; switches= -1} -> pf "Unsafe: %i" alarms
+  | Unsafe {alarms; bound= -1; switches} ->
+      pf "Unsafe: %i (%i,_)" alarms switches
+  | Unsafe {alarms; bound; switches= -1} ->
+      pf "Unsafe: %i (_,%i)" alarms bound
+  | Unsafe {alarms; bound; switches} ->
+      pf "Unsafe: %i (%i,%i)" alarms switches bound
+  | Reached_goal {steps} -> pf "Reached goal in %i steps" steps
   | Ok -> pf "Ok"
   | Unsound -> pf "Unsound"
   | Incomplete -> pf "Incomplete"
@@ -84,9 +104,16 @@ let pp_status ppf stat =
   | Assert msg -> pf "Assert: %s" msg
   | UnknownError msg -> pf "Unknown error: %s" msg
 
+let pp_status_coarse ppf stat =
+  let pf fmt = Format.fprintf ppf fmt in
+  match stat with
+  | InvalidInput _ -> pf "Invalid input"
+  | Abort | Unimplemented _ | UnknownError _ -> pf "Error"
+  | _ -> pp_status ppf stat
+
 let safe_or_unsafe () =
-  if !alarm_count = 0 then Safe {bound= !bound}
-  else Unsafe {alarms= !alarm_count; bound= !bound}
+  if !alarm_count = 0 then Safe {bound= !bound; switches= !switches}
+  else Unsafe {alarms= !alarm_count; bound= !bound; switches= !switches}
 
 type gc_stats = {allocated: float; promoted: float; peak_size: float}
 [@@deriving sexp]

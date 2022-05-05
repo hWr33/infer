@@ -64,10 +64,10 @@ let parse_cil_procname (json : Safe.t) : Procname.t =
       BuiltinDecl.__delete_locked_attribute
   | "__instanceof" ->
       BuiltinDecl.__instanceof
-  (* We exclude this for now as it would require significant effort unrelated to our support of
-     null deref/resource leak/thread safety violation detection. *)
-  (*| "__unwrap_exception" ->
-    BuiltinDecl.__unwrap_exception*)
+  | "__cast" ->
+      BuiltinDecl.__cast
+  | "__unwrap_exception" ->
+      BuiltinDecl.__unwrap_exception
   | _ ->
       let return_type =
         if String.equal Procname.CSharp.constructor_method_name method_name then None
@@ -122,10 +122,10 @@ let parse_ptr_kind (json : Safe.t) =
 
 let parse_if_kind (json : Safe.t) =
   let ifkind_map =
-    [ ("Ik_bexp", Sil.Ik_bexp)
+    [ ("Ik_bexp", Sil.Ik_bexp {terminated= false})
     ; ("Ik_dowhile", Sil.Ik_dowhile)
     ; ("Ik_for", Sil.Ik_for)
-    ; ("Ik_if", Sil.Ik_if)
+    ; ("Ik_if", Sil.Ik_if {terminated= false})
     ; ("Ik_land_lor", Sil.Ik_land_lor)
     ; ("Ik_while", Sil.Ik_while)
     ; ("Ik_switch", Sil.Ik_switch) ]
@@ -157,7 +157,9 @@ let parse_binop (json : Safe.t) =
     ; ("MinusPI", Binop.MinusPI)
     ; ("MinusPP", Binop.MinusPP)
     ; ("Mult", Binop.Mult None)
-    ; ("Div", Binop.Div)
+    ; ("Div", Binop.DivI) (* for backwards compatibility *)
+    ; ("DivI", Binop.DivI)
+    ; ("DivF", Binop.DivF)
     ; ("Mod", Binop.Mod)
     ; ("Shiftlt", Binop.Shiftlt)
     ; ("Shiftrt", Binop.Shiftrt)
@@ -298,6 +300,8 @@ and parse_exp (json : Safe.t) =
         Exp.Sizeof {typ= t; nbytes= None; dynamic_length= None; subtype= Subtype.exact}
     | "instof" ->
         Exp.Sizeof {typ= t; nbytes= None; dynamic_length= None; subtype= Subtype.subtypes_instof}
+    | "cast" ->
+        Exp.Sizeof {typ= t; nbytes= None; dynamic_length= None; subtype= Subtype.subtypes_cast}
     | _ ->
         Logging.die InternalError "Subtype in Sizeof instruction is not supported."
   else Logging.die InternalError "Unknown expression kind %s" ekind
@@ -348,8 +352,7 @@ and parse_item_annotation (json : Safe.t) : Annot.Item.t =
   parse_list
     (fun j ->
       let a = member "annotation" j in
-      let v = member "visible" j in
-      (parse_annotation a, to_bool v) )
+      parse_annotation a )
     (member "annotations" json)
 
 
@@ -362,16 +365,14 @@ and parse_struct (json : Safe.t) =
   (fields, statics, supers, methods, annots)
 
 
-let parse_method_annotation (json : Safe.t) : Annot.Method.t =
-  let return = parse_item_annotation (member "return_value" json) in
-  let params = parse_list parse_item_annotation (member "params" json) in
-  {return; params}
+let parse_ret_annot (json : Safe.t) : Annot.Item.t =
+  parse_item_annotation (member "return_value" json)
 
 
 let parse_captured_var (json : Safe.t) =
-  let n = to_string (member "name" json) in
-  let t = parse_sil_type_name (member "type" json) in
-  CapturedVar.make ~name:(Mangled.from_string n) ~typ:t ~capture_mode:ByValue
+  let pvar = parse_pvar (member "name" json) in
+  let typ = parse_sil_type_name (member "type" json) in
+  {CapturedVar.pvar; typ; capture_mode= ByValue}
 
 
 let parse_proc_attributes_var (json : Safe.t) =
@@ -407,7 +408,23 @@ let parse_proc_attributes (json : Safe.t) =
         L.die InternalError "Unsupported access type %s" atype
   in
   let captured = parse_list parse_captured_var (member "captured" json) in
-  let formals = parse_list parse_proc_attributes_formals (member "formals" json) in
+  let formals =
+    let mangled_typs = parse_list parse_proc_attributes_formals (member "formals" json) in
+    let annots =
+      let json = member "method_annotations" json in
+      parse_list parse_item_annotation (member "params" json)
+    in
+    let rec construct_formals mangled_typs annots =
+      match (mangled_typs, annots) with
+      | (mangled, typ) :: mangled_typs, annot :: annots ->
+          (mangled, typ, annot) :: construct_formals mangled_typs annots
+      | _, [] ->
+          List.map mangled_typs ~f:(fun (mangled, typ) -> (mangled, typ, Annot.Item.empty))
+      | [], _ ->
+          []
+    in
+    construct_formals mangled_typs annots
+  in
   let locals = parse_list parse_proc_attributes_locals (member "locals" json) in
   let loc = parse_location (member "loc" json) in
   let file = loc.file in
@@ -423,8 +440,8 @@ let parse_proc_attributes (json : Safe.t) =
   ; is_synthetic_method= to_bool (member "is_synthetic_method" json)
   ; loc
   ; locals
-  ; method_annotation= parse_method_annotation (member "method_annotations" json)
-  ; ret_type= parse_sil_type_name (member "ret_type" json) }
+  ; ret_type= parse_sil_type_name (member "ret_type" json)
+  ; ret_annots= parse_ret_annot (member "method_annotations" json) }
 
 
 let parse_call_flags (json : Safe.t) =

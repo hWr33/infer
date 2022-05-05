@@ -1397,32 +1397,123 @@ module AliasRet = struct
     pp fmt x
 end
 
-module Alias = struct
-  type t = {map: AliasMap.t; ret: AliasRet.t}
+module CppIterBeginOrEndKind = struct
+  type t = Begin | End [@@deriving equal]
+
+  let get_binop = function Begin -> Binop.Gt | End -> Binop.Lt
+
+  let pp f = function Begin -> F.pp_print_string f "begin" | End -> F.pp_print_string f "end"
+end
+
+module CppIterBeginOrEndValue = AbstractDomain.Flat (CppIterBeginOrEndKind)
+
+module PVar = struct
+  include Pvar
+
+  let pp = Pvar.pp Pp.text
+end
+
+module CppIterBeginOrEnd = struct
+  include AbstractDomain.InvertedMap (PVar) (CppIterBeginOrEndValue)
+
+  let pp : F.formatter -> t -> unit = fun fmt x -> F.fprintf fmt "cpp_iter_begin_or_end=%a" pp x
+end
+
+module CppIteratorCmpValue = struct
+  type t = V of {iter_lhs: Pvar.t; iter_rhs: Pvar.t; begin_or_end: CppIterBeginOrEndKind.t} | Top
+
+  let pp f = function
+    | V {iter_lhs; iter_rhs; begin_or_end} ->
+        F.fprintf f "{iter_lhs:%a, iter_rhs:%a begin_or_end:%a}" (Pvar.pp Pp.text) iter_lhs
+          (Pvar.pp Pp.text) iter_rhs CppIterBeginOrEndKind.pp begin_or_end
+    | Top ->
+        F.pp_print_string f "top"
+
 
   let leq ~lhs ~rhs =
-    if phys_equal lhs rhs then true
-    else AliasMap.leq ~lhs:lhs.map ~rhs:rhs.map && AliasRet.leq ~lhs:lhs.ret ~rhs:rhs.ret
+    match (lhs, rhs) with
+    | V lhs, V rhs ->
+        Pvar.equal lhs.iter_lhs rhs.iter_lhs
+        && Pvar.equal lhs.iter_rhs rhs.iter_rhs
+        && CppIterBeginOrEndKind.equal lhs.begin_or_end rhs.begin_or_end
+    | Top, V _ ->
+        false
+    | (V _ | Top), Top ->
+        true
 
 
   let join x y =
-    if phys_equal x y then x else {map= AliasMap.join x.map y.map; ret= AliasRet.join x.ret y.ret}
+    match (x, y) with
+    | V x, V y ->
+        if
+          Pvar.equal x.iter_lhs y.iter_lhs && Pvar.equal x.iter_rhs y.iter_rhs
+          && CppIterBeginOrEndKind.equal x.begin_or_end y.begin_or_end
+        then V x
+        else Top
+    | _, Top | Top, _ ->
+        Top
+
+
+  let widen ~prev ~next ~num_iters:_ = join prev next
+end
+
+module CppIteratorCmp = struct
+  include AbstractDomain.InvertedMap (Ident) (CppIteratorCmpValue)
+
+  let pp : F.formatter -> t -> unit = fun fmt x -> F.fprintf fmt "cpp_iter=%a" pp x
+end
+
+module Alias = struct
+  type t =
+    { map: AliasMap.t
+    ; ret: AliasRet.t
+    ; cpp_iterator_cmp: CppIteratorCmp.t
+    ; cpp_iter_begin_or_end: CppIterBeginOrEnd.t }
+
+  let leq ~lhs ~rhs =
+    if phys_equal lhs rhs then true
+    else
+      AliasMap.leq ~lhs:lhs.map ~rhs:rhs.map
+      && AliasRet.leq ~lhs:lhs.ret ~rhs:rhs.ret
+      && CppIteratorCmp.leq ~lhs:lhs.cpp_iterator_cmp ~rhs:rhs.cpp_iterator_cmp
+      && CppIterBeginOrEnd.leq ~lhs:lhs.cpp_iter_begin_or_end ~rhs:rhs.cpp_iter_begin_or_end
+
+
+  let join x y =
+    if phys_equal x y then x
+    else
+      { map= AliasMap.join x.map y.map
+      ; ret= AliasRet.join x.ret y.ret
+      ; cpp_iterator_cmp= CppIteratorCmp.join x.cpp_iterator_cmp y.cpp_iterator_cmp
+      ; cpp_iter_begin_or_end=
+          CppIterBeginOrEnd.join x.cpp_iter_begin_or_end y.cpp_iter_begin_or_end }
 
 
   let widen ~prev ~next ~num_iters =
     if phys_equal prev next then prev
     else
       { map= AliasMap.widen ~prev:prev.map ~next:next.map ~num_iters
-      ; ret= AliasRet.widen ~prev:prev.ret ~next:next.ret ~num_iters }
+      ; ret= AliasRet.widen ~prev:prev.ret ~next:next.ret ~num_iters
+      ; cpp_iterator_cmp=
+          CppIteratorCmp.widen ~prev:prev.cpp_iterator_cmp ~next:next.cpp_iterator_cmp ~num_iters
+      ; cpp_iter_begin_or_end=
+          CppIterBeginOrEnd.widen ~prev:prev.cpp_iter_begin_or_end ~next:next.cpp_iter_begin_or_end
+            ~num_iters }
 
 
   let pp fmt x =
-    F.fprintf fmt "@[<hov 2>{ %a%s%a }@]" AliasMap.pp x.map
+    F.fprintf fmt "@[<hov 2>{ %a%s%a, %a, %a }@]" AliasMap.pp x.map
       (if AliasMap.is_empty x.map then "" else ", ")
-      AliasRet.pp x.ret
+      AliasRet.pp x.ret CppIteratorCmp.pp x.cpp_iterator_cmp CppIterBeginOrEnd.pp
+      x.cpp_iter_begin_or_end
 
 
-  let init : t = {map= AliasMap.empty; ret= AliasRet.empty}
+  let init : t =
+    { map= AliasMap.empty
+    ; ret= AliasRet.empty
+    ; cpp_iterator_cmp= CppIteratorCmp.empty
+    ; cpp_iter_begin_or_end= CppIterBeginOrEnd.empty }
+
 
   let lift_map : (AliasMap.t -> AliasMap.t) -> t -> t = fun f a -> {a with map= f a.map}
 
@@ -1520,6 +1611,38 @@ module Alias = struct
 
   let incr_iterator_simple_alias_on_call eval_sym_trace ~callee_locs =
     lift_map (AliasMap.incr_iterator_simple_alias_on_call eval_sym_trace ~callee_locs)
+
+
+  let add_cpp_iterator_cmp_alias id ~iter_lhs ~iter_rhs begin_or_end alias =
+    { alias with
+      cpp_iterator_cmp=
+        CppIteratorCmp.add id
+          (CppIteratorCmpValue.V {iter_lhs; iter_rhs; begin_or_end})
+          alias.cpp_iterator_cmp }
+
+
+  let find_cpp_iterator_alias id {cpp_iterator_cmp} =
+    match CppIteratorCmp.find_opt id cpp_iterator_cmp with
+    | Some (V {iter_lhs; iter_rhs; begin_or_end}) ->
+        Some (iter_lhs, iter_rhs, CppIterBeginOrEndKind.get_binop begin_or_end)
+    | Some Top | None ->
+        None
+
+
+  let add_cpp_iter_begin_alias pvar alias =
+    { alias with
+      cpp_iter_begin_or_end=
+        CppIterBeginOrEnd.add pvar CppIterBeginOrEndValue.(v Begin) alias.cpp_iter_begin_or_end }
+
+
+  let add_cpp_iter_end_alias pvar alias =
+    { alias with
+      cpp_iter_begin_or_end=
+        CppIterBeginOrEnd.add pvar CppIterBeginOrEndValue.(v End) alias.cpp_iter_begin_or_end }
+
+
+  let find_cpp_iter_begin_or_end_alias pvar {cpp_iter_begin_or_end} =
+    CppIterBeginOrEnd.find_opt pvar cpp_iter_begin_or_end
 end
 
 module CoreVal = struct
@@ -1796,7 +1919,28 @@ module LatestPrune = struct
         Top
 
 
-  let widen ~prev ~next ~num_iters:_ = join prev next
+  let widen ~prev ~next ~num_iters =
+    match (prev, next) with
+    | Latest prev, Latest next ->
+        Latest (PrunePairs.widen ~prev ~next ~num_iters)
+    | TrueBranch (pvar, prev), TrueBranch (pvar', next) when Pvar.equal pvar pvar' ->
+        TrueBranch (pvar, PrunePairs.widen ~prev ~next ~num_iters)
+    | FalseBranch (pvar, prev), FalseBranch (pvar', next) when Pvar.equal pvar pvar' ->
+        FalseBranch (pvar, PrunePairs.widen ~prev ~next ~num_iters)
+    | V (pvar, prev_true, prev_false), V (pvar', next_true, next_false) when Pvar.equal pvar pvar'
+      ->
+        V
+          ( pvar
+          , PrunePairs.widen ~prev:prev_true ~next:next_true ~num_iters
+          , PrunePairs.widen ~prev:prev_false ~next:next_false ~num_iters )
+    | VRet (id, prev_true, prev_false), VRet (id', next_true, next_false) when Ident.equal id id' ->
+        VRet
+          ( id
+          , PrunePairs.widen ~prev:prev_true ~next:next_true ~num_iters
+          , PrunePairs.widen ~prev:prev_false ~next:next_false ~num_iters )
+    | _, _ ->
+        Top
+
 
   let top = Top
 
@@ -2320,6 +2464,34 @@ module MemReach = struct
     else
       let new_c_strlen = Val.of_itv ~traces:(Val.get_traces idx) (Itv.incr idx_itv) in
       set_first_idx_of_null loc new_c_strlen m
+
+
+  let add_cpp_iter_begin_alias pvar m = {m with alias= Alias.add_cpp_iter_begin_alias pvar m.alias}
+
+  let add_cpp_iter_end_alias pvar m = {m with alias= Alias.add_cpp_iter_end_alias pvar m.alias}
+
+  let find_cpp_iterator_alias id m = Alias.find_cpp_iterator_alias id m.alias
+
+  let find_cpp_iter_begin_or_end_alias id m = Alias.find_cpp_iter_begin_or_end_alias id m.alias
+
+  let add_cpp_iterator_cmp_alias id ~iter_lhs ~iter_rhs m =
+    let open IOption.Let_syntax in
+    (let* begin_or_end_iter_v = find_cpp_iter_begin_or_end_alias iter_rhs m in
+     let+ begin_or_end = CppIterBeginOrEndValue.get begin_or_end_iter_v in
+     {m with alias= Alias.add_cpp_iterator_cmp_alias id ~iter_lhs ~iter_rhs begin_or_end m.alias} )
+    |> Option.value ~default:m
+
+
+  let propagate_cpp_iter_begin_or_end_alias ~new_pvar ~existing_pvar m =
+    let open IOption.Let_syntax in
+    (let* begin_or_end_iter_v = find_cpp_iter_begin_or_end_alias existing_pvar m in
+     let+ begin_or_end = CppIterBeginOrEndValue.get begin_or_end_iter_v in
+     match (begin_or_end : CppIterBeginOrEndKind.t) with
+     | Begin ->
+         add_cpp_iter_begin_alias new_pvar m
+     | End ->
+         add_cpp_iter_end_alias new_pvar m )
+    |> Option.value ~default:m
 end
 
 module Mem = struct
@@ -2602,4 +2774,20 @@ module Mem = struct
         F.pp_print_string f (SpecialChars.up_tack ^ " by exception")
     | Reachable m ->
         MemReach.pp f m
+
+
+  let find_cpp_iterator_alias id m =
+    f_lift_default ~default:None (MemReach.find_cpp_iterator_alias id) m
+
+
+  let add_cpp_iterator_cmp_alias id ~iter_lhs ~iter_rhs m =
+    map m ~f:(MemReach.add_cpp_iterator_cmp_alias id ~iter_lhs ~iter_rhs)
+
+
+  let add_cpp_iter_begin_alias pvar m = map m ~f:(MemReach.add_cpp_iter_begin_alias pvar)
+
+  let add_cpp_iter_end_alias pvar m = map m ~f:(MemReach.add_cpp_iter_end_alias pvar)
+
+  let propagate_cpp_iter_begin_or_end_alias ~new_pvar ~existing_pvar m =
+    map m ~f:(MemReach.propagate_cpp_iter_begin_or_end_alias ~new_pvar ~existing_pvar)
 end

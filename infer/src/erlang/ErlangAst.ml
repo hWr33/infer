@@ -21,7 +21,8 @@ type function_reference = FunctionName of string | FunctionVariable of string [@
 type function_ = {module_: module_reference; function_: function_reference; arity: int}
 [@@deriving sexp_of]
 
-type line = int [@@deriving sexp_of]
+(* Location info. For compatibility with [Location.t] -1 means unknown. *)
+type location = {line: int; col: int} [@@deriving sexp_of]
 
 type record_name = string [@@deriving sexp_of]
 
@@ -83,7 +84,11 @@ and simple_expression =
   | Cons of {head: expression; tail: expression}
   | Fun of function_
   | If of case_clause list
-  | Lambda of {name: string option; cases: case_clause list}
+  | Lambda of
+      { name: string option
+      ; cases: case_clause list
+      ; mutable procname: (Procname.t option[@sexp.opaque])
+      ; mutable captured: (Pvar.Set.t option[@sexp.opaque]) }
   | ListComprehension of {expression: expression; qualifiers: qualifier list}
   | Literal of literal
   | Map of {map: expression option; updates: association list}
@@ -96,10 +101,10 @@ and simple_expression =
   | TryCatch of {body: body; ok_cases: case_clause list; catch_cases: catch_clause list; after: body}
   | Tuple of expression list
   | UnaryOperator of unary_operator * expression
-  | Variable of string
+  | Variable of {vname: string; mutable scope: (Procname.t option[@sexp.opaque])}
 [@@deriving sexp_of]
 
-and expression = {line: line; simple_expression: simple_expression} [@@deriving sexp_of]
+and expression = {location: location; simple_expression: simple_expression} [@@deriving sexp_of]
 
 and qualifier =
   | BitsGenerator of {pattern: pattern; expression: expression}
@@ -124,7 +129,7 @@ and guard_test = expression [@@deriving sexp_of]
 
 (** {2 S8.5 Clauses} *)
 
-and 'pat clause = {line: line; patterns: 'pat list; guards: guard_test list list; body: body}
+and 'pat clause = {location: location; patterns: 'pat list; guards: guard_test list list; body: body}
 [@@deriving sexp_of]
 
 and case_clause = pattern clause [@@deriving sexp_of]
@@ -133,6 +138,47 @@ and catch_clause = catch_pattern clause [@@deriving sexp_of]
 
 and catch_pattern = {exception_: exception_; pattern: pattern; variable: string}
 [@@deriving sexp_of]
+
+(** {2 S8.7 Types} *)
+
+(** See also https://www.erlang.org/doc/reference_manual/typespec.html *)
+
+type atom_type = Any | Literal of string [@@deriving sexp_of]
+
+type integer_type = Any | Literal of int | Range of {low: int; high: int} | Neg | NonNeg | Pos
+[@@deriving sexp_of]
+
+type type_ =
+  | Any
+  | Atom of atom_type
+  | BitString of {start_size: int; segment_size: int}
+  | Integer of integer_type
+  | List of list_type
+  | Map (* TODO: associations *)
+  | Nil
+  | None
+  | Pid
+  | Port
+  | Record of string (* TODO: fields*)
+  | Reference
+  | Remote of {module_: string; type_: string} (* TODO: arguments *)
+  | String (* TODO: replace this with [char()] when we model strings as lists. *)
+  | Tuple of tuple_type
+  | Union of type_ list
+  | UserDefined of string (* TODO: arguments *)
+  | Var of string
+[@@deriving sexp_of]
+
+and list_type = Proper of type_
+
+and tuple_type = AnySize | FixedSize of type_ list [@@deriving sexp_of]
+
+(* Function specs can be overloaded, forming disjunctions.
+   Currently the only kind of constraints are "subtype of" which we track in a map. *)
+type spec_disjunct = {arguments: type_ list; return: type_; constraints: type_ String.Map.t}
+[@@deriving sexp_of]
+
+type spec = spec_disjunct list [@@deriving sexp_of]
 
 (** {2 S8.1: Module declarations and forms} *)
 
@@ -146,8 +192,10 @@ type simple_form =
   | File of {path: string}
   | Function of {function_: function_; clauses: case_clause list}
   | Record of {name: string; fields: record_field list}
+  | Spec of {function_: function_; spec: spec}
+  | Type of {name: string; type_: type_} (* TODO: arguments*)
 [@@deriving sexp_of]
 
-type form = {line: line; simple_form: simple_form} [@@deriving sexp_of]
+type form = {location: location; simple_form: simple_form} [@@deriving sexp_of]
 
 type module_ = form list [@@deriving sexp_of]

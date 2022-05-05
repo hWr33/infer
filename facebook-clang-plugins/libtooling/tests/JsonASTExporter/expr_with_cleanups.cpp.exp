@@ -310,6 +310,7 @@
             ]
           },
           {
+            "is_copy_constructor" : true
           }
         ]],
         ["CXXMethodDecl" , [
@@ -680,6 +681,7 @@
             ]]
           },
           {
+            "is_copy_constructor" : true
           }
         ]]
       ],
@@ -1178,7 +1180,8 @@
                                             "cast_kind" : "FunctionToPointerDecay",
                                             "base_path" : [
                                             ]
-                                          }
+                                          },
+                                          false
                                         ]],
                                         ["CXXBindTemporaryExpr" , [
                                           {
@@ -1355,7 +1358,8 @@
                                                         "cast_kind" : "NoOp",
                                                         "base_path" : [
                                                         ]
-                                                      }
+                                                      },
+                                                      false
                                                     ]]
                                                   ],
                                                   {
@@ -1431,7 +1435,8 @@
                                 "cast_kind" : "NoOp",
                                 "base_path" : [
                                 ]
-                              }
+                              },
+                              false
                             ]]
                           ],
                           {
@@ -1639,7 +1644,8 @@
                                                 "cast_kind" : "FunctionToPointerDecay",
                                                 "base_path" : [
                                                 ]
-                                              }
+                                              },
+                                              false
                                             ]],
                                             ["CXXBindTemporaryExpr" , [
                                               {
@@ -1816,7 +1822,8 @@
                                                             "cast_kind" : "NoOp",
                                                             "base_path" : [
                                                             ]
-                                                          }
+                                                          },
+                                                          false
                                                         ]]
                                                       ],
                                                       {
@@ -1892,7 +1899,8 @@
                                     "cast_kind" : "NoOp",
                                     "base_path" : [
                                     ]
-                                  }
+                                  },
+                                  false
                                 ]]
                               ],
                               {
@@ -2094,7 +2102,8 @@
                                             "cast_kind" : "FunctionToPointerDecay",
                                             "base_path" : [
                                             ]
-                                          }
+                                          },
+                                          false
                                         ]],
                                         ["CXXBindTemporaryExpr" , [
                                           {
@@ -2271,7 +2280,8 @@
                                                         "cast_kind" : "NoOp",
                                                         "base_path" : [
                                                         ]
-                                                      }
+                                                      },
+                                                      false
                                                     ]]
                                                   ],
                                                   {
@@ -2347,7 +2357,8 @@
                                 "cast_kind" : "NoOp",
                                 "base_path" : [
                                 ]
-                              }
+                              },
+                              false
                             ]]
                           ],
                           {
@@ -2555,7 +2566,8 @@
                                                 "cast_kind" : "FunctionToPointerDecay",
                                                 "base_path" : [
                                                 ]
-                                              }
+                                              },
+                                              false
                                             ]],
                                             ["CXXBindTemporaryExpr" , [
                                               {
@@ -2732,7 +2744,8 @@
                                                             "cast_kind" : "NoOp",
                                                             "base_path" : [
                                                             ]
-                                                          }
+                                                          },
+                                                          false
                                                         ]]
                                                       ],
                                                       {
@@ -2808,7 +2821,8 @@
                                     "cast_kind" : "NoOp",
                                     "base_path" : [
                                     ]
-                                  }
+                                  },
+                                  false
                                 ]]
                               ],
                               {
@@ -2946,7 +2960,8 @@
                         "cast_kind" : "FunctionToPointerDecay",
                         "base_path" : [
                         ]
-                      }
+                      },
+                      false
                     ]],
                     ["DeclRefExpr" , [
                       {
@@ -3095,7 +3110,8 @@
                                         "cast_kind" : "FunctionToPointerDecay",
                                         "base_path" : [
                                         ]
-                                      }
+                                      },
+                                      false
                                     ]],
                                     ["CXXBindTemporaryExpr" , [
                                       {
@@ -3184,7 +3200,8 @@
                                                 "cast_kind" : "NoOp",
                                                 "base_path" : [
                                                 ]
-                                              }
+                                              },
+                                              false
                                             ]]
                                           ],
                                           {
@@ -3248,7 +3265,8 @@
                             "cast_kind" : "NoOp",
                             "base_path" : [
                             ]
-                          }
+                          },
+                          false
                         ]]
                       ],
                       {

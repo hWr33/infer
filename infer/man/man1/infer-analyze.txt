@@ -51,16 +51,6 @@ OPTIONS
            reactive analysis should start. Source files should be specified
            relative to project root or be absolute
 
-       --config-checks-between-markers
-           Activates: checker config-checks-between-markers: [EXPERIMENTAL]
-           Collects config checks between marker start and end. (Conversely:
-           --no-config-checks-between-markers)
-
-       --config-checks-between-markers-only
-           Activates: Enable config-checks-between-markers and disable all
-           other checkers (Conversely:
-           --no-config-checks-between-markers-only)
-
        --config-impact-analysis
            Activates: checker config-impact-analysis: [EXPERIMENTAL] Collects
            function that are called without config checks. (Conversely:
@@ -77,9 +67,10 @@ OPTIONS
            --incremental-analysis. (Conversely: --no-continue-analysis)
 
        --cost
-           Activates: checker cost: Computes the time complexity of functions
-           and methods. Can be used to detect changes in runtime complexity
-           with `infer reportdiff`. (Conversely: --no-cost)
+           Activates: checker cost: Computes the asymptotic complexity of
+           functions with respect to execution cost or other user defined
+           resources. Can be used to detect changes in the complexity with
+           `infer reportdiff`. (Conversely: --no-cost)
 
        --cost-only
            Activates: Enable cost and disable all other checkers (Conversely:
@@ -124,8 +115,9 @@ OPTIONS
        --no-default-checkers
            Deactivates: Default checkers: --biabduction,
            --fragment-retains-view, --inefficient-keyset-iterator, --linters,
-           --liveness, --racerd, --dotnet-resource-leak, --siof,
-           --self-in-block, --starvation (Conversely: --default-checkers)
+           --liveness, --parameter-not-null-checked, --racerd,
+           --dotnet-resource-leak, --siof, --self-in-block, --starvation
+           (Conversely: --default-checkers)
 
        --eradicate
            Activates: checker eradicate: The eradicate `@Nullable` checker
@@ -245,6 +237,16 @@ OPTIONS
        --memtrace-sampling-rate float
            Sampling rate for Memtrace allocation profiling. Default is 1e-6.
 
+       --no-parameter-not-null-checked
+           Deactivates: checker parameter-not-null-checked: An
+           Objective-C-specific analysis to detect when a block parameter is
+           used before being checked for null first. (Conversely:
+           --parameter-not-null-checked)
+
+       --parameter-not-null-checked-only
+           Activates: Enable parameter-not-null-checked and disable all other
+           checkers (Conversely: --no-parameter-not-null-checked-only)
+
        --print-active-checkers
            Activates: Print the active checkers before starting the analysis
            (Conversely: --no-print-active-checkers)
@@ -278,6 +280,9 @@ OPTIONS
            Regex of methods for which pulse will only explore one path. Can
            be used on pathologically large procedures to prevent too-big
            states from being produced.
+
+       --pulse-max-cfg-size int
+           Larger CFGs than the max size are skipped in Pulse.
 
        --pulse-model-abort +string
            Methods that should be modelled as abort in Pulse
@@ -314,6 +319,10 @@ OPTIONS
            Regex of methods that should be modelled as returning non-null in
            Pulse
 
+       --pulse-model-returns-copy-pattern string
+           Regex of methods that should be modelled as creating copies in
+           Pulse
+
        --pulse-model-skip-pattern string
            Regex of methods that should be modelled as "skip" in Pulse
 
@@ -321,18 +330,12 @@ OPTIONS
            Methods that should be modelled as transfering memory ownership in
            Pulse. Accepted formats are method or namespace::method
 
+       --pulse-models-for-erlang json
+           Provide custom models for Erlang code using a DSL.
+
        --pulse-only
            Activates: Enable pulse and disable all other checkers
            (Conversely: --no-pulse-only)
-
-       --pulse-prune-unsupported-arithmetic
-           Activates: The arithmetic engine in Pulse sometimes does not
-           detect that the collection of conditions on the path makes it
-           infeasible, especially outside the well-supported linear
-           arithmetic fragment. To avoid false positives, Pulse tries to
-           detect when there is a possibility of imprecise arithmetic
-           treatment and if so pessimistically assumes the path is
-           infeasible. (Conversely: --no-pulse-prune-unsupported-arithmetic)
 
        --pulse-report-ignore-unknown-java-methods-patterns +string
            On Java, issues that are found on program paths that contain calls
@@ -341,6 +344,43 @@ OPTIONS
            empty list is provided with
            --pulse-report-ignore-unknown-java-methods-patterns-reset, all
            issues will be reported regardless the presence of unknown code
+
+       --pulse-skip-procedures regex
+           Regex of procedures that should not be analyzed by Pulse.
+
+       --pulse-taint-policies json
+           A description of which taint flows should be reported, following
+           this JSON format:             { "short_description": "<a short description of the issue>",
+               "taint_flows": [{ "source_kinds": [<matchers>],
+                                 "sink_kinds": [<matchers>],
+                                 "sanitizer_kinds": [<matchers>]}]
+             }
+           where <matchers> are in the same format as --pulse-taint-sources;
+           the field "sanitizer_kinds" is optional (assumed to be empty), and
+           a policy may have several taint flows in the form of a list.
+
+       --pulse-taint-sanitizers json
+           Quick way to specify simple sanitizers as a JSON objects. See
+           --pulse-taint-sources for the fields format documentation.
+
+       --pulse-taint-sinks json
+           Quick way to specify simple sinks as a JSON objects. See
+           --pulse-taint-sources for the fields format documentation.
+
+       --pulse-taint-sources json
+           Together with --pulse-taint-sanitizers, --pulse-taint-sinks, and
+           --pulse-taint-specifications, specify taint properties. The JSON
+           format of sources also applies to sinks and sanitizers. It
+           consists of a list of objects with the following fields, for
+           example '[{"procedure": "mySimpleSink", "formals": [{"index":
+           1}]}]':             - "procedure" to match a substring of the function or method
+           name, or "procedure_regex" to specify an OCaml regex
+             - "formals" is a list of objects with one or two fields:
+               - "index" is the index of the formal that is tainted,
+           starting at 0. For methods, index 0 is this, other arguments start
+           at index 1
+               - "type_name" is optional string; only arguments whose type
+           contains this substring match
 
        --purity
            Activates: checker purity: Detects pure (side-effect-free)
@@ -407,6 +447,14 @@ OPTIONS
            Activates: Enable self-in-block and disable all other checkers
            (Conversely: --no-self-in-block-only)
 
+       --simple-lineage
+           Activates: checker simple-lineage: Computes a dataflow graph
+           (Conversely: --no-simple-lineage)
+
+       --simple-lineage-only
+           Activates: Enable simple-lineage and disable all other checkers
+           (Conversely: --no-simple-lineage-only)
+
        --no-siof
            Deactivates: checker siof: Catches Static Initialization Order
            Fiascos in C++, that can lead to subtle,
@@ -435,6 +483,10 @@ OPTIONS
        --starvation-only
            Activates: Enable starvation and disable all other checkers
            (Conversely: --no-starvation-only)
+
+       --top-longest-proc-duration-size int
+           Number of procedures for which we track longest analysis duration
+           info.
 
        --topl
            Activates: checker topl: Detect errors based on user-provided
@@ -478,6 +530,10 @@ BUFFER OVERRUN OPTIONS
        --bo-field-depth-limit int
            Limit of field depth of abstract location in buffer-overrun
            checker
+
+       --bo-max-cfg-size int
+           Larger CFGs than the max size are skipped in buffer overrun
+           analysis.
 CLANG OPTIONS
        --annotation-reachability-cxx json
            Specify annotation reachability analyses to be performed on
@@ -528,6 +584,9 @@ CLANG OPTIONS
            these types (or common wrappers around these types such as
            unique_ptr<type>) will count as dead stores when the variables are
            not read explicitly by the program.
+ERLANG OPTIONS
+       --erlang-list-unfold-depth int
+           Unfold Erlang lists up to depth int
 JAVA OPTIONS
        --annotation-reachability-custom-pairs json
            Specify custom sources/sink for the annotation reachability
@@ -560,13 +619,40 @@ RACERD CHECKER OPTIONS
            Activates: Check @GuardedBy annotations with RacerD (Conversely:
            --no-racerd-guardedby)
 
-       --no-racerd-unknown-returns-owned
-           Deactivates: DEPRECATED, does nothing. (Conversely:
-           --racerd-unknown-returns-owned)
+       --racerd-ignore-classes +string
+           Any method in a class specified here will be ignored by RacerD.
 
        --threadsafe-aliases json
            Specify custom annotations that should be considered aliases of
            @ThreadSafe
+SIMPLE LINEAGE OPTIONS
+       --no-simple-lineage-dedup
+           Deactivates: In JSON output, attempt to print each entity at most
+           once. This is the default. The only reason you may want to turn
+           this off is to make hash collisions more visible; that is, cases
+           in which distinct entities get assigned the same ID. (Conversely:
+           --simple-lineage-dedup)
+
+       --simple-lineage-json-report
+           Activates: Enable simple lineage report in JSON format.
+           (Conversely: --no-simple-lineage-json-report)
+
+       --simple-lineage-keep-temporaries
+           Activates: Normally, lineage summaries do not mention temporary
+           variables introduced while compiling the high-level code to
+           Infer's IR (intermediate representation). If this option is
+           enabled, then the lineage graph produced corresponds to Infer's
+           IR. (Conversely: --no-simple-lineage-keep-temporaries)
+
+       --simple-lineage-max-cfg-size int
+           If set, larger CFGs are skipped.
+
+       --simple-lineage-seed int
+           Set the random seed used for hashing. (Various entities that get
+           reported need unique identifiers. To generate these unique
+           identifiers, in a distributed way without communication, we use
+           hashing. If you are unlucky and get collisions, you can try a
+           different seed.
 SIOF CHECKER OPTIONS
        --siof-check-iostreams
            Activates: Do not assume that iostreams (cout, cerr, ...) are

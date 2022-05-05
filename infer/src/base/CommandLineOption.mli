@@ -19,6 +19,7 @@ type parse_mode =
 [@@deriving compare]
 
 val is_originator : bool
+(** Do not use this value, use [Config.is_originator] instead *)
 
 val init_work_dir : string
 
@@ -259,3 +260,6 @@ val show_manual :
     default values for options. *)
 
 val keep_args_file : bool ref
+
+val inferconfig_path_arg : string
+(** name of argument for choosing path to inferconfig *)
