@@ -11,12 +11,17 @@ module F = Format
 type t =
   { file: SourceFile.t  (** The name of the source file *)
   ; line: int  (** The line number. -1 means "do not know" *)
-  ; col: int  (** The column number. -1 means "do not know" *) }
-[@@deriving compare, sexp_of]
+  ; col: int  (** The column number. -1 means "do not know" *)
+  ; macro_file_opt: SourceFile.t option
+        (** If the location is coming from macro expansion, the name of the file macro is defined in *)
+  ; macro_line: int  (** If the location is coming from macro expansion, the line number *) }
+[@@deriving compare, equal, sexp, hash, normalize]
 
-let equal = [%compare.equal: t]
+let get_macro_file_line_opt {macro_file_opt; macro_line} =
+  Option.map macro_file_opt ~f:(fun file -> (file, macro_line))
 
-let none file = {line= -1; col= -1; file}
+
+let none file = {line= -1; col= -1; file; macro_file_opt= None; macro_line= -1}
 
 let dummy = none (SourceFile.invalid __FILE__)
 
@@ -53,12 +58,12 @@ module Map = PrettyPrintable.MakePPMap (struct
   let pp = pp
 end)
 
-module Normalizer = HashNormalizer.Make (struct
-  type nonrec t = t [@@deriving equal]
+module Normalizer : HashNormalizer.S with type t = t = struct
+  type nonrec t = t
 
-  let hash = Hashtbl.hash
+  let normalize = hash_normalize
 
-  let normalize t =
-    let file = SourceFile.Normalizer.normalize t.file in
-    if phys_equal file t.file then t else {t with file}
-end)
+  let normalize_opt = hash_normalize_opt
+
+  let normalize_list = hash_normalize_list
+end

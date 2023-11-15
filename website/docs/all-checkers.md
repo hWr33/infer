@@ -35,9 +35,17 @@ Computes the asymptotic complexity of functions with respect to execution cost o
 
 [Visit here for more information.](/docs/next/checker-cost)
 
+## Datalog-based points-to analysis
+
+Experimental datalog-based points-to analysis.
+
+[Visit here for more information.](/docs/next/checker-datalog)
+
 ## Eradicate
 
 The eradicate `@Nullable` checker for Java annotations.
+
+**\*\*\*DEPRECATED\*\*\*** Unmaintained and will be removed in the future. Consider using [NullAway](https://github.com/uber/NullAway) as an alternative to Eradicate.
 
 [Visit here for more information.](/docs/next/checker-eradicate)
 
@@ -68,14 +76,6 @@ Detects functions with potential side-effects. Same as "purity", but implemented
 Check for inefficient uses of iterators that iterate on keys then lookup their values, instead of iterating on key-value pairs directly.
 
 [Visit here for more information.](/docs/next/checker-inefficient-keyset-iterator)
-
-## AST Language (AL)
-
-Declarative linting framework over the Clang AST.
-
-**\*\*\*DEPRECATED\*\*\*** On end-of-life support, may be removed in the future.
-
-[Visit here for more information.](/docs/next/checker-linters)
 
 ## Litho "Required Props"
 
@@ -139,11 +139,11 @@ Toy checker for the "resource leak" write-your-own-checker exercise.
 
 [Visit here for more information.](/docs/next/checker-resource-leak-lab)
 
-## Resource Leak checker for .NET
+## Scope Leakage
 
-"resource leak" checker for .NET.
+The Java/Kotlin checker takes into account a set of "scope" annotations and a must-not-hold relation over the scopes. The checker raises an alarm if there exists a field access path from object A to object B, with respective scopes SA and SB, such that must-not-hold(SA, SB).
 
-[Visit here for more information.](/docs/next/checker-dotnet-resource-leak)
+[Visit here for more information.](/docs/next/checker-scope-leakage)
 
 ## Static Initialization Order Fiasco
 
@@ -151,11 +151,17 @@ Catches Static Initialization Order Fiascos in C++, that can lead to subtle, com
 
 [Visit here for more information.](/docs/next/checker-siof)
 
-## Simple Lineage
+## SIL validation
+
+This checker validates that all SIL instructions in all procedure bodies conform to a (front-end specific) subset of SIL.
+
+[Visit here for more information.](/docs/next/checker-sil-validation)
+
+## Lineage
 
 Computes a dataflow graph
 
-[Visit here for more information.](/docs/next/checker-simple-lineage)
+[Visit here for more information.](/docs/next/checker-lineage)
 
 ## Self in Block
 

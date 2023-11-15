@@ -91,6 +91,11 @@ AS_IF([test x"$BUILD_PLATFORM" = x"Windows"], [WINDOWS_BUILD=yes])
 AC_MSG_RESULT([$WINDOWS_BUILD])
 AC_SUBST([WINDOWS_BUILD])
 
+AC_MSG_CHECKING([for realpath])
+AS_IF([test x"$BUILD_PLATFORM" = x"Darwin"], [REALPATH=grealpath], [REALPATH=realpath])
+AC_MSG_RESULT([$REALPATH])
+AC_SUBST([REALPATH])
+
 AC_ARG_VAR([PLATFORM_ENV], [Build and link binaries against this platform rather than system default (Linux only)])
 
 AC_ARG_ENABLE(c-analyzers,
@@ -109,6 +114,14 @@ AC_ARG_ENABLE(erlang-analyzers,
 BUILD_ERLANG_ANALYZERS=$enable_erlang_analyzers
 AC_SUBST([BUILD_ERLANG_ANALYZERS])
 
+AC_ARG_ENABLE(hack-analyzers,
+  AS_HELP_STRING([--disable-hack-analyzers],
+    [do not build the Hack analyzers (default is to build them)]),
+  ,
+  enable_hack_analyzers=yes)
+BUILD_HACK_ANALYZERS=$enable_hack_analyzers
+AC_SUBST([BUILD_HACK_ANALYZERS])
+
 AC_ARG_ENABLE(java-analyzers,
   AS_HELP_STRING([--disable-java-analyzers],
     [do not build the Java analyzers (default is to build them)]),
@@ -116,6 +129,19 @@ AC_ARG_ENABLE(java-analyzers,
   enable_java_analyzers=yes)
 BUILD_JAVA_ANALYZERS=$enable_java_analyzers
 AC_SUBST([BUILD_JAVA_ANALYZERS])
+
+enable_python_analyzers_default=auto
+AS_IF([test "x$is_release_tree" = "xyes"], [
+  enable_python_analyzers_default=yes
+])
+
+AC_ARG_ENABLE(python-analyzers,
+  AS_HELP_STRING([--disable-python-analyzers],
+    [do not build the Python analyzers (default is to build them in release mode, otherwise auto-detect)]),
+  ,
+  enable_python_analyzers=$enable_python_analyzers_default)
+BUILD_PYTHON_ANALYZERS=$enable_python_analyzers
+AC_SUBST([BUILD_PYTHON_ANALYZERS])
 
 AC_ARG_WITH(fcp-clang,
   AS_HELP_STRING([--with-fcp-clang],
@@ -153,6 +179,23 @@ AS_IF([test "x$enable_c_analyzers" = "xyes"], [
   AC_SUBST([ENABLE_OCAMLOPT_CUSTOM_CC])
 ])
 # end if($enable_c_analyzers)
+
+AC_CHECK_TOOL([PYTHON], [python3], [no])
+AS_IF([test "x$enable_python_analyzers" != "xno"], [
+  AC_ASSERT_PROG([python3], [$PYTHON])
+  AC_MSG_CHECKING([python version])
+  python_version=$("$PYTHON" --version)
+  AC_MSG_RESULT([$python_version])
+  case $python_version in
+    Python\ 3.8.*) BUILD_PYTHON_ANALYZERS=yes; break;;
+    *) BUILD_PYTHON_ANALYZERS=no;
+      AS_IF([test "x$enable_python_analyzers" = "xauto"], [
+        AC_MSG_WARN([python version $python_version is not supported, disabling python support])
+        ], [
+        AC_MSG_ERROR([python version $python_version is not supported, please install python version 3.8 instead or disable python support with --disable-python-analyzers])
+      ]); break;;
+  esac
+]) # end if($enable_python_analyzers)
 
 AC_CHECK_TOOL([XCODE_SELECT], [xcode-select], [no])
 AS_IF([test "x$XCODE_SELECT" != "xno"], [XCODE_SELECT_OUT=`xcode-select -p`])
@@ -268,7 +311,7 @@ AC_ARG_VAR([OPAMSWITCH], [Opam switch used for building infer.])
 AC_CHECK_TOOL([OPAM], [opam], [no])
 AS_IF([test "$OPAM" != "no"], [
   AC_MSG_CHECKING([opam version])
-  opam_version=$(opam --version)
+  opam_version=$("$OPAM" --version)
   case $opam_version in
     2.*) AC_MSG_RESULT([$opam_version]); break;;
     *) AC_MSG_ERROR([opam version $opam_version is not supported, please install opam version 2 instead]); break;;
@@ -288,9 +331,20 @@ AC_SUBST([OPAMSWITCH])
 
 if test "x$enable_erlang_analyzers" = "xyes"; then
   AC_CHECK_TOOL([ESCRIPT], [escript], [no])
+  AC_CHECK_TOOL([ERLC], [erlc], [no])
   AC_CHECK_TOOL([REBAR3], [rebar3], [no])
 fi
 # end if($enable_erlang_analyzers)
+
+if test "x$enable_hack_analyzers" = "xyes"; then
+  if test "x$is_facebook_tree" = "xyes"; then
+    # Look for hackc in $PATH first, then fallback to the bundled version
+    AC_PATH_TOOL([HACKC], [hackc], [no], [$PATH$PATH_SEPARATOR$ac_pwd/facebook/dependencies/bin])
+  else
+    AC_PATH_TOOL([HACKC], [hackc], [no])
+  fi
+fi
+# end if($enable_hack_analyzers)
 
 if test "x$enable_java_analyzers" = "xyes"; then
   AC_CHECK_TOOL([JAVA], [java], [no])
@@ -401,7 +455,7 @@ if test x"$NDKBUILD" = x"no"; then
 # ndk-build not in $PATH, look into potential android NDK install paths and record the absolute path
 # to ndk-build
   AC_PATH_PROG([NDKBUILD], [ndk-build], [no],
-    [$PATH$PATH_SEPARATOR$ANDROID_NDK$PATH_SEPARATOR/opt/android_ndk/r17c1])
+    [$PATH$PATH_SEPARATOR$ANDROID_NDK$PATH_SEPARATOR/opt/android_ndk/r20])
 fi
 
 AC_CHECK_TOOL([NINJA], [ninja], [no])
@@ -420,8 +474,18 @@ AS_IF([test "$SED" != "xno"], [
 ])
 AC_SUBST([GNU_SED])
 
-AC_CHECK_TOOL([BREW], [brew], [no])
+AC_ASSERT_PROG([diff], [$DIFF])
+AC_MSG_CHECKING([if diff supports --LTYPE-line-format=LFMT options])
+# there are several such options but just test one of them and hope for the best
+AS_IF([diff --unchanged-line-format=A /dev/null /dev/null 2>/dev/null], [
+  DIFF_CAN_FORMAT=yes
+], [
+  DIFF_CAN_FORMAT=no
+])
+AC_MSG_RESULT([$DIFF_CAN_FORMAT])
+AC_SUBST([DIFF_CAN_FORMAT])
 
+AC_CHECK_TOOL([BREW], [brew], [no])
 AC_CHECK_TOOL([INSTALL_NAME_TOOL], [install_name_tool], [no])
 AC_SUBST([INSTALL_NAME_TOOL])
 AC_CHECK_TOOL([LDD], [ldd], [no])
@@ -438,3 +502,28 @@ AC_CONFIG_FILES([
 ])
 
 AC_OUTPUT
+
+enabled_languages=""
+enabled_sequence_sep=""
+disabled_languages=""
+disabled_sequence_sep=""
+AC_DEFUN([AC_CLASSIFY_FRONTEND_SUPPORT],
+[dnl
+  AS_IF([test "$2" = "yes"],
+  [dnl
+    enabled_languages=${enabled_languages}${enabled_sequence_sep}$1;
+    enabled_sequence_sep=", "
+  ], [dnl
+    disabled_languages=${disabled_languages}${disabled_sequence_sep}$1;
+    disabled_sequence_sep=", "
+  ])
+])
+
+AC_CLASSIFY_FRONTEND_SUPPORT([clang], [$BUILD_C_ANALYZERS])
+AC_CLASSIFY_FRONTEND_SUPPORT([erlang], [$BUILD_ERLANG_ANALYZERS])
+AC_CLASSIFY_FRONTEND_SUPPORT([hack], [$BUILD_HACK_ANALYZERS])
+AC_CLASSIFY_FRONTEND_SUPPORT([java], [$BUILD_JAVA_ANALYZERS])
+AC_CLASSIFY_FRONTEND_SUPPORT([python], [$BUILD_PYTHON_ANALYZERS])
+
+AC_MSG_NOTICE([enabled language frontends:  $enabled_languages])
+AC_MSG_NOTICE([disabled language frontends: $disabled_languages])

@@ -14,10 +14,12 @@ module Cmd = InferCommandImplementation
 
 let run driver_mode =
   let open Driver in
+  if Config.dump_textual && not (is_compatible_with_textual_generation driver_mode) then
+    L.die UserError "ERROR: Textual generation is only allowed in Java and Python mode currently" ;
   run_prologue driver_mode ;
-  let changed_files = SourceFile.read_config_changed_files () in
-  InferAnalyze.invalidate_changed_procedures changed_files ;
+  let changed_files = SourceFile.read_config_files_to_analyze () in
   capture driver_mode ~changed_files ;
+  if Config.incremental_analysis then AnalysisDependencyGraph.invalidate ~changed_files ;
   analyze_and_report driver_mode ~changed_files ;
   run_epilogue ()
 
@@ -25,16 +27,8 @@ let run driver_mode =
 let run driver_mode = ScubaLogging.execute_with_time_logging "run" (fun () -> run driver_mode)
 
 let setup () =
-  let db_start =
-    let already_started = ref false in
-    fun () ->
-      if (not !already_started) && Config.is_originator && Lazy.force DBWriter.use_daemon then (
-        DBWriter.start () ;
-        Epilogues.register ~f:DBWriter.stop ~description:"Stop Sqlite write daemon" ;
-        already_started := true )
-  in
   ( match Config.command with
-  | Analyze | AnalyzeJson ->
+  | Analyze ->
       ResultsDir.assert_results_dir "have you run capture before?"
   | Report | ReportDiff ->
       ResultsDir.create_results_dir ()
@@ -45,55 +39,56 @@ let setup () =
           (* In Buck mode, delete infer-out directories inside buck-out to start fresh and to
              avoid getting errors because some of their contents is missing (removed by
              [Driver.clean_results_dir ()]). *)
-          (buck && Option.exists buck_mode ~f:BuckMode.is_clang_flavors) || genrule_mode)
+          (buck && Option.exists buck_mode ~f:BuckMode.is_clang) || genrule_mode )
         || not
              ( Driver.is_analyze_mode driver_mode
              || Config.(
                   continue_capture || infer_is_clang || infer_is_javac || reactive_mode
-                  || incremental_analysis) )
-      then ResultsDir.remove_results_dir () ;
+                  || incremental_analysis || mark_unchanged_procs || Option.is_some run_as_child )
+             )
+      then (
+        AnalysisDependencyGraph.store_previous_schedule_if_needed () ;
+        ResultsDir.remove_results_dir () ) ;
       ResultsDir.create_results_dir () ;
       if
         Config.is_originator && (not Config.continue_capture)
         && not (Driver.is_analyze_mode driver_mode)
       then (
-        db_start () ;
+        DBWriter.start () ;
         SourceFiles.mark_all_stale () )
   | Explore ->
       ResultsDir.assert_results_dir "please run an infer analysis first"
+  | Debug when Option.is_some Config.extract_capture_from ->
+      AnalysisDependencyGraph.store_previous_schedule_if_needed () ;
+      ResultsDir.remove_results_dir () ;
+      ResultsDir.create_results_dir ()
   | Debug ->
       ResultsDir.assert_results_dir "please run an infer analysis or capture first"
   | Help ->
       () ) ;
   let has_result_dir =
     match Config.command with
-    | Analyze | AnalyzeJson | Capture | Compile | Debug | Explore | Report | ReportDiff | Run ->
+    | Analyze | Capture | Compile | Debug | Explore | Report | ReportDiff | Run ->
         true
     | Help ->
         false
   in
   if has_result_dir then (
-    db_start () ;
+    DBWriter.start () ;
     if Config.is_originator then ResultsDir.RunState.add_run_to_sequence () ) ;
   has_result_dir
 
 
 let print_active_checkers () =
-  (if Config.print_active_checkers && Config.is_originator then L.result else L.environment_info)
+  ( if Config.print_active_checkers && Config.is_originator then L.result ~style:[]
+    else L.environment_info )
     "Active checkers: %a@."
     (Pp.seq ~sep:", " RegisterCheckers.pp_checker)
     (RegisterCheckers.get_active_checkers ())
 
 
 let print_scheduler () =
-  L.environment_info "Scheduler: %s@\n"
-    ( match Config.scheduler with
-    | File ->
-        "file"
-    | Restart ->
-        "restart"
-    | SyntacticCallGraph ->
-        "callgraph" )
+  L.environment_info "Scheduler: %s@\n" (Config.string_of_scheduler Config.scheduler)
 
 
 let print_cores_used () = L.environment_info "Cores used: %d@\n" Config.jobs
@@ -131,14 +126,7 @@ let log_environment_info () =
 let () =
   (* We specifically want to collect samples only from the main process until
      we figure out what other entries and how we want to collect *)
-  if CommandLineOption.is_originator then ScubaLogging.register_global_log_flushing_at_exit () ;
-  ( if Config.linters_validate_syntax_only then
-    match CTLParserHelper.validate_al_files () with
-    | Ok () ->
-        L.exit 0
-    | Error e ->
-        print_endline e ;
-        L.exit 3 ) ;
+  if Config.is_originator then ScubaLogging.register_global_log_flushing_at_exit () ;
   ( match Config.check_version with
   | Some check_version ->
       if not (String.equal check_version Version.versionString) then
@@ -149,11 +137,14 @@ let () =
       () ) ;
   if Config.print_builtins then Builtin.print_and_exit () ;
   let has_results_dir = setup () in
-  if has_results_dir then log_environment_info () ;
+  if has_results_dir && Config.is_originator then log_environment_info () ;
   if has_results_dir && Config.debug_mode && Config.is_originator then (
     L.progress "Logs in %s@." (ResultsDir.get_path Logs) ;
     Option.iter Config.scuba_execution_id ~f:(fun id -> L.progress "Execution ID %Ld@." id) ) ;
   ( match Config.command with
+  | _ when Option.is_some Config.run_as_child ->
+      InferAnalyze.register_active_checkers () ;
+      never_returns (ProcessPool.run_as_child ())
   | _ when Config.test_determinator && not Config.process_clang_ast ->
       TestDeterminator.compute_and_emit_test_to_run ()
   | _ when Option.is_some Config.java_debug_source_file_info ->
@@ -162,8 +153,6 @@ let () =
       else JSourceFileInfo.debug_on_file (Option.value_exn Config.java_debug_source_file_info)
   | Analyze ->
       run Driver.Analyze
-  | AnalyzeJson ->
-      run Driver.AnalyzeJson
   | Capture | Compile | Run ->
       run (Lazy.force Driver.mode_from_command_line)
   | Help ->

@@ -14,8 +14,6 @@ module NodeKey : sig
   type t
 
   val to_string : t -> string
-
-  val of_frontend_node_key : string -> t
 end
 
 (** node of the control flow graph *)
@@ -24,7 +22,7 @@ module Node : sig
   type t [@@deriving compare]
 
   (** node id *)
-  type id = private int [@@deriving compare, equal]
+  type id = private int [@@deriving compare, equal, hash]
 
   type destruction_kind =
     | DestrBreakStmt
@@ -83,7 +81,7 @@ module Node : sig
     | OutOfBound
     | ReturnStmt
     | Scope of string
-    | Skip of string
+    | Skip
     | SwitchStmt
     | ThisNotNull
     | Throw
@@ -178,9 +176,6 @@ module Node : sig
   (** Set an exit node corresponding to a start node of a code block. Using this, when there is a
       code block, frontend can keep the correspondence between start/exit nodes of a code block. *)
 
-  val get_code_block_exit : t -> t option
-  (** Get an exit node corresponding to a start node of a code block. *)
-
   val is_dangling : t -> bool
   (** Returns true if the node is dangling, i.e. no successors and predecessors *)
 
@@ -194,6 +189,10 @@ module Node : sig
   (** Pretty print a node id *)
 
   val pp_stmt : Format.formatter -> stmt_nodekind -> unit
+
+  val pp_with_instrs : ?print_types:bool -> Format.formatter -> t -> unit
+    [@@warning "-unused-value-declaration"]
+  (** Pretty print the node with instructions *)
 
   val compute_key : t -> NodeKey.t
 end
@@ -249,11 +248,23 @@ val get_captured : t -> CapturedVar.t list
 
 val get_exit_node : t -> Node.t
 
+val get_exn_sink : t -> Node.t option
+(** Return the exception sink node, if any. *)
+
 val get_formals : t -> (Mangled.t * Typ.t * Annot.Item.t) list
 (** Return name, type, and annotation of formal parameters *)
 
 val get_pvar_formals : t -> (Pvar.t * Typ.t) list
 (** Return pvar and type of formal parameters *)
+
+val get_passed_by_value_formals : t -> (Pvar.t * Typ.t) list
+(** Return pvar and type of formal parameters that are passed by value *)
+
+val get_passed_by_ref_formals : t -> (Pvar.t * Typ.t) list
+(** Return pvar and type of formal parameters that are passed by reference *)
+
+val get_pointer_formals : t -> (Pvar.t * Typ.t) list
+(** Return pvar and type of formal parameters that are passed as pointer, i.e. [T*] *)
 
 val get_loc : t -> Location.t
 (** Return loc information for the procedure *)
@@ -271,19 +282,12 @@ val get_nodes : t -> Node.t list
 val get_proc_name : t -> Procname.t
 
 val get_ret_type : t -> Typ.t
-(** Return the return type of the procedure and type string *)
+(** Return the return type of the procedure *)
 
-val has_added_return_param : t -> bool
-
-val is_ret_type_pod : t -> bool
+val get_ret_param_type : t -> Typ.t option
+(** Return the return param type of the procedure, which is found from formals *)
 
 val get_ret_var : t -> Pvar.t
-
-val get_ret_param_var : t -> Pvar.t
-
-val get_ret_type_from_signature : t -> Typ.t
-(** Return the return type from method signature: if the procedure has added return parameter,
-    return its type *)
 
 val get_start_node : t -> Node.t
 
@@ -298,9 +302,6 @@ val is_java_synchronized : t -> bool
 
 val is_csharp_synchronized : t -> bool
 (** Return [true] if the procedure is synchronized via a C# lock *)
-
-val is_objc_arc_on : t -> bool
-(** Return [true] iff the ObjC procedure is compiled with ARC *)
 
 val iter_instrs : (Node.t -> Sil.instr -> unit) -> t -> unit
 (** iterate over all nodes and their instructions *)
@@ -347,6 +348,8 @@ val set_exit_node : t -> Node.t -> unit
 
 val set_start_node : t -> Node.t -> unit
 
+val init_wto : t -> unit
+
 val get_wto : t -> Node.t WeakTopologicalOrder.Partition.t
 
 val is_loop_head : t -> Node.t -> bool
@@ -355,7 +358,12 @@ val pp_signature : Format.formatter -> t -> unit
 
 val pp_local : Format.formatter -> ProcAttributes.var_data -> unit
 
+val pp_with_instrs : ?print_types:bool -> Format.formatter -> t -> unit
+  [@@warning "-unused-value-declaration"]
+
 val is_specialized : t -> bool
+
+val is_kotlin : t -> bool
 
 val is_captured_pvar : t -> Pvar.t -> bool
 (** true if pvar is a captured variable of a cpp lambda or obcj block *)
@@ -380,3 +388,17 @@ val is_too_big : Checker.t -> max_cfg_size:int -> t -> bool
 module SQLite : SqliteUtils.Data with type t = t option
 
 val load : Procname.t -> t option
+(** CFG for the given proc name. [None] when the source code for the procedure was not captured (eg
+    library code or code outside of the project root). NOTE: To query the procedure's attributes (eg
+    return type, formals, ...), prefer the cheaper {!Attributes.load}. Attributes can be present
+    even when the source code is not. *)
+
+val load_exn : Procname.t -> t
+(** like [load], but raises an exception if no procdesc is available. *)
+
+val load_uid : ?capture_only:bool -> string -> t option
+(** like [load] but takes a database key for the procedure directly (generated from
+    [Procname.to_unique_id]) and optionally only looks inside the capture database *)
+
+val mark_if_unchanged : old_pdesc:t -> new_pdesc:t -> unit
+(** Record the [changed] attribute in-place on [new_pdesc] if it is unchanged wrt [old_pdsec] *)

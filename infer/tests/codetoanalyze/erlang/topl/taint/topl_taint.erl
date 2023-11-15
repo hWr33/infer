@@ -9,13 +9,24 @@
     test_a_Bad/0,
     test_b_Ok/0,
     test_c_Bad/0,
+    test_c2_Ok/0,
     test_d_Bad/0,
     test_e_Ok/0,
     test_f_Bad/0,
     test_g_Ok/0,
     test_h_Bad/0,
     test_i_Ok/0,
-    test_j_Bad/0
+    test_j_Bad/0,
+    tito_process/0,
+    sanitizer_process/0,
+    test_send1_Ok/0,
+    fn_test_send2_Bad/0,
+    test_send3_Ok/0,
+    test_send4_Ok/0,
+    test_send5_Ok/0,
+    fn_test_send6_Bad/0,
+    test_send7_Ok/0,
+    test_send8_Ok/0
 ]).
 
 test_a_Bad() ->
@@ -27,6 +38,10 @@ test_b_Ok() ->
 test_c_Bad() ->
     X = source(),
     sink(X).
+
+test_c2_Ok() ->
+    _X = source(),
+    sink(notdirty).
 
 test_d_Bad() ->
     call_sink_indirectly(tito(source())).
@@ -63,6 +78,75 @@ test_j_Bad() ->
     case two() + two() - one() of
         1 -> sink(dirty_if_argument_nil(bad));
         2 -> sink(dirty_if_argument_nil([ok, ok, ok]))
+    end.
+
+%% Tests with message passing
+
+tito_process() ->
+    receive
+        {From, X} -> From ! X
+    end.
+
+sanitizer_process() ->
+    receive
+        {From, _} -> From ! not_dirty
+    end.
+
+test_send1_Ok() ->
+    Pid = spawn(topl_taint, tito_process, []),
+    Pid ! {self(), not_dirty},
+    receive
+        X -> sink(X)
+    end.
+
+fn_test_send2_Bad() ->
+    Pid = spawn(topl_taint, tito_process, []),
+    Pid ! {self(), source()},
+    receive
+        X -> sink(X)
+    end.
+
+test_send3_Ok() ->
+    Pid = spawn(topl_taint, sanitizer_process, []),
+    Pid ! {self(), not_dirty},
+    receive
+        X -> sink(X)
+    end.
+
+test_send4_Ok() ->
+    Pid = spawn(topl_taint, sanitizer_process, []),
+    Pid ! {self(), source()},
+    receive
+        X -> sink(X)
+    end.
+
+test_send5_Ok() ->
+    Pid = spawn(fun() -> tito_process() end),
+    Pid ! {self(), not_dirty},
+    receive
+        X -> sink(X)
+    end.
+
+% The violation from the test below is not reported
+fn_test_send6_Bad() ->
+    Pid = spawn(fun() -> tito_process() end),
+    Pid ! {self(), source()},
+    receive
+        X -> sink(X)
+    end.
+
+test_send7_Ok() ->
+    Pid = spawn(fun() -> sanitizer_process() end),
+    Pid ! {self(), not_dirty},
+    receive
+        X -> sink(X)
+    end.
+
+test_send8_Ok() ->
+    Pid = spawn(fun() -> sanitizer_process() end),
+    Pid ! {self(), source()},
+    receive
+        X -> sink(X)
     end.
 
 %%

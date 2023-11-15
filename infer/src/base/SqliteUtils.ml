@@ -9,6 +9,8 @@ module L = Logging
 
 exception Error of string
 
+exception DataTooBig
+
 let error fmt = Format.kasprintf (fun err -> raise (Error err)) fmt
 
 let check_result_code db ~log rc =
@@ -89,6 +91,21 @@ let db_close db =
             (Sqlite3.errmsg db) ) )
 
 
+let with_attached_db ~db_file ~db_name ?(immutable = false) ~f db =
+  let attach_stmt =
+    Printf.sprintf "ATTACH '%s%s%s' AS %s"
+      (if immutable then "file:" else "")
+      (if immutable then Escape.escape_url db_file else db_file)
+      (if immutable then "?immutable=1" else "")
+      db_name
+  in
+  L.debug Capture Verbose "Attach: %s@\n" attach_stmt ;
+  exec db ~stmt:attach_stmt ~log:(Printf.sprintf "attaching database '%s'" db_file) ;
+  let result = f () in
+  exec db ~stmt:("DETACH " ^ db_name) ~log:(Printf.sprintf "detaching database '%s'" db_file) ;
+  result
+
+
 module type Data = sig
   type t
 
@@ -104,15 +121,20 @@ end
 module MarshalledDataNOTForComparison (D : T) = struct
   type t = D.t
 
-  let deserialize = function[@warning "-8"] Sqlite3.Data.BLOB b -> Marshal.from_string b 0
+  let deserialize = function[@warning "-partial-match"]
+    | Sqlite3.Data.BLOB b ->
+        Marshal.from_string b 0
 
-  let serialize x = Sqlite3.Data.BLOB (Marshal.to_string x [])
+
+  let serialize x =
+    let s = Marshal.to_string x [] in
+    if String.length s < Config.sqlite_max_blob_size then Sqlite3.Data.BLOB s else raise DataTooBig
 end
 
 module MarshalledNullableDataNOTForComparison (D : T) = struct
   type t = D.t option
 
-  let deserialize = function[@warning "-8"]
+  let deserialize = function[@warning "-partial-match"]
     | Sqlite3.Data.BLOB b ->
         Some (Marshal.from_string b 0)
     | Sqlite3.Data.NULL ->
@@ -123,5 +145,7 @@ module MarshalledNullableDataNOTForComparison (D : T) = struct
     | None ->
         Sqlite3.Data.NULL
     | Some x ->
-        Sqlite3.Data.BLOB (Marshal.to_string x [])
+        let s = Marshal.to_string x [] in
+        if String.length s < Config.sqlite_max_blob_size then Sqlite3.Data.BLOB s
+        else raise DataTooBig
 end

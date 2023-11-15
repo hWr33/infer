@@ -42,17 +42,26 @@ module Tags = struct
   let get tags tag = List.Assoc.find ~equal:String.equal tags tag
 end
 
-type error_desc = {descriptions: string list; tags: Tags.t; dotty: string option}
+type error_desc =
+  {descriptions: string list; suggestion: string option; tags: Tags.t; dotty: string option}
 [@@deriving compare]
 
 (** empty error description *)
-let no_desc : error_desc = {descriptions= []; tags= []; dotty= None}
+let no_desc : error_desc = {descriptions= []; suggestion= None; tags= []; dotty= None}
 
 (** verbatim desc from a string, not to be used for user-visible descs *)
-let verbatim_desc s = {no_desc with descriptions= [s]}
+let verbatim_desc ?suggestion s = {no_desc with descriptions= [s]; suggestion}
 
-(** pretty print an error description *)
-let pp_error_desc fmt err_desc = Pp.seq F.pp_print_string fmt err_desc.descriptions
+(** pretty print an error qualifier *)
+let pp_error_qualifier fmt err_desc = Pp.seq F.pp_print_string fmt err_desc.descriptions
+
+(** pretty print an error suggestion *)
+let pp_error_suggestion fmt err_desc = Option.iter ~f:(F.pp_print_string fmt) err_desc.suggestion
+
+(** pretty print a full error description including suggestion *)
+let pp_error_desc fmt err_desc =
+  Format.fprintf fmt "%a%a" pp_error_qualifier err_desc pp_error_suggestion err_desc
+
 
 let error_desc_get_dotty err_desc = err_desc.dotty
 
@@ -86,8 +95,7 @@ let error_desc_set_bucket err_desc bucket =
 let error_desc_is_reportable_bucket err_desc =
   let issue_bucket = error_desc_get_bucket err_desc in
   let high_buckets = BucketLevel.[b1; b2] in
-  Option.value_map issue_bucket ~default:false ~f:(fun b ->
-      List.mem ~equal:String.equal high_buckets b )
+  Option.exists issue_bucket ~f:(fun b -> List.mem ~equal:String.equal high_buckets b)
 
 
 (** get the value tag, if any *)
@@ -109,7 +117,7 @@ let error_desc_hash desc = Hashtbl.hash (desc_get_comparable desc)
 
 (** equality for error_desc *)
 let error_desc_equal desc1 desc2 =
-  [%compare.equal: string list] (desc_get_comparable desc1) (desc_get_comparable desc2)
+  [%equal: string list] (desc_get_comparable desc1) (desc_get_comparable desc2)
 
 
 let line_tag_ tags tag loc =
@@ -406,16 +414,6 @@ let desc_empty_vector_access pname_opt object_str loc =
 
 let is_empty_vector_access_desc desc = has_tag desc Tags.empty_vector_access
 
-let desc_frontend_warning desc sugg_opt loc =
-  let tags = Tags.create () in
-  let sugg = match sugg_opt with Some sugg -> sugg | None -> "" in
-  (* If the description ends in a period, we remove it because the sentence continues with
-     "at line ..." *)
-  let desc = match String.chop_suffix ~suffix:"." desc with Some desc -> desc | None -> desc in
-  let description = Format.sprintf "%s %s. %s" desc (at_line tags loc) sugg in
-  {no_desc with descriptions= [description]; tags= !tags}
-
-
 let desc_leak hpred_type_opt value_str_opt resource_opt resource_action_opt loc bucket_opt =
   let tags = Tags.create () in
   let () =
@@ -496,7 +494,7 @@ let desc_retain_cycle cycle_str loc cycle_dotty =
   let desc =
     Format.sprintf "Retain cycle %s involving the following objects:%s" (at_line tags loc) cycle_str
   in
-  {descriptions= [desc]; tags= !tags; dotty= cycle_dotty}
+  {descriptions= [desc]; suggestion= None; tags= !tags; dotty= cycle_dotty}
 
 
 let registered_observer_being_deallocated_str obj_str =

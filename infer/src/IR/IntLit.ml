@@ -9,13 +9,13 @@ open! IStd
 module F = Format
 module L = Logging
 
-type signedness = Signed | Unsigned [@@deriving compare]
+type signedness = Signed | Unsigned [@@deriving compare, sexp, hash, equal, normalize]
 
 let join_signedness signedness1 signedness2 =
   match (signedness1, signedness2) with Signed, Signed -> Signed | _ -> Unsigned
 
 
-type pointerness = NotPointer | Pointer
+type pointerness = NotPointer | Pointer [@@deriving sexp, hash, equal, normalize]
 
 let join_pointerness pointerness1 pointerness2 =
   match (pointerness1, pointerness2) with NotPointer, NotPointer -> NotPointer | _ -> Pointer
@@ -23,8 +23,27 @@ let join_pointerness pointerness1 pointerness2 =
 
 let compare_pointerness _ _ = 0
 
+module Z = struct
+  include Z
+
+  let sexp_of_t t = [%sexp_of: string] (Z.to_string t)
+
+  let t_of_sexp sexp = Z.of_string ([%of_sexp: string] sexp)
+
+  let hash_fold_t hash_state t = [%hash_fold: int] hash_state (Z.hash t)
+
+  module Normalizer = HashNormalizer.Make (struct
+    type nonrec t = t [@@deriving equal, hash]
+
+    let normalize = Fn.id
+  end)
+
+  let hash_normalize = Normalizer.normalize
+end
+
 (** signed and unsigned integer literals *)
-type t = {signedness: signedness; i: Z.t; pointerness: pointerness} [@@deriving compare]
+type t = {signedness: signedness; i: Z.t; pointerness: pointerness}
+[@@deriving compare, sexp, hash, equal, normalize]
 
 let yojson_of_t {i} = [%yojson_of: string] (Z.to_string i)
 

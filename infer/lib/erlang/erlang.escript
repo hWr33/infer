@@ -43,19 +43,16 @@ main(Args) ->
                 halt(1)
         end,
     LibPath = filename:join(ParseTransformDir, "_build/default/lib"),
-    MaybeOTPCmd =
+    MaybeOTPArgs =
         case lists:member(with_otp_specs, Options) of
             true ->
-                OTPBeamListPath = get_otp_beam_list(),
-                io_lib:format(
-                    "&& ~s/extract.escript --specs_only ~s ~s", [ScriptDir, OTPBeamListPath, OutDir]
-                );
+                "--specs-only --otp";
             _ ->
                 []
         end,
     io:format(
-        "export ERL_LIBS=\"~s:$ERL_LIBS\"; ~s && ~s/extract.escript ~s ~s ~s~n",
-        [LibPath, OutputCmd, ScriptDir, CompiledListPath, OutDir, MaybeOTPCmd]
+        "export ERL_LIBS=\"~s:$ERL_LIBS\"; ~s && ~s/extract.escript --list ~s ~s ~s~n",
+        [LibPath, OutputCmd, ScriptDir, CompiledListPath, MaybeOTPArgs, OutDir]
     ).
 
 load_config_from_list([]) ->
@@ -101,15 +98,6 @@ split_args_rec([[$-, $- | Option] | T], Options, Args) ->
     end;
 split_args_rec([H | T], Options, Args) ->
     split_args_rec(T, Options, [H | Args]).
-
-get_otp_beam_list() ->
-    {ok, CWD} = file:get_cwd(),
-    OTPDir = string:trim(
-        run_expect_zero("erl -eval 'io:format(\"~s~n\",[code:root_dir()]), halt().' -noshell", CWD)
-    ),
-    OTPBeamListPath = mktemp(".list"),
-    file:write_file(OTPBeamListPath, run_expect_zero("ls \"$PWD\"/lib/*/ebin/*.beam", OTPDir)),
-    OTPBeamListPath.
 
 run_expect_zero(Command, Dir) ->
     case run(Command, Dir) of

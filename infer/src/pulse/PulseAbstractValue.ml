@@ -7,7 +7,7 @@
 open! IStd
 module F = Format
 
-type t = int [@@deriving compare, equal]
+type t = int [@@deriving compare, equal, hash]
 
 let initial_next_fresh = 1
 
@@ -47,8 +47,6 @@ let compare_unrestricted_first v1 v2 =
   else compare v1 v2
 
 
-let of_id v = v
-
 module PPKey = struct
   type nonrec t = t [@@deriving compare]
 
@@ -64,38 +62,8 @@ module Map = struct
     `List (List.map ~f:(fun (k, v) -> `List [yojson_of_t k; yojson_of_val v]) (bindings m))
 end
 
-module Constants = struct
-  module M = Caml.Map.Make (IntLit)
-
-  type nonrec t = t M.t
-
-  let initial_cache = M.empty
-
-  let cache = ref initial_cache
-
-  let get_int i =
-    match M.find_opt i !cache with
-    | Some v ->
-        v
-    | None ->
-        let v = mk_fresh () in
-        cache := M.add i v !cache ;
-        v
-end
-
-module State = struct
-  type t = int * int * Constants.t
-
-  let get () = (!next_fresh, !next_fresh_restricted, !Constants.cache)
-
-  let set (counter_unrestricted, counter_restricted, cache) =
-    next_fresh := counter_unrestricted ;
-    next_fresh_restricted := counter_restricted ;
-    Constants.cache := cache
-
-
-  let reset () =
-    next_fresh := initial_next_fresh ;
-    next_fresh_restricted := initial_next_fresh_restricted ;
-    Constants.cache := Constants.initial_cache
-end
+let () =
+  AnalysisGlobalState.register_ref next_fresh ~init:(fun () -> initial_next_fresh) ;
+  AnalysisGlobalState.register_ref next_fresh_restricted ~init:(fun () ->
+      initial_next_fresh_restricted ) ;
+  ()

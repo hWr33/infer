@@ -473,12 +473,13 @@ let report_weakself_in_no_escape_block_issues proc_desc err_log domain (weakSelf
     let message =
       F.asprintf
         "This block uses `%a` at %a. This is probably not needed since the block is passed to the \
-         method `%s` in a position annotated with NS_NOESCAPE. Use `self` instead."
+         method `%s` in a position annotated with NS_NOESCAPE."
         (Pvar.pp Pp.text) weakSelf.pvar Location.pp weakSelf.loc
         (Procname.to_simplified_string procname)
     in
+    let suggestion = "Use `self` instead." in
     let ltr = make_trace_use_self_weakself domain in
-    Reporting.log_issue proc_desc err_log ~ltr ~loc:weakSelf.loc SelfInBlock
+    Reporting.log_issue ~suggestion proc_desc err_log ~ltr ~loc:weakSelf.loc SelfInBlock
       IssueType.weak_self_in_noescape_block message ;
     reported_weak_self_in_noescape_block )
   else reported_weak_self_in_noescape_block
@@ -490,21 +491,27 @@ let report_weakself_multiple_issue proc_desc err_log domain (weakSelf1 : DomainD
     F.asprintf
       "This block uses the weak pointer `%a` more than once (%a) and (%a). This could lead to \
        unexpected behavior. Even if `%a` is not nil in the first use, it could be nil in the \
-       following uses since the object that `%a` points to could be freed anytime; assign it to a \
-       strong variable first."
+       following uses since the object that `%a` points to could be freed anytime."
       (Pvar.pp Pp.text) weakSelf1.pvar Location.pp weakSelf1.loc Location.pp weakSelf2.loc
       (Pvar.pp Pp.text) weakSelf1.pvar (Pvar.pp Pp.text) weakSelf1.pvar
   in
+  let suggestion = "Assign it to a strong variable first." in
   let ltr = make_trace_use_self_weakself domain in
-  Reporting.log_issue proc_desc err_log ~ltr ~loc:weakSelf1.loc SelfInBlock
+  Reporting.log_issue ~suggestion proc_desc err_log ~ltr ~loc:weakSelf1.loc SelfInBlock
     IssueType.multiple_weakself message
 
 
 let report_captured_strongself_issue proc_desc err_log domain (capturedStrongSelf : DomainData.t)
     report_captured_strongself =
   let attributes = Procdesc.get_attributes proc_desc in
+  let passed_as_noescape_block =
+    Option.value_map
+      ~f:(fun ({passed_as_noescape_block} : ProcAttributes.block_as_arg_attributes) ->
+        passed_as_noescape_block )
+      ~default:false attributes.block_as_arg_attributes
+  in
   if
-    Option.is_none attributes.ProcAttributes.passed_as_noescape_block_to
+    (not passed_as_noescape_block)
     && not (Pvar.Set.mem capturedStrongSelf.pvar report_captured_strongself)
   then (
     let report_captured_strongself =
@@ -513,12 +520,12 @@ let report_captured_strongself_issue proc_desc err_log domain (capturedStrongSel
     let message =
       F.asprintf
         "The variable `%a`, used at `%a`, is a strong pointer to `self` captured in this block. \
-         This could lead to retain cycles or unexpected behavior since to avoid retain cycles one \
-         usually uses a local strong pointer or a captured weak pointer instead."
+         This could lead to retain cycles or unexpected behavior."
         (Pvar.pp Pp.text) capturedStrongSelf.pvar Location.pp capturedStrongSelf.loc
     in
+    let suggestion = "Use a local strong pointer or a captured weak pointer instead." in
     let ltr = make_trace_captured_strong_self domain in
-    Reporting.log_issue proc_desc err_log ~ltr ~loc:capturedStrongSelf.loc SelfInBlock
+    Reporting.log_issue ~suggestion proc_desc err_log ~ltr ~loc:capturedStrongSelf.loc SelfInBlock
       IssueType.captured_strong_self message ;
     report_captured_strongself )
   else report_captured_strongself
@@ -536,11 +543,11 @@ let report_issues proc_desc err_log domain =
     | DomainData.WEAK_SELF ->
         let reported_weak_self_in_noescape_block =
           let attributes = Procdesc.get_attributes proc_desc in
-          match attributes.ProcAttributes.passed_as_noescape_block_to with
-          | Some procname ->
+          match attributes.ProcAttributes.block_as_arg_attributes with
+          | Some {passed_to= procname; passed_as_noescape_block= true} ->
               report_weakself_in_no_escape_block_issues proc_desc err_log domain domain_data
                 procname result.reported_weak_self_in_noescape_block
-          | None ->
+          | _ ->
               result.reported_weak_self_in_noescape_block
         in
         { result with

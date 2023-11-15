@@ -8,8 +8,10 @@
 open! IStd
 module IRAttributes = Attributes
 open PulseBasicInterface
-open PulseOperations.Import
+open PulseDomainInterface
+open PulseOperationResult.Import
 open PulseModelsImport
+module GenericArrayBackedCollection = PulseModelsGenericArrayBackedCollection
 
 module CoreFoundation = struct
   let cf_bridging_release access : model =
@@ -33,11 +35,10 @@ let call args : model =
         IRAttributes.load pname |> Option.map ~f:ProcAttributes.get_pvar_formals
       in
       let formals_opt = get_pvar_formals c.name in
-      let callee_data = analyze_dependency c.name in
       let call_kind = `Closure c.captured_vars in
-      let r =
-        PulseCallOperations.call tenv path ~caller_proc_desc:proc_desc ~callee_data location c.name
-          ~ret ~actuals ~formals_opt ~call_kind astate
+      let r, _contradiction, _ =
+        PulseCallOperations.call tenv path ~caller_proc_desc:proc_desc ~analyze_dependency location
+          c.name ~ret ~actuals ~formals_opt ~call_kind astate
       in
       PerfEvent.(log (fun logger -> log_end_event logger ())) ;
       r
@@ -80,21 +81,99 @@ let insertion_into_collection_key_or_value (value, value_hist) ~value_kind ~desc
   astate
 
 
-let read_from_collection (key, key_hist) ~desc : model =
+let insert_object_at (collection, collection_hist) (obj_ptr, obj_hist) (index, _index_hist)
+    ?(disallow_nil_obj = true) ~desc : model =
+ fun {path; location} astate ->
+  let obj_hist = Hist.add_call path location desc obj_hist in
+  let collection_hist = Hist.add_call path location desc collection_hist in
+  let<*> astate, obj =
+    if disallow_nil_obj then
+      PulseOperations.eval_access path
+        ~must_be_valid_reason:Invalidation.InsertionIntoCollectionValue Read location
+        (obj_ptr, obj_hist) Dereference astate
+    else Ok (astate, (obj_ptr, obj_hist))
+  in
+  let<*> astate, cell =
+    GenericArrayBackedCollection.element path location (collection, collection_hist) index astate
+  in
+  let<+> astate = PulseOperations.write_deref path location ~ref:cell ~obj astate in
+  astate
+
+
+let object_at (collection, collection_hist) (index, _index_hist) ?(implement_nil_messaging = true)
+    ~desc : model =
+ fun {path; location; ret= ret_id, _} astate ->
+  let object_at_aux astate =
+    let<*> astate, cell =
+      GenericArrayBackedCollection.element path location (collection, collection_hist) index astate
+    in
+    let<+> astate, (obj, obj_hist) =
+      PulseOperations.eval_access path Read location cell Dereference astate
+    in
+    let obj_hist = Hist.add_call path location desc obj_hist in
+    PulseOperations.write_id ret_id (obj, obj_hist) astate
+  in
+  if not implement_nil_messaging then object_at_aux astate
+  else
+    let astate_nil =
+      (* nil messaging *)
+      let<++> astate = PulseArithmetic.prune_eq_zero collection astate in
+      let ret_hist =
+        let in_call =
+          ValueHistory.sequence
+            (ValueHistory.NilMessaging (location, path.PathContext.timestamp))
+            collection_hist
+        in
+        Hist.single_call path ~in_call location desc
+      in
+      PulseOperations.write_id ret_id (collection, ret_hist) astate
+    in
+    let astate_not_nil =
+      let<**> astate = PulseArithmetic.prune_positive collection astate in
+      object_at_aux astate
+    in
+    List.rev_append astate_nil astate_not_nil
+
+
+let init_array_backed_with_array (collection, collection_hist) array ~desc : model =
+ fun {path; location; ret= ret_id, _} astate ->
+  let<*> astate, copy = PulseOperations.deep_copy ~depth_max:1 path location array astate in
+  let collection_hist = Hist.add_call path location desc collection_hist in
+  let<*> astate, backing_array =
+    PulseOperations.eval_access path Read location (collection, collection_hist)
+      GenericArrayBackedCollection.access astate
+  in
+  let<+> astate = PulseOperations.write_deref path location ~ref:backing_array ~obj:copy astate in
+  PulseOperations.write_id ret_id (collection, collection_hist) astate
+
+
+let init_array_backed_with_modelled_array collection other ~desc : model =
+ fun ({path; location} as model_data) astate ->
+  let<*> astate, backing_array =
+    GenericArrayBackedCollection.eval path Read location other astate
+  in
+  init_array_backed_with_array collection backing_array ~desc model_data astate
+
+
+let create_array_backed_with_modelled_array other ~desc : model =
+ fun ({path; location} as model_data) astate ->
+  let ret_val = AbstractValue.mk_fresh () in
+  let ret_hist = Hist.single_call path location desc in
+  init_array_backed_with_modelled_array (ret_val, ret_hist) other ~desc model_data astate
+
+
+let read_from_collection (key, _key_hist) ~desc : model =
  fun {path; location; ret= ret_id, _} astate ->
   let event = Hist.call_event path location desc in
+  let ret_val = AbstractValue.mk_fresh () in
   let astate_nil =
-    let ret_val = AbstractValue.mk_fresh () in
-    let<*> astate = PulseArithmetic.prune_eq_zero key astate in
-    let<+> astate = PulseArithmetic.and_eq_int ret_val IntLit.zero astate in
-    PulseOperations.write_id ret_id (ret_val, Hist.add_event path event key_hist) astate
+    let<**> astate = PulseArithmetic.prune_eq_zero key astate in
+    let<++> astate = PulseArithmetic.and_eq_int ret_val IntLit.zero astate in
+    PulseOperations.write_id ret_id (ret_val, Hist.single_event path event) astate
   in
   let astate_not_nil =
-    let<*> astate = PulseArithmetic.prune_positive key astate in
-    let<+> astate, (ret_val, hist) =
-      PulseOperations.eval_access path Read location (key, key_hist) Dereference astate
-    in
-    PulseOperations.write_id ret_id (ret_val, Hist.add_event path event hist) astate
+    let<++> astate = PulseArithmetic.prune_positive key astate in
+    PulseOperations.write_id ret_id (ret_val, Hist.single_event path event) astate
   in
   List.rev_append astate_nil astate_not_nil
 
@@ -113,8 +192,8 @@ let alloc_no_fail size : model =
  fun ({ret= ret_id, _} as model_data) astate ->
   (* NOTE: technically this doesn't initialize the result but we haven't modelled initialization so
      assume the object is initialized after [init] for now *)
-  let<+> astate =
-    Basic.alloc_no_leak_not_null ~initialize:true ~desc:"alloc" (Some size) model_data astate
+  let<++> astate =
+    Basic.alloc_not_null ~initialize:true ~desc:"alloc" ObjCAlloc (Some size) model_data astate
   in
   let ret_addr =
     match PulseOperations.read_id ret_id astate with
@@ -166,12 +245,14 @@ let check_arg_not_nil (value, value_hist) ~desc : model =
  fun {path; location; ret= ret_id, _} astate ->
   let event = Hist.call_event path location desc in
   let<*> astate, _ =
-    PulseOperations.eval_access path Read location
+    PulseOperations.eval_access path
+      ~must_be_valid_reason:(NullArgumentWhereNonNullExpected (CallEvent.Model desc, None))
+      Read location
       (value, Hist.add_event path event value_hist)
       Dereference astate
   in
   let ret_val = AbstractValue.mk_fresh () in
-  let<+> astate = PulseArithmetic.prune_positive ret_val astate in
+  let<++> astate = PulseArithmetic.prune_positive ret_val astate in
   PulseOperations.write_id ret_id (ret_val, Hist.single_call path location desc) astate
 
 
@@ -194,6 +275,7 @@ let transfer_ownership_matchers : matcher list =
      $+ any_arg $+ any_arg $--> init_with_bytes_free_when_done )
   :: transfer_ownership_namespace_matchers
   @ transfer_ownership_name_matchers
+  |> List.map ~f:(ProcnameDispatcher.Call.contramap_arg_payload ~f:ValueOrigin.addr_hist)
 
 
 let matchers : matcher list =
@@ -202,6 +284,9 @@ let matchers : matcher list =
     Option.exists r_opt ~f:(fun r ->
         let s = Procname.to_string proc_name in
         Str.string_match r s 0 )
+  in
+  let class_match_prefix prefix (_tenv, proc_name) _ =
+    Procname.get_objc_class_name proc_name |> Option.exists ~f:(String.is_prefix ~prefix)
   in
   let map_context_tenv f (x, _) = f x in
   [ -"dispatch_sync" <>$ any_arg $++$--> call
@@ -220,7 +305,9 @@ let matchers : matcher list =
   ; +BuiltinDecl.(match_builtin __objc_get_ref_count) <>$ capt_arg_payload $--> get_ref_count
   ; +BuiltinDecl.(match_builtin __objc_set_ref_count)
     <>$ capt_arg_payload $+ capt_arg_payload $--> set_ref_count
-  ; -"NSObject" &:: "init" <>$ capt_arg_payload $--> Basic.id_first_arg ~desc:"NSObject.init"
+  ; +class_match_prefix "NS"
+    &:: "init" <>$ capt_arg_payload
+    $--> Basic.id_first_arg ~desc:"NSObject.init"
   ; +map_context_tenv (PatternMatch.ObjectiveC.implements "NSString")
     &:: "stringWithUTF8String:" <>$ capt_arg_payload $--> construct_string
   ; +map_context_tenv (PatternMatch.ObjectiveC.implements "NSString")
@@ -258,13 +345,34 @@ let matchers : matcher list =
     &:: "dictionaryWithSharedKeySet:" <>$ capt_arg_payload
     $--> insertion_into_collection_key_or_value ~value_kind:`Key
            ~desc:"NSMutableDictionary.dictionaryWithSharedKeySet"
+  ; +map_context_tenv (PatternMatch.ObjectiveC.implements "NSArray")
+    &:: "arrayWithArray:" <>$ capt_arg_payload
+    $--> create_array_backed_with_modelled_array ~desc:"NSArray.arrayWithArray:"
+  ; +map_context_tenv (PatternMatch.ObjectiveC.implements "NSArray")
+    &:: "initWithArray:" <>$ capt_arg_payload $+ capt_arg_payload
+    $--> init_array_backed_with_modelled_array ~desc:"NSArray.initWithArray:"
   ; +map_context_tenv (PatternMatch.ObjectiveC.implements "NSMutableArray")
     &:: "addObject:" <>$ any_arg $+ capt_arg_payload
     $--> insertion_into_collection_key_or_value ~value_kind:`Value ~desc:"NSMutableArray.addObject:"
   ; +map_context_tenv (PatternMatch.ObjectiveC.implements "NSMutableArray")
-    &:: "insertObject:atIndex:" <>$ any_arg $+ capt_arg_payload $+ any_arg
-    $--> insertion_into_collection_key_or_value ~value_kind:`Value
-           ~desc:"NSMutableArray.insertObject:atIndex:"
+    &:: "insertObject:atIndex:" <>$ capt_arg_payload $+ capt_arg_payload $+ capt_arg_payload
+    $--> insert_object_at ~disallow_nil_obj:true ~desc:"NSMutableArray.insertObject:atIndex:"
+  ; ( +map_context_tenv (PatternMatch.ObjectiveC.implements "NSMutableArray")
+    &:: "replaceObjectAtIndex:withObject:" <>$ capt_arg_payload $+ capt_arg_payload
+    $+ capt_arg_payload
+    $--> fun collection index obj ->
+    insert_object_at collection obj index ~disallow_nil_obj:true
+      ~desc:"NSMutableArray.replaceObjectAtIndex:withObject:" )
+  ; +map_context_tenv (PatternMatch.ObjectiveC.implements "NSMutableArray")
+    &:: "setObject:atIndexedSubscript:" <>$ capt_arg_payload $+ capt_arg_payload $+ capt_arg_payload
+    $--> insert_object_at ~disallow_nil_obj:true
+           ~desc:"NSMutableArray.setObject:atIndexedSubscript:"
+  ; +map_context_tenv (PatternMatch.ObjectiveC.implements "NSArray")
+    &:: "objectAtIndex:" <>$ capt_arg_payload $+ capt_arg_payload
+    $--> object_at ~implement_nil_messaging:true ~desc:"NSArray.objectAtIndex:"
+  ; +map_context_tenv (PatternMatch.ObjectiveC.implements "NSArray")
+    &:: "objectAtIndexedSubscript:" <>$ capt_arg_payload $+ capt_arg_payload
+    $--> object_at ~implement_nil_messaging:true ~desc:"NSArray.objectAtIndexedSubscript:"
   ; +map_context_tenv (PatternMatch.ObjectiveC.implements "NSMutableArray")
     &:: "replaceObjectAtIndex:withObject:" <>$ any_arg $+ any_arg $+ capt_arg_payload
     $--> insertion_into_collection_key_or_value ~value_kind:`Value
@@ -307,4 +415,10 @@ let matchers : matcher list =
   ; +map_context_tenv (PatternMatch.ObjectiveC.implements "NSArray")
     &:: "arrayWithObject:" <>$ capt_arg_payload
     $--> insertion_into_collection_key_or_value ~value_kind:`Value ~desc:"NSArray.arrayWithObject"
-  ]
+  ; +map_context_tenv (PatternMatch.ObjectiveC.implements "UIViewController")
+    &:: "initWithNibName:bundle:" <>$ capt_arg_payload
+    $+...$--> Basic.id_first_arg ~desc:"UIViewController.initWithNibName:bundle:"
+  ; +map_context_tenv (PatternMatch.ObjectiveC.implements "UIView")
+    &:: "initWithFrame:" <>$ capt_arg_payload
+    $+...$--> Basic.id_first_arg ~desc:"UIView.initWithFrame:" ]
+  |> List.map ~f:(ProcnameDispatcher.Call.contramap_arg_payload ~f:ValueOrigin.addr_hist)

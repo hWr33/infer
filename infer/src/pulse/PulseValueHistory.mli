@@ -7,8 +7,18 @@
 open! IStd
 module F = Format
 module CallEvent = PulseCallEvent
-module Taint = PulseTaint
+module TaintItem = PulseTaintItem
 module Timestamp = PulseTimestamp
+
+module CellId : sig
+  type t = private int [@@deriving compare, equal, yojson_of]
+
+  val pp : F.formatter -> t -> unit
+
+  val next : unit -> t
+
+  module Map : Map.S with type Key.t = t
+end
 
 type event =
   | Allocation of {f: CallEvent.t; location: Location.t; timestamp: Timestamp.t}
@@ -27,7 +37,8 @@ type event =
   | NilMessaging of Location.t * Timestamp.t
   | Returned of Location.t * Timestamp.t
   | StructFieldAddressCreated of Fieldname.t RevList.t * Location.t * Timestamp.t
-  | TaintSource of Taint.t * Location.t * Timestamp.t
+  | TaintSource of TaintItem.t * Location.t * Timestamp.t
+  | TaintPropagated of Location.t * Timestamp.t
   | VariableAccessed of Pvar.t * Location.t * Timestamp.t
   | VariableDeclared of Pvar.t * Location.t * Timestamp.t
 
@@ -41,6 +52,7 @@ and t = private
       { main: t  (** trace of the "main" value being traced *)
       ; context: t list  (** contextual traces, eg conditionals that the path is under *) }
   | BinaryOp of Binop.t * t * t  (** branch history due to a binop *)
+  | FromCellId of CellId.t * t
 [@@deriving compare, equal, yojson_of]
 
 val epoch : t
@@ -51,18 +63,22 @@ val in_context : t list -> t -> t
 
 val binary_op : Binop.t -> t -> t -> t
 
+val from_cell_id : CellId.t -> t -> t
+
 val pp : F.formatter -> t -> unit
 
 val pp_fields : F.formatter -> Fieldname.t RevList.t -> unit
 
 val singleton : event -> t
 
+val get_cell_id : t -> CellId.t option
+
 type iter_event =
   | EnterCall of CallEvent.t * Location.t
   | ReturnFromCall of CallEvent.t * Location.t
   | Event of event
 
-val iter_main : t -> f:(iter_event -> unit) -> unit
+val rev_iter_main : t -> f:(iter_event -> unit) -> unit
 (** iterate on all events in reverse timestamp order, ignoring events in contexts and recursing into
     the histories inside call events. Timestamp order is the lexicographic order induced by
     projecting events onto their timestamps and appending timestamps within calls, e.g. the
@@ -76,8 +92,25 @@ val iter_main : t -> f:(iter_event -> unit) -> unit
     can be written [10.4.3] and the order is such that, e.g., [10.4.3 < 10.5], [10.5] being the
     timestamp of the event following the inner [Call] event in the example above. *)
 
+val iter : main_only:bool -> t -> f:(iter_event -> unit) -> unit
+  [@@warning "-unused-value-declaration"]
+(** like [rev_iter_main] but iterates in order (by reversing the order iteration) and iterates on
+    only main events like [rev_iter_main] if [main_only] is [true], otherwise iterates on *all*
+    events including contexts if [main_only] is [false] *)
+(* used in unit tests *)
+
 val location_of_event : event -> Location.t
 
-val add_to_errlog : nesting:int -> t -> Errlog.loc_trace_elem list -> Errlog.loc_trace_elem list
+val timestamp_of_event : event -> Timestamp.t [@@warning "-unused-value-declaration"]
+(* used in unit tests *)
+
+val add_to_errlog :
+     ?include_taint_events:bool (** to avoid showing unrelated taint traces for non-taint issues *)
+  -> nesting:int
+  -> t
+  -> Errlog.loc_trace_elem list
+  -> Errlog.loc_trace_elem list
 
 val get_first_main_event : t -> event option
+
+val exists_main : t -> f:(event -> bool) -> bool

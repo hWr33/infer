@@ -88,6 +88,8 @@ class Uninit {
     int x = get_MyClass_infeasible_default().i;
   }
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreturn-type"
   MyClass get_MyClass_feasible_default() {
     switch (get_my_enum()) {
       case (my_enum_1):
@@ -98,9 +100,19 @@ class Uninit {
         break;
     }
   }
+#pragma clang diagnostic pop
 
   void call_get_MyClass_feasible_default_bad() {
     int x = get_MyClass_feasible_default().i;
+  }
+
+  std::function<MyClass()> unknown;
+
+  MyClass havoc_return_param() { return unknown(); }
+
+  int call_havoc_return_param_ok() {
+    MyClass x = havoc_return_param();
+    return x.i;
   }
 };
 
@@ -140,3 +152,19 @@ class Uninit2 {
     o.may_read_f2("");
   }
 };
+
+void unknown_call_lambda(std::function<void()> f);
+
+int init_by_capture_good() {
+  int x;
+  unknown_call_lambda([&]() { x = 42; });
+  return x;
+}
+
+void init_param(int* p) { p[0] = 42; }
+
+int init_in_callee_ok() {
+  int x;
+  init_param(&x);
+  return x;
+}

@@ -14,6 +14,7 @@ type param_type =
   { annot: Annot.Item.t
   ; is_no_escape_block_arg: bool
   ; is_pointer_to_const: bool
+  ; is_reference: bool
   ; name: Mangled.t
   ; typ: Typ.t }
 
@@ -29,8 +30,14 @@ type t =
   ; attributes: Clang_ast_t.attribute list
   ; loc: Clang_ast_t.source_range
   ; method_kind: ClangMethodKind.t
+  ; is_cpp_const_member_fun: bool
   ; is_cpp_virtual: bool
-  ; passed_as_noescape_block_to: Procname.t option
+  ; is_cpp_copy_assignment: bool
+  ; is_cpp_copy_ctor: bool
+  ; is_cpp_move_ctor: bool
+  ; is_cpp_deleted: bool
+  ; is_cpp_implicit: bool
+  ; block_as_arg_attributes: ProcAttributes.block_as_arg_attributes option
   ; is_no_return: bool
   ; is_variadic: bool
   ; pointer_to_parent: Clang_ast_t.pointer option
@@ -53,8 +60,14 @@ val mk :
   -> Clang_ast_t.attribute list
   -> Clang_ast_t.source_range
   -> ClangMethodKind.t
+  -> ?is_cpp_const_member_fun:bool
   -> ?is_cpp_virtual:bool
-  -> ?passed_as_noescape_block_to:Procname.t option
+  -> ?is_cpp_copy_assignment:bool
+  -> ?is_cpp_copy_ctor:bool
+  -> ?is_cpp_move_ctor:bool
+  -> ?is_cpp_deleted:bool
+  -> ?is_cpp_implicit:bool
+  -> ?block_as_arg_attributes:ProcAttributes.block_as_arg_attributes option
   -> ?is_no_return:bool
   -> ?is_variadic:bool
   -> Clang_ast_t.pointer option
@@ -67,6 +80,7 @@ val pp : Format.formatter -> t -> unit
 
 val mk_param_type :
      ?is_pointer_to_const:bool
+  -> ?is_reference:bool
   -> ?annot:Annot.Item.t
   -> ?is_no_escape_block_arg:bool
   -> Mangled.t

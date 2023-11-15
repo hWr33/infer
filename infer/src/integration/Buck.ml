@@ -9,6 +9,10 @@ open! IStd
 module F = Format
 module L = Logging
 
+type version = V1 | V2
+
+let binary_of_version = function V1 -> "buck1" | V2 -> "buck2"
+
 let max_command_line_length = 50
 
 let buck_extra_java_args_env_var = "BUCK_EXTRA_JAVA_ARGS"
@@ -31,6 +35,10 @@ let store_args_in_file ~identifier args =
   else args
 
 
+let infer_vars_to_kill =
+  CommandLineOption.[infer_cwd_env_var; args_env_var; strict_mode_env_var; inferconfig_path_arg]
+
+
 (** Wrap a call to buck while (i) logging standard error to our standard error in real time; (ii)
     redirecting standard out to a file, the contents of which are returned; (iii) protect the child
     process from [SIGQUIT].
@@ -40,36 +48,56 @@ let store_args_in_file ~identifier args =
     To achieve this we need to do two things: (i) tell the JVM not to use signals, meaning it leaves
     the default handler for [SIGQUIT] in place; (ii) uninstall the default handler for [SIGQUIT]
     because now that the JVM doesn't touch it, it will lead to process death. *)
-let wrap_buck_call ?(extend_env = []) ?buck_mode ~label cmd =
-  let is_buck2 = match (buck_mode : BuckMode.t option) with Some ClangV2 -> true | _ -> false in
+let wrap_buck_call ?(extend_env = []) ?(kill_infer_env_vars = false) version ~label cmd =
+  let is_buck2 = match (version : version) with V1 -> false | V2 -> true in
   let stdout_file =
-    let prefix = Printf.sprintf "%s_%s" (if is_buck2 then "buck2" else "buck") label in
+    let prefix = Printf.sprintf "%s_%s" (binary_of_version version) label in
     Filename.temp_file ~in_dir:(ResultsDir.get_path Temporary) prefix ".stdout"
   in
-  let escaped_cmd = List.map ~f:Escape.escape_shell cmd |> String.concat ~sep:" " in
-  let cmd_with_output = Printf.sprintf "exec %s > '%s'" escaped_cmd stdout_file in
-  let sigquit_protected_cmd =
-    (* Uninstall the default handler for [SIGQUIT]. *)
-    Printf.sprintf "trap '' SIGQUIT ; %s" cmd_with_output
+  let cmd =
+    match (cmd, Config.buck2_isolation_dir) with
+    | buck2 :: rest, Some isolation_dir when is_buck2 ->
+        buck2 :: ("--isolation-dir=" ^ isolation_dir) :: rest
+    | _ ->
+        cmd
+  in
+  let command =
+    let escaped_cmd = List.map ~f:Escape.escape_shell cmd |> String.concat ~sep:" " in
+    let cmd_with_output = Printf.sprintf "exec %s > '%s'" escaped_cmd stdout_file in
+    if is_buck2 then cmd_with_output
+    else
+      (* Uninstall the default handler for [SIGQUIT]. *)
+      Printf.sprintf "trap '' SIGQUIT ; %s" cmd_with_output
+  in
+  let env_vars =
+    if is_buck2 then []
+    else
+      let explicit_buck_java_heap_size =
+        Option.map Config.buck_java_heap_size_gb ~f:(fun size -> Printf.sprintf "-Xmx%dG" size)
+        |> Option.to_list
+      in
+      let existing_buck_extra_java_args =
+        Sys.getenv buck_extra_java_args_env_var |> Option.to_list
+      in
+      let new_buck_extra_java_args =
+        (* Instruct the JVM to avoid using signals. *)
+        String.concat ~sep:" "
+          (existing_buck_extra_java_args @ explicit_buck_java_heap_size @ ["-Xrs"])
+      in
+      L.environment_info "Buck: setting %s to '%s'@\n" buck_extra_java_args_env_var
+        new_buck_extra_java_args ;
+      (buck_extra_java_args_env_var, new_buck_extra_java_args) :: extend_env
   in
   let env =
-    let explicit_buck_java_heap_size =
-      Option.map Config.buck_java_heap_size_gb ~f:(fun size -> Printf.sprintf "-Xmx%dG" size)
-      |> Option.to_list
-    in
-    let existing_buck_extra_java_args = Sys.getenv buck_extra_java_args_env_var |> Option.to_list in
-    let new_buck_extra_java_args =
-      (* Instruct the JVM to avoid using signals. *)
-      String.concat ~sep:" "
-        (existing_buck_extra_java_args @ explicit_buck_java_heap_size @ ["-Xrs"])
-    in
-    L.environment_info "Buck: setting %s to '%s'@\n" buck_extra_java_args_env_var
-      new_buck_extra_java_args ;
-    `Extend ((buck_extra_java_args_env_var, new_buck_extra_java_args) :: extend_env)
+    if kill_infer_env_vars then
+      `Override
+        ( List.map infer_vars_to_kill ~f:(fun var -> (var, None))
+        @ List.map env_vars ~f:(fun (lhs, rhs) -> (lhs, Some rhs)) )
+    else `Extend env_vars
   in
+  L.debug Capture Quiet "Running buck command '%s'@." command ;
   let Unix.Process_info.{stdin; stdout; stderr; pid} =
-    if is_buck2 then Unix.create_process ~prog:"sh" ~args:["-c"; cmd_with_output]
-    else Unix.create_process_env ~prog:"sh" ~args:["-c"; sigquit_protected_cmd] ~env ()
+    Unix.create_process_env ~prog:"sh" ~args:["-c"; command] ~env ()
   in
   let buck_stderr = Unix.in_channel_of_descr stderr in
   let buck_logger = if is_buck2 then L.progress "BUCK2: %s@\n" else L.progress "BUCK: %s@\n" in
@@ -83,10 +111,9 @@ let wrap_buck_call ?(extend_env = []) ?buck_mode ~label cmd =
     | Ok lines ->
         lines
     | Error err ->
-        L.die ExternalError "*** failed to read output of buck command %s: %s" sigquit_protected_cmd
-          err )
+        L.die ExternalError "*** failed to read output of buck command %s: %s" command err )
   | Error _ as err ->
-      L.die ExternalError "*** failed to execute buck command %s: %s" sigquit_protected_cmd
+      L.die ExternalError "*** failed to execute buck command %s: %s" command
         (Unix.Exit_or_signal.to_string_hum err)
 
 
@@ -113,17 +140,17 @@ module Target = struct
     else {target with flavors= flavor :: target.flavors}
 
 
-  let add_flavor (mode : BuckMode.t) (command : InferCommand.t) ~extra_flavors target =
+  let add_flavor_v1 (mode : BuckMode.t) (command : InferCommand.t) ~extra_flavors target =
     let target = List.fold_left ~f:add_flavor_internal ~init:target extra_flavors in
     match (mode, command) with
     | ClangCompilationDB _, _ ->
         add_flavor_internal target "compilation-database"
-    | ClangV2, _ | ClangFlavors, Compile ->
+    | Clang, Compile | Erlang, _ ->
         target
-    | JavaFlavor, _ ->
-        add_flavor_internal target "infer-java-capture"
-    | ClangFlavors, _ ->
+    | Clang, _ ->
         add_flavor_internal target "infer-capture-all"
+    | Java, _ ->
+        add_flavor_internal target "infer-java-capture"
 end
 
 let config =
@@ -131,7 +158,7 @@ let config =
     List.fold ["clang"; "install"; "bin"; "clang"] ~init:Config.fcp_dir ~f:Filename.concat
   in
   let get_java_flavor_config () =
-    if Config.buck_java_flavor_suppress_config then []
+    if Config.buck_java_suppress_config then []
     else ["infer.version=" ^ Version.versionString; "infer.binary=" ^ Config.infer_binary]
   in
   let get_clang_flavor_config () =
@@ -141,11 +168,11 @@ let config =
       "*//cxx.modules_default=false"
     ; "*//cxx.modules=false" ]
     @ ( if Config.buck_clang_use_toolchain_config then []
-      else
-        [ "*//infer.infer_bin=" ^ Config.bin_dir
-        ; "*//infer.binary=" ^ Config.infer_binary
-        ; "*//infer.clang_compiler=" ^ clang_path
-        ; "*//infer.clang_plugin=" ^ Config.clang_plugin_path ] )
+        else
+          [ "*//infer.infer_bin=" ^ Config.bin_dir
+          ; "*//infer.binary=" ^ Config.infer_binary
+          ; "*//infer.clang_compiler=" ^ clang_path
+          ; "*//infer.clang_plugin=" ^ Config.clang_plugin_path ] )
     @ ( match Config.xcode_developer_dir with
       | Some d ->
           [Printf.sprintf "apple.xcode_developer_dir=%s" d]
@@ -157,14 +184,14 @@ let config =
       [ Printf.sprintf "*//infer.block_list_regex=(%s)"
           (String.concat ~sep:")|(" Config.buck_block_list) ]
   in
-  fun buck_mode ->
+  fun buck_mode version ->
     let args =
-      match (buck_mode : BuckMode.t) with
-      | JavaFlavor ->
+      match ((buck_mode : BuckMode.t), (version : version)) with
+      | Java, V1 ->
           get_java_flavor_config ()
-      | ClangFlavors ->
+      | Clang, V1 ->
           get_clang_flavor_config ()
-      | ClangV2 | ClangCompilationDB _ ->
+      | _, _ ->
           []
     in
     List.fold args ~init:[] ~f:(fun acc f -> "--config" :: f :: acc)
@@ -199,6 +226,7 @@ module Query = struct
     | Set of string list
     | Target of string
     | Union of expr list
+    | Labelfilter of {label: string; expr: expr}
 
   exception NotATarget
 
@@ -223,6 +251,8 @@ module Query = struct
         Union exprs
 
 
+  let label_filter ~label expr = Labelfilter {label; expr}
+
   let rec pp fmt = function
     | Target s ->
         F.pp_print_string fmt s
@@ -236,6 +266,8 @@ module Query = struct
         F.fprintf fmt "set(%a)" (Pp.seq F.pp_print_string) sl
     | Union exprs ->
         Pp.seq ~sep:" + " pp fmt exprs
+    | Labelfilter {label; expr} ->
+        F.fprintf fmt "attrfilter(labels, %s, %a)" label pp expr
 
 
   (* example query json output
@@ -248,7 +280,7 @@ module Query = struct
      }
      ]
   *)
-  let parse_query_output ?buck_mode output =
+  let parse_query_output ~buck_mode (version : version) output =
     let get_target_srcs_assoc_list json =
       match json with
       | `Assoc fields ->
@@ -282,36 +314,35 @@ module Query = struct
       | _ ->
           acc
     in
-    match (buck_mode : BuckMode.t option) with
-    | Some JavaFlavor ->
+    match ((buck_mode : BuckMode.t), version) with
+    | Java, V1 ->
         String.concat output |> Yojson.Basic.from_string |> get_target_srcs_assoc_list
         |> List.fold ~init:[] ~f:process_target
     | _ ->
         output
 
 
-  let exec ?buck_mode expr =
+  let exec ~buck_mode version expr =
+    let query_string_of_version = match version with V1 -> "query" | V2 -> "cquery" in
     let query = F.asprintf "%a" pp expr in
-    let buck_config = Option.value_map buck_mode ~default:[] ~f:config in
+    let buck_config = config buck_mode version in
     let buck_output_options =
-      match (buck_mode : BuckMode.t option) with
-      | Some JavaFlavor ->
+      match ((buck_mode : BuckMode.t), version) with
+      | Java, V1 ->
           ["--output-format"; "json"; "--output-attribute"; "srcs"]
       | _ ->
           []
     in
-    let is_buck2 = match (buck_mode : BuckMode.t option) with Some ClangV2 -> true | _ -> false in
-    let buck_cmd = if is_buck2 then "buck2" else "buck" in
     let bounded_args =
-      store_args_in_file ~identifier:(buck_cmd ^ "_query_args")
-        (buck_config @ buck_output_options @ [query])
+      store_args_in_file ~identifier:"buck_query_args" (buck_config @ buck_output_options @ [query])
+    in
+    let extra_buck_args =
+      match version with V1 -> Config.buck_build_args_no_inline | V2 -> Config.buck2_build_args
     in
     let cmd =
-      buck_cmd :: "query"
-      :: ( (if is_buck2 then Config.buck2_build_args_no_inline else Config.buck_build_args_no_inline)
-         @ bounded_args )
+      binary_of_version version :: query_string_of_version :: (extra_buck_args @ bounded_args)
     in
-    wrap_buck_call ~label:"query" ?buck_mode cmd |> parse_query_output ?buck_mode
+    wrap_buck_call ~label:"query" version cmd |> parse_query_output ~buck_mode version
 end
 
 let accepted_buck_commands = ["build"]
@@ -339,25 +370,46 @@ let get_accepted_buck_kinds_pattern (mode : BuckMode.t) =
   match mode with
   | ClangCompilationDB _ ->
       "^(apple|cxx)_(binary|library|test)$"
-  | ClangV2 | ClangFlavors ->
+  | Clang ->
       "^(apple|cxx)_(binary|library)$"
-  | JavaFlavor ->
+  | Erlang ->
+      L.die InternalError "Not used"
+  | Java ->
       "^(java|android)_library$"
 
 
-let resolve_pattern_targets (buck_mode : BuckMode.t) targets =
-  targets |> List.rev_map ~f:Query.target |> Query.set
-  |> ( match buck_mode with
-     | ClangV2 | ClangFlavors | ClangCompilationDB NoDependencies ->
-         Fn.id
-     | JavaFlavor ->
-         Query.deps Config.buck_java_flavor_dependency_depth
-     | ClangCompilationDB DepsAllDepths ->
-         Query.deps None
-     | ClangCompilationDB (DepsUpToDepth depth) ->
-         Query.deps (Some depth) )
-  |> Query.kind ~pattern:(get_accepted_buck_kinds_pattern buck_mode)
-  |> Query.exec ~buck_mode
+let resolve_pattern_targets (buck_mode : BuckMode.t) version targets =
+  let target_set = List.rev_map targets ~f:Query.target |> Query.set in
+  let deps_query =
+    match (buck_mode, version) with
+    | Clang, V2 ->
+        if Config.buck2_query_deps then Query.deps Config.buck_dependency_depth else Fn.id
+    | Clang, V1 | ClangCompilationDB NoDependencies, _ | Erlang, _ ->
+        Fn.id
+    | Java, _ ->
+        Query.deps Config.buck_dependency_depth
+    | ClangCompilationDB DepsAllDepths, _ ->
+        Query.deps None
+    | ClangCompilationDB (DepsUpToDepth depth), _ ->
+        Query.deps (Some depth)
+  in
+  let accepted_patterns_filter = Query.kind ~pattern:(get_accepted_buck_kinds_pattern buck_mode) in
+  let buck2_java_infer_enabled_filter =
+    match (buck_mode, version) with
+    | Java, V2 ->
+        Query.label_filter ~label:"infer_enabled"
+    | _, _ ->
+        Fn.id
+  in
+  let results =
+    target_set |> deps_query |> accepted_patterns_filter |> buck2_java_infer_enabled_filter
+    |> Query.exec ~buck_mode version
+  in
+  match (buck_mode, version) with
+  | Java, V2 ->
+      List.rev_map results ~f:(fun s -> s ^ "_infer")
+  | _, _ ->
+      results
 
 
 type parsed_args =
@@ -381,28 +433,8 @@ let split_buck_command buck_cmd =
         accepted_buck_commands
 
 
-(** Given a list of arguments return the extended list of arguments where the args in a file have
-    been extracted *)
-let inline_argument_files buck_args =
-  let expand_buck_arg buck_arg =
-    if String.is_prefix ~prefix:"@" buck_arg then
-      let file_name = String.chop_prefix_exn ~prefix:"@" buck_arg in
-      if not (ISys.file_exists file_name) then [buck_arg]
-        (* Arguments that start with @ could mean something different than an arguments file in buck. *)
-      else
-        let expanded_args =
-          try Utils.with_file_in file_name ~f:In_channel.input_lines
-          with exn ->
-            Logging.die UserError "Could not read from file '%s': %a@\n" file_name Exn.pp exn
-        in
-        expanded_args
-    else [buck_arg]
-  in
-  List.concat_map ~f:expand_buck_arg buck_args
-
-
-let parse_command_and_targets (buck_mode : BuckMode.t) original_buck_args =
-  let expanded_buck_args = inline_argument_files original_buck_args in
+let parse_command_and_targets (buck_mode : BuckMode.t) (version : version) original_buck_args =
+  let expanded_buck_args = Utils.inline_argument_files original_buck_args in
   let command, args = split_buck_command expanded_buck_args in
   let buck_targets_block_list_regexp =
     if List.is_empty Config.buck_targets_block_list then None
@@ -433,15 +465,14 @@ let parse_command_and_targets (buck_mode : BuckMode.t) original_buck_args =
   in
   let parsed_args = parse_cmd_args empty_parsed_args args in
   let targets =
-    match (buck_mode, parsed_args) with
-    | ClangFlavors, {pattern_targets= []; alias_targets= []; normal_targets} ->
+    match (buck_mode, version, parsed_args) with
+    | Clang, V1, {pattern_targets= []; alias_targets= []; normal_targets} ->
         normal_targets
-    | ClangV2, {pattern_targets; alias_targets; normal_targets} ->
+    | Clang, V2, {pattern_targets; alias_targets; normal_targets} when Config.buck2_use_bxl ->
         pattern_targets |> List.rev_append alias_targets |> List.rev_append normal_targets
-    | ( (ClangFlavors | ClangCompilationDB _ | JavaFlavor)
-      , {pattern_targets; alias_targets; normal_targets} ) ->
+    | _, _, {pattern_targets; alias_targets; normal_targets} ->
         pattern_targets |> List.rev_append alias_targets |> List.rev_append normal_targets
-        |> resolve_pattern_targets buck_mode
+        |> resolve_pattern_targets buck_mode version
   in
   let targets =
     Option.value_map ~default:targets

@@ -19,7 +19,12 @@ module Vector : sig
   val invalidate_references :
     Invalidation.std_vector_function -> AbstractValue.t * ValueHistory.t -> model
 
-  val push_back : AbstractValue.t * ValueHistory.t -> model
+  val push_back : AbstractValue.t * ValueHistory.t -> desc:string -> model
+end
 
-  val reserve : AbstractValue.t * ValueHistory.t -> model
+module Function : sig
+  val operator_call :
+       (AbstractValue.t * ValueHistory.t) PulseAliasSpecialization.FuncArg.t
+    -> (AbstractValue.t * ValueHistory.t) PulseAliasSpecialization.FuncArg.t list
+    -> model
 end

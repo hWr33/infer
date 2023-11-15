@@ -630,6 +630,10 @@ let prop_init_formals_seed tenv new_formals (prop : 'a Prop.t) : Prop.exposed Pr
             Exp.Sizeof {typ; nbytes= None; dynamic_length= None; subtype= Subtype.subtypes}
         | Erlang ->
             L.die InternalError "Erlang not supported"
+        | Hack ->
+            L.die InternalError "Hack not supported"
+        | Python ->
+            L.die InternalError "Python not supported"
       in
       Prop.mk_ptsto_lvar tenv Prop.Fld_init Predicates.inst_formal (pv, texp, None)
     in
@@ -840,11 +844,9 @@ let set_current_language proc_desc =
 
 (** reset global values before analysing a procedure *)
 let reset_global_values proc_desc =
-  BiabductionConfig.reset_abs_val () ;
   Ident.NameGenerator.reset () ;
   SymOp.reset_total () ;
   reset_prop_metrics () ;
-  Abs.reset_current_rules () ;
   set_current_language proc_desc
 
 

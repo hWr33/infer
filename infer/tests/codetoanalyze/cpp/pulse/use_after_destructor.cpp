@@ -258,7 +258,6 @@ void destructor_order_empty_destructor_ok() {
   a.f = &b;
 }
 
-
 std::string mk_string();
 
 void variable_init_ternary_ok(bool b) {
@@ -295,4 +294,8 @@ void move_moveable_ok(Moveable& src) {
   x = std::move(src);
 }
 
+void placement_new_nothrow_ok() {
+  std::unique_ptr<int> p1(new (std::nothrow) int);
+  std::unique_ptr<int> p2(new (std::nothrow) int);
+}
 } // namespace use_after_destructor

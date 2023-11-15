@@ -159,7 +159,7 @@ module String = String
 
 (** Iterators *)
 
-module Iter = Iter
+module Iter = IterLabels
 include module type of Iter.Import
 
 (** Containers *)
@@ -167,6 +167,7 @@ include module type of Iter.Import
 module Comparer = Comparer
 module Option = Option
 include module type of Option.Import
+module Result = Result
 
 type 'a zero_one_many = Zero | One of 'a | Many
 type ('a, 'b) zero_one_many2 = Zero2 | One2 of 'a * 'b | Many2
@@ -180,15 +181,10 @@ include module type of IArray.Import
 module Set = NSSet
 module Map = NSMap
 module Multiset = Multiset
-module Bijection = CCBijection [@@warning "-49"]
+module Bijection = CCBijection [@@warning "-no-cmi-file"]
 module HashSet = HashSet
 module HashTable = HashTable
-module HashQueue = Core_kernel.Hash_queue
-
-(** Input / Output *)
-
-module In_channel = Stdio.In_channel
-module Out_channel = Stdio.Out_channel
+module HashQueue = Core.Hash_queue
 
 (** System interfaces *)
 

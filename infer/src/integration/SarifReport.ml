@@ -75,11 +75,9 @@ let loc_trace_to_sarifbug_record trace_list =
   in
   let message description = {Sarifbug_j.text= description} in
   let region line_number column_number =
-    match column_number with
-    | -1 ->
-        {Sarifbug_j.startLine= line_number; startColumn= 1}
-    | _ ->
-        {Sarifbug_j.startLine= line_number; startColumn= column_number}
+    let line_num = match line_number with -1 | 0 -> 1 | _ -> line_number in
+    let column_num = match column_number with -1 | 0 -> 1 | _ -> column_number in
+    {Sarifbug_j.startLine= line_num; startColumn= column_num}
   in
   let physical_location filename line_number column_number =
     {Sarifbug_j.artifactLocation= file_loc filename; region= region line_number column_number}
@@ -95,8 +93,13 @@ let loc_trace_to_sarifbug_record trace_list =
   List.map ~f:trace_item_to_record trace_list
 
 
-let pp_jsonbug fmt {Jsonbug_t.file; severity; bug_type; qualifier; line; column; bug_trace} =
-  let message = {Sarifbug_j.text= qualifier} in
+let pp_jsonbug fmt
+    {Jsonbug_t.file; severity; bug_type; qualifier; suggestion; line; column; bug_trace; hash; key}
+    =
+  let message =
+    { Sarifbug_j.text=
+        qualifier ^ Option.value_map ~default:"" ~f:(fun sugg -> " " ^ sugg) suggestion }
+  in
   let level = String.lowercase severity in
   let ruleId = bug_type in
   let absolute_source_name = Config.project_root ^/ file in
@@ -116,8 +119,14 @@ let pp_jsonbug fmt {Jsonbug_t.file; severity; bug_type; qualifier; line; column;
   let thread_flow =
     if trace_list_length > 0 then Some [{Sarifbug_j.threadFlows= thread_flow_locs}] else None
   in
+  let fingerprints = {Sarifbug_j.hashV1= hash; key} in
   let result =
-    {Sarifbug_j.message; level; ruleId; codeFlows= thread_flow; locations= file_location_to_record}
+    { Sarifbug_j.message
+    ; level
+    ; ruleId
+    ; codeFlows= thread_flow
+    ; locations= file_location_to_record
+    ; fingerprints }
   in
   F.pp_print_string fmt (Sarifbug_j.string_of_sarifbug result)
 

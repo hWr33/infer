@@ -55,6 +55,8 @@ module Val : sig
 
   val bot : t
 
+  val unknown : t
+
   val of_big_int : ItvThresholds.elt -> t
 
   val of_c_array_alloc :
@@ -77,11 +79,13 @@ module Val : sig
 
   val of_itv : ?traces:BufferOverrunTrace.Set.t -> Itv.t -> t
 
-  val of_literal_string : Typ.IntegerWidths.t -> string -> t
+  val of_literal_string : IntegerWidths.t -> string -> t
 
   val of_loc : ?traces:BufferOverrunTrace.Set.t -> AbsLoc.Loc.t -> t
+  (** Create a value for a pointer pointing to x.*)
 
   val of_pow_loc : traces:BufferOverrunTrace.Set.t -> AbsLoc.PowLoc.t -> t
+  (** Create a value for a pointer pointing to locations in powloc.*)
 
   val of_func_ptrs : FuncPtr.Set.t -> t
 
@@ -92,6 +96,12 @@ module Val : sig
 
   val is_bot : t -> bool
   (** Check if the value is bottom *)
+
+  val is_unknown : t -> bool
+  (** Return true if the value represents an unknown value. Note that this does not mean that it is
+      identical with Dom.Val.unknown. This is because an unknown value is bound to a particular
+      location (this affects fields sym, offset_sym, and size_sym - see MemReach.add_heap) and a to
+      particular assignment (this affects the field traces - see Val.add_assign_trace_elem). *)
 
   val is_mone : t -> bool
   (** Check if the value is [\[-1,-1\]] *)
@@ -470,6 +480,8 @@ module Mem : sig
 
   val unreachable : t
 
+  val is_reachable : t -> bool
+
   type get_summary = Procname.t -> no_oenv_t option
 
   val init : get_summary -> BufferOverrunOndemandEnv.t -> t
@@ -521,8 +533,9 @@ module Mem : sig
   val add_unknown_from : Ident.t * Typ.t -> callee_pname:Procname.t -> location:Location.t -> t -> t
   (** Add an unknown return value of [callee_pname] for stack variables *)
 
-  val remove_temps : Ident.t list -> t -> t
-  (** Remove given temporary variables from the abstract memory *)
+  val remove_vars : Var.t list -> t -> t
+  (** Remove temporary variables and if Config.bo_exit_frontend_gener_vars is true also frontend
+      generated variables *)
 
   val find : AbsLoc.Loc.t -> _ t0 -> Val.t
 
@@ -601,10 +614,10 @@ module Mem : sig
   val incr_iterator_offset_alias : Exp.t -> t -> t
   (** Update iterator offset alias when [iterator.next()] is called *)
 
-  val update_mem : AbsLoc.PowLoc.t -> Val.t -> t -> t
+  val update_mem : ?force_strong_update:Bool.t -> AbsLoc.PowLoc.t -> Val.t -> t -> t
   (** Add a map from locations to a value. If the given set of locations is a singleton set and the
-      only element represents one concrete abstract location, it does strong update. Otherwise, weak
-      update. *)
+      only element represents one concrete abstract location or force_strong_update is true, it does
+      strong update. Otherwise, weak update. *)
 
   val strong_update : AbsLoc.PowLoc.t -> Val.t -> t -> t
 

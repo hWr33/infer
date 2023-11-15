@@ -10,7 +10,7 @@ module F = Format
 
 [@@@warning "-32-60"]
 
-type 'a t = Unsat | Sat of 'a
+type 'a t = Unsat | Sat of 'a [@@deriving equal]
 
 val pp : (F.formatter -> 'a -> unit) -> F.formatter -> 'a t -> unit
 
@@ -26,6 +26,15 @@ val bind : ('a -> 'b t) -> 'a t -> 'b t
 val sat : 'a t -> 'a option
 
 val of_option : 'a option -> 'a t
+
+val list_fold : 'a list -> init:'accum -> f:('accum -> 'a -> 'accum t) -> 'accum t
+
+val to_list : 'a t -> 'a list
+
+val filter : 'a t list -> 'a list
+(** keep only [Sat _] elements *)
+
+val seq_fold : 'a Caml.Seq.t -> init:'accum -> f:('accum -> 'a -> 'accum t) -> 'accum t
 
 module Import : sig
   include module type of Types

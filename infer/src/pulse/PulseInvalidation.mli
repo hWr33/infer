@@ -20,11 +20,27 @@ type std_vector_function =
 
 val pp_std_vector_function : F.formatter -> std_vector_function -> unit
 
-type java_iterator_function = Remove
+type map_type = FollyF14Value | FollyF14Vector | FollyF14Fast
+
+type map_function =
+  | Clear
+  | Rehash
+  | Reserve
+  | OperatorEqual
+  | Insert
+  | InsertOrAssign
+  | Emplace
+  | TryEmplace
+  | TryEmplaceToken
+  | EmplaceHint
+  | OperatorBracket
+
+val pp_map_type : F.formatter -> map_type -> unit
+
+val pp_map_function : F.formatter -> map_function -> unit
 
 type t =
   | CFree
-  | CustomFree of Procname.t
   | ConstantDereference of IntLit.t
   | CppDelete
   | CppDeleteArray
@@ -32,11 +48,8 @@ type t =
   | GoneOutOfScope of Pvar.t * Typ.t
   | OptionalEmpty
   | StdVector of std_vector_function
-  | JavaIterator of java_iterator_function
+  | CppMap of map_type * map_function
 [@@deriving compare, equal]
-
-val isl_equiv : t -> t -> bool
-(** check equality up to some ISL equivalences *)
 
 val pp : F.formatter -> t -> unit
 
@@ -47,6 +60,7 @@ type must_be_valid_reason =
   | InsertionIntoCollectionKey
   | InsertionIntoCollectionValue
   | SelfOfNonPODReturnMethod of Typ.t
+  | NullArgumentWhereNonNullExpected of PulseCallEvent.t * int option
 [@@deriving compare, equal]
 
 val pp_must_be_valid_reason : F.formatter -> must_be_valid_reason option -> unit

@@ -9,17 +9,25 @@
 open! IStd
 module F = Format
 
-type field = Fieldname.t * Typ.t * Annot.Item.t [@@deriving compare]
+type field = Fieldname.t * Typ.t * Annot.Item.t [@@deriving compare, equal]
 
 type fields = field list
 
 type java_class_kind = Interface | AbstractClass | NormalClass [@@deriving equal]
 
-type java_class_info =
-  { kind: java_class_kind  (** class kind in Java *)
-  ; loc: Location.t option
-        (** None should correspond to rare cases when it was impossible to fetch the location in
-            source file *) }
+type hack_class_kind = Class | Interface | Trait
+
+module ClassInfo : sig
+  type t =
+    | NoInfo
+    | JavaClassInfo of
+        { kind: java_class_kind  (** class kind in Java *)
+        ; loc: Location.t option
+              (** None should correspond to rare cases when it was impossible to fetch the location
+                  in source file *) }
+    | HackClassInfo of hack_class_kind
+  [@@deriving equal, hash, show]
+end
 
 (** Type for a structured value. *)
 type t = private
@@ -30,8 +38,9 @@ type t = private
   ; methods: Procname.t list  (** methods defined *)
   ; exported_objc_methods: Procname.t list  (** methods in ObjC interface, subset of [methods] *)
   ; annots: Annot.Item.t  (** annotations *)
-  ; java_class_info: java_class_info option  (** present if and only if the class is Java *)
-  ; dummy: bool  (** dummy struct for class including static method *) }
+  ; class_info: ClassInfo.t  (** present if and only if the class is Java or Hack *)
+  ; dummy: bool  (** dummy struct for class including static method *)
+  ; source_file: SourceFile.t option  (** source file containing this struct's declaration *) }
 
 type lookup = Typ.Name.t -> t option
 
@@ -49,8 +58,9 @@ val internal_mk_struct :
   -> ?supers:Typ.Name.t list
   -> ?objc_protocols:Typ.Name.t list
   -> ?annots:Annot.Item.t
-  -> ?java_class_info:java_class_info
+  -> ?class_info:ClassInfo.t
   -> ?dummy:bool
+  -> ?source_file:SourceFile.t
   -> Typ.name
   -> t
 (** Construct a struct_typ, normalizing field types *)
@@ -62,6 +72,9 @@ type field_info = {typ: Typ.t; annotations: Annot.Item.t; is_static: bool}
 
 val get_field_info : lookup:lookup -> Fieldname.t -> Typ.t -> field_info option
 (** Lookup for info associated with the field [fn]. None if [typ] has no field named [fn] *)
+
+val fld_typ_opt : lookup:lookup -> Fieldname.t -> Typ.t -> Typ.t option
+(** If a struct type with field f, return Some (the type of f). If not, return None. *)
 
 val fld_typ : lookup:lookup -> default:Typ.t -> Fieldname.t -> Typ.t -> Typ.t
 (** If a struct type with field f, return the type of f. If not, return the default type if given,
@@ -77,5 +90,13 @@ val merge : Typ.Name.t -> newer:t -> current:t -> t
 val is_not_java_interface : t -> bool
 (** check that a struct either defines a non-java type, or a non-java-interface type (abstract or
     normal class) *)
+
+val get_source_file : t -> SourceFile.t option
+
+val is_hack_class : t -> bool
+
+val is_hack_interface : t -> bool
+
+val is_hack_trait : t -> bool
 
 module Normalizer : HashNormalizer.S with type t = t

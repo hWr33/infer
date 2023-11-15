@@ -8,9 +8,13 @@
 open! IStd
 module F = Format
 
-type capture_mode = ByReference | ByValue [@@deriving compare, equal]
+type capture_mode = ByReference | ByValue [@@deriving compare, equal, yojson_of, sexp, hash]
 
 let string_of_capture_mode = function ByReference -> "by ref" | ByValue -> "by value"
+
+let is_captured_by_ref captured_mode =
+  match captured_mode with ByReference -> true | ByValue -> false
+
 
 type t = {pvar: Pvar.t; typ: Typ.t; capture_mode: capture_mode} [@@deriving compare, equal]
 

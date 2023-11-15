@@ -8,7 +8,7 @@
 open! IStd
 module F = Format
 
-type 'a t = Unsat | Sat of 'a
+type 'a t = Unsat | Sat of 'a [@@deriving equal]
 
 let pp pp_sat fmt = function Unsat -> F.pp_print_string fmt "unsat" | Sat x -> pp_sat fmt x
 
@@ -35,3 +35,23 @@ module Import = struct
 
   let ( let* ) x f = bind f x
 end
+
+let to_result = function Unsat -> Error () | Sat x -> Ok x
+
+let of_result = function Error () -> Unsat | Ok x -> Sat x
+
+let list_fold l ~init ~f =
+  List.fold_result l ~init ~f:(fun accum x -> f accum x |> to_result) |> of_result
+
+
+let to_list sat_unsat = sat sat_unsat |> Option.to_list
+
+let filter l = List.filter_map l ~f:sat
+
+let seq_fold seq ~init ~f =
+  let open Import in
+  Caml.Seq.fold_left
+    (fun accum x ->
+      let* accum in
+      f accum x )
+    (Sat init) seq

@@ -11,33 +11,15 @@ module F = Format
 module Hashtbl = Caml.Hashtbl
 module L = Die
 
-(** recursively traverse a path for files ending with a given extension *)
-let find_files ~path ~extension =
-  let rec traverse_dir_aux init dir_path =
-    let aux base_path files rel_path =
-      let full_path = base_path ^/ rel_path in
-      match (Unix.stat full_path).Unix.st_kind with
-      | Unix.S_REG when String.is_suffix ~suffix:extension full_path ->
-          full_path :: files
-      | Unix.S_DIR ->
-          traverse_dir_aux files full_path
-      | _ ->
-          files
-      | exception Unix.Unix_error (ENOENT, _, _) ->
-          files
-    in
-    Sys.fold_dir ~init ~f:(aux dir_path) dir_path
-  in
-  traverse_dir_aux [] path
-
-
-let fold_folders ~init ~f ~path =
+let fold_file_tree ~init ~f_dir ~f_reg ~path =
   let rec traverse_dir_aux acc dir_path =
     let aux base_path acc' rel_path =
       let full_path = base_path ^/ rel_path in
-      match (Unix.stat full_path).Unix.st_kind with
-      | Unix.S_DIR ->
-          traverse_dir_aux (f acc' full_path) full_path
+      match (Unix.stat full_path).st_kind with
+      | S_DIR ->
+          traverse_dir_aux (f_dir acc' full_path) full_path
+      | S_REG ->
+          f_reg acc' full_path
       | _ ->
           acc'
       | exception Unix.Unix_error (ENOENT, _, _) ->
@@ -48,7 +30,24 @@ let fold_folders ~init ~f ~path =
   traverse_dir_aux init path
 
 
-(** read a source file and return a list of lines, or None in case of error *)
+let fold_folders ~init ~f ~path =
+  let f_reg acc _ignore_reg = acc in
+  fold_file_tree ~init ~f_dir:f ~f_reg ~path
+
+
+let fold_files ~init ~f ~path =
+  let f_dir acc _ignore_dir = acc in
+  fold_file_tree ~init ~f_dir ~f_reg:f ~path
+
+
+(** recursively find all files in [path] with names ending in [extension] *)
+let find_files ~path ~extension =
+  let f_dir acc _ignore_dir = acc in
+  let f_reg acc path = if Filename.check_suffix path extension then path :: acc else acc in
+  fold_file_tree ~init:[] ~f_dir ~f_reg ~path
+
+
+(** read a source file and return a list of lines, or Error in case of error *)
 let read_file fname =
   let res = ref [] in
   let cin_ref = ref None in
@@ -137,6 +136,13 @@ let normalize_path_from ~root fname =
 
 let normalize_path fname = fname |> normalize_path_from ~root:"." |> fst
 
+let flatten_path ?(sep = "-") path =
+  let normalized_path = normalize_path path in
+  let path_parts = Filename.parts normalized_path in
+  let process_part = function ".." -> ["dd"] | "." -> [] | other -> [other] in
+  List.bind path_parts ~f:process_part |> String.concat ~sep
+
+
 (** Convert a filename to an absolute one if it is relative, and normalize "." and ".." *)
 let filename_to_absolute ~root fname =
   let abs_fname = if Filename.is_absolute fname then fname else root ^/ fname in
@@ -202,8 +208,6 @@ let directory_iter f path =
   if Sys.is_directory path = `Yes then loop [path] else f path
 
 
-let directory_is_empty path = Sys.readdir path |> Array.is_empty
-
 let string_crc_hex32 s = Caml.Digest.to_hex (Caml.Digest.string s)
 
 let read_json_file path =
@@ -222,25 +226,50 @@ let do_finally_swallow_timeout ~f ~finally =
 
 
 let with_file_in file ~f =
-  let ic = In_channel.create file in
+  (* Use custom code instead of In_channel.create to be able to pass [O_SHARE_DELETE] *)
+  let ic =
+    let fd =
+      try Unix.openfile ~mode:[Unix.O_RDONLY; Unix.O_SHARE_DELETE] file
+      with Unix.Unix_error (e, _, _) ->
+        let msg =
+          match e with
+          | Unix.ENOENT ->
+              ": no such file or directory"
+          | _ ->
+              ": error " ^ Unix.Error.message e
+        in
+        raise (Sys_error (file ^ msg))
+    in
+    Unix.in_channel_of_descr fd
+  in
   let f () = f ic in
   let finally () = In_channel.close ic in
   Exception.try_finally ~f ~finally
 
 
-let with_file_out file ~f =
-  let oc = Out_channel.create file in
+let with_file_out ?append file ~f =
+  let oc = Out_channel.create ?append file in
   let f () = f oc in
   let finally () = Out_channel.close oc in
   Exception.try_finally ~f ~finally
 
 
-let with_intermediate_temp_file_out file ~f =
+let with_intermediate_temp_file_out ?(retry = false) file ~f =
   let temp_filename, temp_oc = Filename.open_temp_file ~in_dir:(Filename.dirname file) "infer" "" in
   let f () = f temp_oc in
   let finally () =
     Out_channel.close temp_oc ;
-    Unix.rename ~src:temp_filename ~dst:file
+    (* Retry n times with exponential backoff when [retry] is true *)
+    let rec rename n delay =
+      try Unix.rename ~src:temp_filename ~dst:file
+      with e ->
+        if Int.equal n 0 then raise e
+        else
+          let delay = delay ** 2.0 in
+          ignore (Unix.nanosleep delay) ;
+          rename (n - 1) delay
+    in
+    if retry then rename 5 0.1 else rename 0 0.0
   in
   Exception.try_finally ~f ~finally
 
@@ -318,7 +347,10 @@ let realpath ?(warn_on_error = true) path =
 
 
 (* never closed *)
-let devnull = lazy (Unix.openfile "/dev/null" ~mode:[Unix.O_WRONLY])
+let devnull =
+  let file = if Sys.win32 then "NUL" else "/dev/null" in
+  lazy (Unix.openfile file ~mode:[Unix.O_WRONLY])
+
 
 let suppress_stderr2 f2 x1 x2 =
   let restore_stderr src =
@@ -332,29 +364,52 @@ let suppress_stderr2 f2 x1 x2 =
   protect ~f ~finally
 
 
-let rec rmtree name =
-  match Unix.((lstat name).st_kind) with
-  | S_DIR ->
-      let dir = Unix.opendir name in
-      let rec rmdir dir =
-        match Unix.readdir_opt dir with
-        | Some entry ->
-            if
-              not
-                ( String.equal entry Filename.current_dir_name
-                || String.equal entry Filename.parent_dir_name )
-            then rmtree (name ^/ entry) ;
-            rmdir dir
-        | None ->
-            Unix.closedir dir ;
-            Unix.rmdir name
-      in
-      rmdir dir
-  | _ ->
-      Unix.unlink name
-  | exception Unix.Unix_error (Unix.ENOENT, _, _) ->
-      ()
+let iter_dir name ~f =
+  let dir = Unix.opendir name in
+  let rec iter dir =
+    match Unix.readdir_opt dir with
+    | Some entry ->
+        if
+          not
+            ( String.equal entry Filename.current_dir_name
+            || String.equal entry Filename.parent_dir_name )
+        then f (name ^/ entry) ;
+        iter dir
+    | None ->
+        Unix.closedir dir
+  in
+  iter dir
 
+
+(** delete [name] recursively, return whether the file is not there at the end *)
+let rec rmtree_ ?(except = []) name =
+  match (Unix.lstat name).st_kind with
+  | S_DIR ->
+      if rm_all_in_dir_ ~except name then (
+        Unix.rmdir name ;
+        true )
+      else false
+  | _ ->
+      if List.mem ~equal:String.equal except name then false
+      else (
+        Unix.unlink name ;
+        true )
+  | exception Unix.Unix_error (ENOENT, _, _) ->
+      (* no entry: already deleted/was never there *)
+      true
+
+
+and rm_all_in_dir_ ?except name =
+  let no_files_left = ref true in
+  iter_dir name ~f:(fun entry ->
+      let entry_was_deleted = rmtree_ ?except entry in
+      no_files_left := !no_files_left && entry_was_deleted ) ;
+  !no_files_left
+
+
+let rm_all_in_dir ?except name = rm_all_in_dir_ ?except name |> ignore
+
+let rmtree ?except name = rmtree_ ?except name |> ignore
 
 let better_hash x = Marshal.to_string x [Marshal.No_sharing] |> Caml.Digest.string
 
@@ -422,8 +477,8 @@ let yojson_lookup yojson_assoc elt_name ~src ~f ~default =
 let timeit ~f =
   let start_time = Mtime_clock.counter () in
   let ret_val = f () in
-  let duration_ms = Mtime_clock.count start_time |> Mtime.Span.to_ms |> int_of_float in
-  (ret_val, duration_ms)
+  let duration = Mtime_clock.count start_time in
+  (ret_val, duration)
 
 
 let do_in_dir ~dir ~f =
@@ -446,25 +501,46 @@ let get_available_memory_MB () =
   else with_file_in proc_meminfo ~f:scan_for_expected_output
 
 
-let iter_infer_deps ~project_root ~f infer_deps_file =
-  let buck_root = project_root ^/ "buck-out" in
-  let one_line line =
+let fold_infer_deps ~root infer_deps_file ~init ~f =
+  let one_line acc line =
     match String.split ~on:'\t' line with
     | [_; _; target_results_dir] ->
         let infer_out_src =
           if Filename.is_relative target_results_dir then
-            Filename.dirname (buck_root ^/ target_results_dir)
+            Filename.dirname (root ^/ target_results_dir)
           else target_results_dir
         in
-        f infer_out_src
+        f acc infer_out_src
     | _ ->
         Die.die InternalError "Couldn't parse deps file '%s', line: %s" infer_deps_file line
   in
   match read_file infer_deps_file with
   | Ok lines ->
-      List.iter ~f:one_line lines
+      List.fold ~init ~f:one_line lines
   | Error error ->
       Die.die InternalError "Couldn't read deps file '%s': %s" infer_deps_file error
+
+
+let iter_infer_deps ~root infer_deps_file ~f =
+  Container.iter ~fold:(fold_infer_deps ~root) infer_deps_file ~f
+
+
+let inline_argument_files args =
+  let expand_arg arg =
+    if String.is_prefix ~prefix:"@" arg then
+      let file_name = String.chop_prefix_exn ~prefix:"@" arg in
+      if not (ISys.file_exists file_name) then [arg]
+        (* Arguments that start with @ could mean something different than an arguments file *)
+      else
+        let expanded_args =
+          try with_file_in file_name ~f:In_channel.input_lines
+          with exn ->
+            Die.die UserError "Could not read from file '%s': %a@\n" file_name Exn.pp exn
+        in
+        expanded_args
+    else [arg]
+  in
+  List.concat_map ~f:expand_arg args
 
 
 let physical_cores () =
@@ -475,7 +551,8 @@ let physical_cores () =
       let rec loop sockets cores =
         match In_channel.input_line ~fix_win_eol:true ic with
         | None ->
-            (Int.Set.length sockets, Int.Set.length cores)
+            let physical_cores = Int.Set.length sockets * Int.Set.length cores in
+            if physical_cores <= 0 then None else Some physical_cores
         | Some line when Re.Str.string_match physical_or_core_regxp line 0 -> (
             let value = Re.Str.matched_group 2 line |> int_of_string in
             match Re.Str.matched_group 1 line with
@@ -484,30 +561,36 @@ let physical_cores () =
             | "core id" ->
                 loop sockets (Int.Set.add cores value)
             | _ ->
+                (* cannot happen thanks to the regexp *)
                 L.die InternalError "Couldn't parse line '%s' from /proc/cpuinfo." line )
         | Some _ ->
             loop sockets cores
       in
-      let sockets, cores_per_socket = loop Int.Set.empty Int.Set.empty in
-      sockets * cores_per_socket )
+      loop Int.Set.empty Int.Set.empty )
 
 
 let cpus = Setcore.numcores ()
 
 let numcores =
-  match Version.build_platform with Darwin | Windows -> cpus / 2 | Linux -> physical_cores ()
+  let default = cpus / 2 in
+  match Version.build_platform with
+  | Darwin | Windows ->
+      default
+  | Linux ->
+      physical_cores () |> Option.value ~default
 
 
-let set_best_cpu_for worker_id =
-  let threads_per_core = cpus / numcores in
-  let chosen_core = worker_id * threads_per_core % numcores in
-  let chosen_thread_in_core = worker_id * threads_per_core / numcores in
-  Setcore.setcore ((chosen_core * threads_per_core) + chosen_thread_in_core)
-
-
-let zip_fold_filenames ~init ~f ~zip_filename =
+let zip_fold ~init ~f ~zip_filename =
   let file_in = Zip.open_in zip_filename in
-  let collect acc (entry : Zip.entry) = f acc entry.filename in
+  let collect acc (entry : Zip.entry) = f acc file_in entry in
   let result = List.fold ~f:collect ~init (Zip.entries file_in) in
   Zip.close_in file_in ;
   result
+
+
+let is_term_dumb () =
+  match Sys.getenv "TERM" with
+  | Some kind when String.(equal "dumb" (lowercase kind)) ->
+      true
+  | _ ->
+      false

@@ -13,13 +13,14 @@ open! IStd
     should go here. *)
 type 'payload t =
   { proc_desc: Procdesc.t  (** the procedure to analyze *)
-  ; tenv: Tenv.t  (** {!Tenv.t} corresponding to the current procedure *)
+  ; tenv: Tenv.t  (** {!IR.Tenv.t} corresponding to the current procedure *)
   ; err_log: Errlog.t
         (** the issue log for the current procedure (internally a mutable data structure) *)
   ; exe_env: Exe_env.t  (** {!Exe_env.t} for the current analysis *)
-  ; analyze_dependency: Procname.t -> (Procdesc.t * 'payload) option
+  ; analyze_dependency: ?specialization:Specialization.t -> Procname.t -> 'payload option
         (** On-demand analysis of callees or other dependencies of the analysis of the current
-            procedure. Uses [Ondemand.analyze_procedure]. *)
+            procedure. Uses [Ondemand.analyze_procedure]. If [specialization] is provided, the
+            summary will be improved with a specialized version. *)
   ; update_stats: ?add_symops:int -> ?failure_kind:Exception.failure_kind -> unit -> unit
         (** update the [Summary.Stats.t] of the summary of the current procedure *) }
 

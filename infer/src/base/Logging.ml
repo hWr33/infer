@@ -143,27 +143,31 @@ let register_formatter =
        formatters_ref )
 
 
-let flush_formatters {file; console_file} =
+let flush_formatter {file; console_file} =
   Option.iter file ~f:(fun file -> F.pp_print_flush file ()) ;
   F.pp_print_flush console_file ()
 
 
+let flush_formatters () =
+  let flush (formatters, _) = flush_formatter !formatters in
+  List.iter ~f:flush !logging_formatters
+
+
 let close_logs () =
-  let close_fmt (formatters, _) = flush_formatters !formatters in
-  List.iter ~f:close_fmt !logging_formatters ;
+  flush_formatters () ;
   Option.iter !log_file ~f:(function file_fmt, chan ->
       F.pp_print_flush file_fmt () ;
       Out_channel.close chan )
 
 
 let register_epilogue () =
-  Epilogues.register ~f:close_logs ~description:"flushing logs and closing log file"
+  Epilogues.register_late ~f:close_logs ~description:"flushing logs and closing log file"
 
 
 let reset_formatters () =
   let refresh_formatter (formatters, mk_formatters) =
     (* flush to be nice *)
-    flush_formatters !formatters ;
+    flush_formatter !formatters ;
     (* recreate formatters, in particular update PID info *)
     formatters := mk_formatters ()
   in
@@ -246,13 +250,11 @@ let bufferoverrun_debug_level = debug_level_of_int Config.bo_debug
 
 let capture_debug_level = debug_level_of_int Config.debug_level_capture
 
-let linters_debug_level = debug_level_of_int Config.debug_level_linters
-
 let mergecapture_debug_level = Quiet
 
 let test_determinator_debug_level = debug_level_of_int Config.debug_level_test_determinator
 
-type debug_kind = Analysis | BufferOverrun | Capture | Linters | MergeCapture | TestDeterminator
+type debug_kind = Analysis | BufferOverrun | Capture | MergeCapture | TestDeterminator
 
 let debug kind level fmt =
   let base_level =
@@ -263,8 +265,6 @@ let debug kind level fmt =
         bufferoverrun_debug_level
     | Capture ->
         capture_debug_level
-    | Linters ->
-        linters_debug_level
     | MergeCapture ->
         mergecapture_debug_level
     | TestDeterminator ->
@@ -284,7 +284,12 @@ let wrap_in_scuba_log ~label ~log fmt =
   F.kasprintf wrapper fmt
 
 
-let result fmt = log ~to_console:true result_file_fmts fmt
+let result_string ?(style = []) s =
+  log ~to_console:false result_file_fmts "%s" s ;
+  ANSITerminal.print_string style s
+
+
+let result ?style fmt = F.kasprintf (fun s -> result_string ?style s) fmt
 
 let environment_info fmt = log ~to_console:false environment_info_file_fmts fmt
 
@@ -366,11 +371,18 @@ let setup_log_file () =
            ============================================================"
 
 
+let add_init_printer fmt = format_of_string "%t" ^^ fmt
+
+let set_geometry f =
+  F.pp_set_geometry f ~max_indent:(Config.margin_html - 10) ~margin:Config.margin_html
+
+
 type delayed_prints = Buffer.t * F.formatter
 
 let new_delayed_prints () =
   let b = Buffer.create 16 in
   let f = F.formatter_of_buffer b in
+  set_geometry f ;
   (b, f)
 
 
@@ -421,7 +433,11 @@ let d_kprintf ?color k fmt =
 
 
 let d_kasprintf k fmt =
-  match get_f () with Some f -> F.kasprintf (fun s -> k f s) fmt | None -> d_iprintf fmt
+  match get_f () with
+  | Some f ->
+      F.kasprintf (fun s -> k f s) (add_init_printer fmt) set_geometry
+  | _ ->
+      d_iprintf fmt
 
 
 let d_printf ?color fmt = d_kprintf ?color ignore fmt
@@ -455,6 +471,10 @@ let d_ln () = d_printf "@\n"
 (** dump a string plus newline *)
 let d_strln ?color s = d_kprintf ?color k_force_newline "%s" s
 
+let d_printf_escaped ?color fmt =
+  d_kasprintf (fun f s -> d_kfprintf ?color ignore f "%s" (Escape.escape_xml s)) fmt
+
+
 let d_printfln_escaped ?color fmt =
   d_kasprintf (fun f s -> d_kfprintf ?color k_force_newline f "%s" (Escape.escape_xml s)) fmt
 
@@ -470,22 +490,31 @@ let d_increase_indent () = d_printf "  @["
 
 let d_decrease_indent () = d_printf "@]"
 
-let d_call_with_indent_impl ~f =
-  d_increase_indent () ;
-  let result = f () in
-  d_decrease_indent () ;
-  d_ln () ;
-  (* Without a new line decreasing identation does not fully work *)
-  result
-
-
-let d_with_indent ?pp_result ~name f =
-  if not Config.write_html then f ()
-  else (
-    d_printf "Executing %s:@\n" name ;
-    let result = d_call_with_indent_impl ~f in
-    (* Print result if needed *)
-    Option.iter pp_result ~f:(fun pp_result ->
-        d_printf "Result of %s:@\n" name ;
-        d_call_with_indent_impl ~f:(fun () -> d_printf "%a" pp_result result) ) ;
-    result )
+let d_with_indent ?name_color ?(collapsible = false) ?(escape_result = true) ?pp_result ~f name_fmt
+    =
+  if not Config.write_html then F.ikfprintf (fun _ -> f ()) Format.err_formatter name_fmt
+  else
+    let print_block name =
+      let block_tag, name_tag = if collapsible then ("details", "summary") else ("div", "div") in
+      (* Open details block that has a summary + collapsible execution trace *)
+      d_printf "<%s class='d_with_indent'>" block_tag ;
+      (* Write a summary that also acts as a toggle for details  *)
+      d_printf "<%s class='d_with_indent_name'>" name_tag ;
+      d_printf_escaped ?color:name_color "%s" name ;
+      d_printf "</%s>" name_tag ;
+      (* Open a paragraph for the log of [f] *)
+      d_printf "<DIV class='details_child'>" ;
+      let result = f () in
+      d_printf "</DIV>" ;
+      (* Print result if needed *)
+      Option.iter pp_result ~f:(fun pp_result ->
+          d_printfln "<DIV class='details_result'>" ;
+          d_printfln ~color:Green "Result of %s" name ;
+          let ppf = if escape_result then d_printf_escaped else d_printf in
+          ppf "%a" pp_result result ;
+          d_printfln "</DIV>" ) ;
+      (* Close details *)
+      d_printf "</%s>" block_tag ;
+      result
+    in
+    F.kasprintf print_block name_fmt

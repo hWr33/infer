@@ -100,6 +100,13 @@ let html_with_color color pp f x =
   F.fprintf f "<span class='%s'>%a</span>" (color_string color) pp x
 
 
+let html_collapsible_block ~name pp f x =
+  let name = Escape.escape_xml name in
+  let result_pp_escaped f x = F.fprintf f "%s" (F.asprintf "%a" pp x |> Escape.escape_xml) in
+  F.fprintf f "<DETAILS class='state'><SUMMARY>%s</SUMMARY><P>%a</P></DETAILS>" name
+    result_pp_escaped x
+
+
 let color_wrapper pe ppf x ~f =
   match pe.kind with
   | HTML when not (equal_color (pe.cmap_norm (Obj.repr x)) pe.color) ->
@@ -154,9 +161,9 @@ let option pp fmt = function
       F.fprintf fmt "[Some %a]" pp x
 
 
-let of_string ~f fmt x = F.pp_print_string fmt (f x)
+let of_string ~f fmt x = Fmt.of_to_string f fmt x
 
-let string_of_pp pp = Format.asprintf "%a" pp
+let string_of_pp pp x = Fmt.to_to_string pp x
 
 let cli_args_with_verbosity ~verbose fmt args =
   let pp_args fmt args =

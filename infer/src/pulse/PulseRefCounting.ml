@@ -14,7 +14,6 @@ open PulseDomainInterface
    stack but has no strong reference, then it considered as strongly
    referenced by the stack *)
 let count_references tenv astate =
-  let post = (astate.AbductiveDomain.post :> BaseDomain.t) in
   let rec count_references_from addr seen ref_counts =
     if AbstractValue.Set.mem addr seen then (seen, ref_counts)
     else
@@ -24,26 +23,22 @@ let count_references tenv astate =
         else ref_counts
       in
       let seen = AbstractValue.Set.add addr seen in
-      match BaseMemory.find_opt addr post.heap with
-      | None ->
-          (seen, ref_counts)
-      | Some edges ->
-          BaseMemory.Edges.fold edges ~init:(seen, ref_counts)
-            ~f:(fun (seen, ref_counts) (access, (accessed_addr, _)) ->
-              if BaseMemory.Access.is_strong_access tenv access then
-                let ref_counts =
-                  if PulseOperations.is_ref_counted accessed_addr astate then
-                    AbstractValue.Map.update accessed_addr
-                      (function None -> Some 1 | Some n -> Some (n + 1))
-                      ref_counts
-                  else ref_counts
-                in
-                count_references_from accessed_addr seen ref_counts
-              else (seen, ref_counts) )
+      Memory.fold_edges addr astate ~init:(seen, ref_counts)
+        ~f:(fun (seen, ref_counts) (access, (accessed_addr, _)) ->
+          if Access.is_strong_access tenv access then
+            let ref_counts =
+              if PulseOperations.is_ref_counted accessed_addr astate then
+                AbstractValue.Map.update accessed_addr
+                  (function None -> Some 1 | Some n -> Some (n + 1))
+                  ref_counts
+              else ref_counts
+            in
+            count_references_from accessed_addr seen ref_counts
+          else (seen, ref_counts) )
   in
-  BaseStack.fold
+  Stack.fold
     (fun _var (addr, _) (seen, ref_counts) -> count_references_from addr seen ref_counts)
-    post.stack
+    astate
     (AbstractValue.Set.empty, AbstractValue.Map.empty)
   |> snd
   (* a refcount of 0 indicates a value that was not deallocated when seen in an ExitScope
@@ -54,23 +49,18 @@ let count_references tenv astate =
 
 let is_released tenv astate addr non_retaining_addrs =
   let is_retaining addr = not (List.mem non_retaining_addrs addr ~equal:AbstractValue.equal) in
-  let post = (astate.AbductiveDomain.post :> BaseDomain.t) in
   let rec is_retained_by src_addr seen =
     if List.mem seen src_addr ~equal:AbstractValue.equal then false
     else
-      match BaseMemory.find_opt src_addr post.heap with
-      | None ->
-          false
-      | Some edges ->
-          BaseMemory.Edges.exists edges ~f:(fun (access, (accessed_addr, _)) ->
-              BaseMemory.Access.is_strong_access tenv access
-              && ( AbstractValue.equal accessed_addr addr
-                 || is_retained_by accessed_addr (src_addr :: seen) ) )
+      Memory.exists_edge src_addr astate ~f:(fun (access, (accessed_addr, _)) ->
+          Access.is_strong_access tenv access
+          && ( AbstractValue.equal accessed_addr addr
+             || is_retained_by accessed_addr (src_addr :: seen) ) )
   in
-  BaseStack.exists
+  Stack.exists
     (fun _var (src_addr, _) ->
       (is_retaining src_addr || AbstractValue.equal src_addr addr) && is_retained_by src_addr [] )
-    post.stack
+    astate
   |> not
 
 
@@ -89,14 +79,11 @@ let is_released tenv astate addr non_retaining_addrs =
    removed. *)
 let removable_vars tenv astate vars =
   let non_retaining_addrs =
-    List.filter_map vars ~f:(fun var ->
-        BaseStack.find_opt var (astate.AbductiveDomain.post :> BaseDomain.t).stack
-        |> Option.map ~f:fst )
+    List.filter_map vars ~f:(fun var -> Stack.find_opt var astate |> Option.map ~f:fst)
   in
   let is_removable addr =
     (not (PulseOperations.is_ref_counted addr astate))
     || is_released tenv astate addr non_retaining_addrs
   in
   List.filter vars ~f:(fun var ->
-      BaseStack.find_opt var (astate.AbductiveDomain.post :> BaseDomain.t).stack
-      |> Option.for_all ~f:(fun (addr, _) -> is_removable addr) )
+      Stack.find_opt var astate |> Option.for_all ~f:(fun (addr, _) -> is_removable addr) )

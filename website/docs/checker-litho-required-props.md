@@ -11,7 +11,9 @@ Supported languages:
 - C/C++/ObjC: No
 - C#/.Net: No
 - Erlang: No
+- Hack: No
 - Java: Yes
+- Python: No
 
 This analysis checks that all non-optional [`@Prop`](https://fblitho.com/docs/props)`s have been specified when constructing Litho components. This is a [Litho](https://fblitho.com/) specific checker.
 

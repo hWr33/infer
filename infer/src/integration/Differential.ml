@@ -56,25 +56,24 @@ let dedup (issues : Jsonbug_t.jsonbug list) =
   |> snd |> sort_by_location
 
 
-let create_json_bug ~qualifier ~line ~file ~source_file ~trace ~(item : Jsoncost_t.sub_item)
-    ~(issue_type : IssueType.t) =
+let create_json_bug ~qualifier ~suggestion ~line ~file ~source_file ~trace
+    ~(item : Jsoncost_t.sub_item) ~(issue_type : IssueType.t) =
   { Jsonbug_t.bug_type= issue_type.unique_id
   ; qualifier
+  ; suggestion
   ; severity= IssueType.string_of_severity Advice
   ; line
   ; column= item.loc.cnum
   ; procedure= item.procedure_id
   ; procedure_start_line= line
   ; file
-  ; bug_trace= JsonReports.loc_trace_to_jsonbug_record trace Advice
+  ; bug_trace= JsonReports.loc_trace_to_jsonbug_record trace
   ; key= ""
   ; node_key= None
   ; hash= item.hash
   ; dotty= None
   ; infer_source_loc= None
   ; bug_type_hum= issue_type.hum
-  ; linters_def_file= None
-  ; doc_url= None
   ; traceview_id= None
   ; censored_reason= JsonReports.censored_reason issue_type source_file
   ; access= None
@@ -236,13 +235,11 @@ module Cost = struct
         (pp_degree ~only_bigO:false) curr_item
   end
 
-  let polynomial_traces issue_type = function
+  let polynomial_traces = function
     | None ->
         []
     | Some (Val (_, degree_term)) ->
-        Polynomials.NonNegativeNonTopPolynomial.polynomial_traces
-          ~is_autoreleasepool_trace:(IssueType.is_autoreleasepool_size_issue issue_type)
-          degree_term
+        Polynomials.NonNegativeNonTopPolynomial.polynomial_traces degree_term
     | Some (Below traces) ->
         [("", Polynomials.UnreachableTraces.make_err_trace traces)]
     | Some (Above traces) ->
@@ -256,7 +253,7 @@ module Cost = struct
     let file = cost_info.Jsoncost_t.loc.file in
     let method_name = cost_info.Jsoncost_t.procedure_name in
     let is_on_ui_thread = cost_info.Jsoncost_t.is_on_ui_thread in
-    let source_file = SourceFile.create ~warn_on_error:false file in
+    let source_file = SourceFile.create ~check_abs_path:false file in
     let issue_type =
       if CostItem.is_top curr_item then infinite_issue
       else if CostItem.is_unreachable curr_item then unreachable_issue
@@ -307,22 +304,20 @@ module Cost = struct
       let trace =
         let marker_cost_trace msg cost_item =
           [ Errlog.make_trace_element 0
-              {Location.line; col= column; file= source_file}
+              {Location.line; col= column; file= source_file; macro_file_opt= None; macro_line= -1}
               (Format.asprintf "%s %a" msg CostItem.pp_cost_msg cost_item)
               [] ]
         in
-        ("", marker_cost_trace "Previous" prev_item)
-        :: polynomial_traces issue_type prev_degree_with_term
-        @ ("", marker_cost_trace "Updated" curr_item)
-          :: polynomial_traces issue_type curr_degree_with_term
+        (("", marker_cost_trace "Previous" prev_item) :: polynomial_traces prev_degree_with_term)
+        @ (("", marker_cost_trace "Updated" curr_item) :: polynomial_traces curr_degree_with_term)
         |> Errlog.concat_traces
       in
       let convert Jsoncost_t.{hash; loc; procedure_name; procedure_id} : Jsoncost_t.sub_item =
         {hash; loc; procedure_name; procedure_id}
       in
       Some
-        (create_json_bug ~qualifier ~line ~file ~source_file ~trace ~item:(convert cost_info)
-           ~issue_type )
+        (create_json_bug ~qualifier ~suggestion:None ~line ~file ~source_file ~trace
+           ~item:(convert cost_info) ~issue_type )
     else None
 
 
@@ -442,7 +437,7 @@ module ConfigImpactItem = struct
     if should_report then
       let qualifier, trace = get_qualifier_trace ~change_type callees in
       let file = config_impact_item.loc.file in
-      let source_file = SourceFile.create ~warn_on_error:false file in
+      let source_file = SourceFile.create ~check_abs_path:false file in
       let line = config_impact_item.loc.lnum in
       let convert Jsonconfigimpact_t.{hash; loc; procedure_name; procedure_id} : Jsoncost_t.sub_item
           =
@@ -452,13 +447,11 @@ module ConfigImpactItem = struct
         match config_impact_item.mode with
         | `Normal ->
             IssueType.config_impact_analysis
-        | `StrictBeta ->
-            IssueType.config_impact_analysis_strict_beta
         | `Strict ->
             IssueType.config_impact_analysis_strict
       in
       Some
-        (create_json_bug ~qualifier ~line ~file ~source_file ~trace
+        (create_json_bug ~qualifier ~suggestion:None ~line ~file ~source_file ~trace
            ~item:(convert config_impact_item) ~issue_type )
     else None
 

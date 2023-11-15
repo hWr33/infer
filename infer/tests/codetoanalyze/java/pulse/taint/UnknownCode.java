@@ -76,7 +76,6 @@ public abstract class UnknownCode {
     return (String) nativeMethod2(a, i);
   }
 
-  // the trace is not the best at the moment, worth improving
   void callPropagateThenPropagateFootprintBad() {
     String source = (String) InferTaint.inferSecretSource();
     propagateFootprint(propagateTaint(source));

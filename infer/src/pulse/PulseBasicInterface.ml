@@ -10,23 +10,28 @@ open! IStd
 (** Basic Pulse modules that are safe to use in any module *)
 
 module AbstractValue = PulseAbstractValue
+module Access = PulseAccess
+module AccessSet = PulseAccess.Set
 module Attribute = PulseAttribute
 module Attributes = PulseAttribute.Attributes
 module CallEvent = PulseCallEvent
+module Formula = PulseFormula
 module Invalidation = PulseInvalidation
-module PathCondition = PulsePathCondition
 module SatUnsat = PulseSatUnsat
 module SkippedCalls = PulseSkippedCalls
-module Taint = PulseTaint
+module TaintConfig = PulseTaintConfig
+module TaintItem = PulseTaintItem
 module Timestamp = PulseTimestamp
 module Trace = PulseTrace
 module ValueHistory = PulseValueHistory
+module CellId = ValueHistory.CellId
+module ValueOrigin = PulseValueOrigin
 include SatUnsat.Types
 
 (** {2 Enforce short form usage} *)
 
 include struct
-  [@@@warning "-60"]
+  [@@@warning "-unused-module"]
 
   module PulseAbstractValue = PulseAbstractValue
   [@@deprecated "use the short form AbstractValue instead"]
@@ -34,12 +39,11 @@ include struct
   module PulseCallEvent = PulseCallEvent [@@deprecated "use the short form CallEvent instead"]
   module PulseInvalidation = PulseInvalidation
   [@@deprecated "use the short form Invalidation instead"]
-  module PulsePathCondition = PulsePathCondition
-  [@@deprecated "use the short form PathCondition instead"]
   module PulseTimestamp = PulseTimestamp [@@deprecated "use the short form Timestamp instead"]
   module PulseSkippedCalls = PulseSkippedCalls
   [@@deprecated "use the short form SkippedCalls instead"]
-  module PulseTaint = PulseTaint [@@deprecated "use the short form Taint instead"]
+  module PulseTaintConfig = PulseTaintConfig [@@deprecated "use the short form TaintConfig instead"]
+  module PulseTaintItem = PulseTaintItem [@@deprecated "use the short form TaintItem instead"]
   module PulseTrace = PulseTrace [@@deprecated "use the short form Trace instead"]
   module PulseValueHistory = PulseValueHistory
   [@@deprecated "use the short form ValueHistory instead"]

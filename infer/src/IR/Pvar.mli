@@ -11,7 +11,7 @@
 open! IStd
 module F = Format
 
-type translation_unit = SourceFile.t option [@@deriving compare]
+type translation_unit = SourceFile.t option
 
 (** Type for program variables. There are 4 kinds of variables:
 
@@ -19,7 +19,7 @@ type translation_unit = SourceFile.t option [@@deriving compare]
     + callee program variables, used to handle recursion ([x | callee] is distinguished from [x])
     + global variables
     + seed variables, used to store the initial value of formal parameters *)
-type t [@@deriving compare, yojson_of]
+type t [@@deriving compare, yojson_of, sexp, hash]
 
 val compare_modulo_this : t -> t -> int
 (** Comparison considering all pvars named 'this'/'self' to be equal *)
@@ -92,11 +92,20 @@ val is_cpp_temporary : t -> bool
 (** return true if this pvar represents a C++ temporary object (see
     http://en.cppreference.com/w/cpp/language/lifetime) *)
 
+val is_cpp_unnamed_param : t -> bool
+(** return true if this pvar represents an unnamed parameter *)
+
+val is_gmock_param : t -> bool
+(** return true if the parameter is for mock methods of GoogleTest *)
+
 val is_objc_static_local_of_proc_name : string -> t -> bool
 (** Check if a pvar is a local static in objc *)
 
 val is_block_pvar : t -> bool
 (** Check if a pvar is a local pointing to a block in objc *)
+
+val get_tmp_id : t -> Ident.t option
+(** In case of a temporary variable, returns the id used to create it, or None otherwise. *)
 
 val mk : Mangled.t -> Procname.t -> t
 (** [mk name proc_name] creates a program var with the given function name *)
@@ -120,6 +129,7 @@ val mk_global :
   -> ?is_constant_array:bool
   -> ?is_const:bool
   -> ?translation_unit:SourceFile.t
+  -> ?template_args:Typ.template_spec_info
   -> Mangled.t
   -> t
 (** create a global variable with the given name *)
@@ -147,6 +157,8 @@ val to_seed : t -> t
 val to_string : t -> string
 (** Convert a pvar to string. *)
 
+val unnamed_param_prefix : string
+
 val get_translation_unit : t -> translation_unit
 (** Get the translation unit corresponding to a global. Raises Invalid_arg if not a global. *)
 
@@ -166,6 +178,8 @@ val is_local_to_procedure : Procname.t -> t -> bool
 
 val get_initializer_pname : t -> Procname.t option
 (** Get the procname of the initializer function for the given global variable *)
+
+val get_template_args : t -> Typ.template_spec_info
 
 val materialized_cpp_temporary : string
 

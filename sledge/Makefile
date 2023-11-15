@@ -82,7 +82,8 @@ test:
 
 .PHONY: ci-test
 ci-test: exes
-	dune build @_build/debug/fmt @_build/debug/runtest
+	dune build @_build/debug/fmt @_build/debug/runtest _build/release/sledge-help.txt
+	git diff --quiet sledge-help.txt
 	$(MAKE) --no-print-directory -C test ci-test
 
 .PHONY: clean
@@ -103,6 +104,10 @@ OCAMLFORMAT_ARGS=
 .PHONY: fmt_all
 fmt_all:
 	parallel $(OCAMLFORMAT_EXE) $(OCAMLFORMAT_ARGS) -i ::: $(shell find * \( -name _build -or -name vendor \) -prune -or \( -name '*'.ml -or -name '*'.mli \) -print 2>/dev/null)
+
+dep.pdf: release
+	${MAKE} -C ../facebook/dependencies/cmgraph
+	cmgraph _build/release/ -e 'Llvm_' -e 'NS' -e '_intf' -e 'Dbg' -f Sledge_cli -r -o dep.pdf
 
 # print any variable for Makefile debugging
 print-%:

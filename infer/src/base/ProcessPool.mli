@@ -53,11 +53,16 @@ end
     results of type ['final]. ['work] and ['final] will be marshalled over a Unix pipe.*)
 type (_, _, _) t
 
+module Worker : sig
+  (** the number matches the index of the worker in the array of final results *)
+  type id = private int [@@deriving show]
+end
+
 val create :
      jobs:int
-  -> child_prologue:(unit -> unit)
+  -> child_prologue:(Worker.id -> unit)
   -> f:('work -> 'result option)
-  -> child_epilogue:(unit -> 'final)
+  -> child_epilogue:(Worker.id -> 'final)
   -> tasks:(unit -> ('work, 'result) TaskGenerator.t)
   -> ('work, 'final, 'result) t
 (** Create a new pool of processes running [jobs] jobs in parallel *)
@@ -65,3 +70,8 @@ val create :
 val run : (_, 'final, 'result) t -> 'final option Array.t
 (** use the processes in the given process pool to run all the given tasks in parallel and return
     the results of the epilogues *)
+
+val run_as_child : unit -> never_returns
+(** run a child that has been started by [create_process], on platforms where [fork] is not
+    available. The child will take care of executing the proper code. Once it has started, it
+    receives order from the parent through [stdin], and send status updates through [stdout]. *)

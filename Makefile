@@ -11,16 +11,11 @@ include $(ROOT_DIR)/Makefile.config
 
 MAKE_SOURCE = $(MAKE) -C $(SRC_DIR)
 
-ifneq ($(UTOP),no)
-BUILD_SYSTEMS_TESTS += infertop
-endif
-
 ifeq ($(BUILD_C_ANALYZERS),yes)
 BUILD_SYSTEMS_TESTS += \
   annotation-reachability-sources-override \
   assembly \
   backtrack_level \
-  ck_imports \
   clang_compilation_db_escaped clang_compilation_db_relpath \
   clang_multiple_files \
   clang_translation \
@@ -33,22 +28,29 @@ BUILD_SYSTEMS_TESTS += \
   delete_results_dir \
   disjunctive_domain \
   duplicate_symbols \
+  extract_capture \
   fail_on_issue \
+  infer-debug \
   j1 \
-  linters \
+  missing_deps \
   project_root_rel \
   pulse_messages \
   reactive \
+  replay_scheduler \
   results_xml \
   tracebugs \
   utf8_in_procname \
-  export_changed_functions \
-  incremental_analysis_remove_file \
-  incremental_analysis_change_procedure \
   incremental_analysis_add_procedure \
+  incremental_analysis_change_procedure \
+  incremental_analysis_change_tenv \
+  incremental_analysis_file_level_change \
+  incremental_analysis_invalidate_only \
+  incremental_analysis_remove_file \
 
-COST_TESTS += \
-  c_performance \
+
+ifeq ($(DIFF_CAN_FORMAT),yes)
+BUILD_SYSTEMS_TESTS += export_changed_functions
+endif
 
 DIRECT_TESTS += \
   c_biabduction \
@@ -56,7 +58,6 @@ DIRECT_TESTS += \
   c_frontend \
   c_performance \
   c_pulse \
-  c_pulse-isl \
   c_purity \
   c_uninit \
   cpp_annotation-reachability \
@@ -65,34 +66,52 @@ DIRECT_TESTS += \
   cpp_conflicts \
   cpp_frontend \
   cpp_frontend-17 \
+  cpp_frontend-20 \
   cpp_impurity \
-  cpp_linters \
-  cpp_linters-for-test-only \
   cpp_liveness \
+  cpp_liveness-20 \
   cpp_performance \
   cpp_performance-11 \
   cpp_pulse \
   cpp_pulse-11 \
   cpp_pulse-17 \
-  cpp_pulse-isl \
+  cpp_pulse-20 \
   cpp_quandary \
   cpp_racerd \
   cpp_siof \
   cpp_starvation \
   cpp_uninit \
 
+ifeq ($(IS_FACEBOOK_TREE),yes)
+DIRECT_TESTS += \
+  c_fb-pulse \
+  cpp_fb-config-usage \
+
+ifeq ($(BUILD_ERLANG_ANALYZERS),yes)
+ifneq ($(ERLC),no)
+ifneq ($(ESCRIPT),no)
+DIRECT_TESTS += \
+  erlang_fb-pulse \
+
+endif
+endif
+endif
+endif
+
 ifneq ($(BUCK),no)
 BUILD_SYSTEMS_TESTS += \
   buck_block_list \
   buck-clang-db \
-  buck_clang_test_determinator \
   buck_flavors \
   buck_flavors_diff \
   buck_flavors_run \
-  buck_flavors_deterministic \
-  buck_export_changed_functions \
+  buck_flavors_deterministic
 
+ifeq ($(DIFF_CAN_FORMAT),yes)
+BUILD_SYSTEMS_TESTS += buck_clang_test_determinator buck_export_changed_functions
 endif
+endif
+
 ifneq ($(CMAKE),no)
 BUILD_SYSTEMS_TESTS += clang_compilation_db cmake inferconfig inferconfig_not_strict
 endif
@@ -101,37 +120,34 @@ BUILD_SYSTEMS_TESTS += ndk_build
 endif
 ifeq ($(HAS_OBJC),yes)
 BUILD_SYSTEMS_TESTS += \
-  clang_test_determinator \
   differential_of_costs_report_objc \
   objc_getters_setters \
   objc_missing_fld \
   objc_retain_cycles \
   objc_retain_cycles_weak \
   pulse_messages_objc \
+  pulse_taint_regex_objc \
+  pulse_taint_sanitize_objc \
+  pulse_taint_exclude_in_objc
 
-COST_TESTS += \
-  objc_autoreleasepool \
-  objc_performance \
+ifeq ($(DIFF_CAN_FORMAT),yes)
+BUILD_SYSTEMS_TESTS += clang_test_determinator
+endif
 
 DIRECT_TESTS += \
-  objc_autoreleasepool \
   objc_bufferoverrun \
   objc_biabduction \
   objc_frontend \
-  objc_linters \
-  objc_linters-def-folder \
-  objc_linters-for-test-only \
   objc_liveness \
   objc_parameter-not-null-checked \
   objc_performance \
   objc_pulse \
+  objc_pulse-data-lineage \
   objc_quandary \
   objc_self-in-block \
   objc_uninit \
   objcpp_biabduction \
   objcpp_frontend \
-  objcpp_linters \
-  objcpp_linters-for-test-only \
   objcpp_liveness \
   objcpp_pulse \
   objcpp_racerd \
@@ -145,30 +161,54 @@ BUILD_SYSTEMS_TESTS += \
 DIRECT_TESTS += \
   objc_fb-config-impact \
   objc_fb-config-impact-strict \
+  objcpp_fb-pulse \
 
 endif
 
 
-ifneq ($(XCODE_SELECT),no)
-BUILD_SYSTEMS_TESTS += xcodebuild_no_xcpretty
-endif
-ifneq ($(XCPRETTY),no)
-BUILD_SYSTEMS_TESTS += xcodebuild
-endif
+# Temporarily turn off xcodebuild tests while we sort out problems on CI
+# ifneq ($(XCODE_SELECT),no)
+# BUILD_SYSTEMS_TESTS += xcodebuild_no_xcpretty
+# endif
+# ifneq ($(XCPRETTY),no)
+# BUILD_SYSTEMS_TESTS += xcodebuild
+# endif
 endif # HAS_OBJC
 endif # BUILD_C_ANALYZERS
 
 ifeq ($(BUILD_ERLANG_ANALYZERS),yes)
-ifneq ($(REBAR3),no)
+ifneq ($(ERLC),no)
+ifneq ($(ESCRIPT),no)
 DIRECT_TESTS += \
+  erlang_flowquery \
   erlang_pulse \
   erlang_pulse-otp \
+  erlang_pulse-taint \
   erlang_topl \
   erlang_compiler \
 
+endif
+endif
+ifneq ($(REBAR3),no)
 BUILD_SYSTEMS_TESTS += rebar3
 endif
 endif # BUILD_ERLANG_ANALYZERS
+
+ifeq ($(BUILD_PLATFORM)+$(BUILD_HACK_ANALYZERS)+$(IS_FACEBOOK_TREE),Linux+yes+yes)
+ifneq ($(HACKC),no)
+DIRECT_TESTS += \
+  hack_capture \
+  hack_pulse \
+  hack_performance \
+
+endif
+endif # BUILD_PLATFORM+BUILD_HACK_ANALYZERS
+
+ifeq ($(BUILD_PLATFORM)+$(BUILD_PYTHON_ANALYZERS)+$(IS_FACEBOOK_TREE),Linux+yes+yes)
+DIRECT_TESTS += \
+  python_pulse \
+
+endif # BUILD_PLATFORM+BUILD_HACK_ANALYZERS
 
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
 BUILD_SYSTEMS_TESTS += \
@@ -180,22 +220,22 @@ BUILD_SYSTEMS_TESTS += \
   differential_skip_duplicated_types_on_filenames_with_renamings \
   gradle \
   java_source_parser \
-  java_test_determinator \
   javac \
   resource_leak_exception_lines \
   racerd_dedup \
-  merge-infer-out \
+  merge-capture \
 
-COST_TESTS += \
-  java_hoistingExpensive \
-  java_performance \
-  java_performance-exclusive \
+ifeq ($(DIFF_CAN_FORMAT),yes)
+BUILD_SYSTEMS_TESTS += java_test_determinator
+endif
 
 DIRECT_TESTS += \
   java_annotreach \
   java_biabduction \
   java_bufferoverrun \
   java_checkers \
+  java_datalog \
+  java_dependencies \
   java_hoisting \
   java_hoistingExpensive \
   java_impurity \
@@ -207,19 +247,26 @@ DIRECT_TESTS += \
   java_performance \
   java_performance-exclusive \
   java_pulse \
-  java_pulse-isl \
   java_purity \
   java_quandary \
   java_racerd \
+  java_scopeleakage \
+  java_sil \
   java_starvation \
   java_starvation-dedup \
   java_starvation-whole-program \
   java_topl \
+  sil_pulse \
+  sil_verif \
 
 ifneq ($(KOTLINC), no)
 DIRECT_TESTS += \
+  kotlin_pulse \
   kotlin_racerd \
   kotlin_resources \
+  kotlin_scopeleakage \
+
+BUILD_SYSTEMS_TESTS += pulse_messages_kotlin \
 
 ifeq ($(IS_FACEBOOK_TREE),yes)
 DIRECT_TESTS += \
@@ -228,21 +275,14 @@ DIRECT_TESTS += \
 endif
 endif
 
-# javac has trouble running in parallel on the same files
-direct_java_pulse-isl_test: direct_java_pulse_test
-direct_java_pulse-isl_replace: direct_java_pulse_replace
-
 ifeq ($(IS_FACEBOOK_TREE),yes)
 BUILD_SYSTEMS_TESTS += \
   fb_differential_of_config_impact_report_java
-
-COST_TESTS += java_fb-performance
 
 DIRECT_TESTS += \
   java_fb-config-impact \
   java_fb-config-impact-paths \
   java_fb-config-impact-strict \
-  java_fb-config-impact-strict-beta-paths \
   java_fb-immutability \
   java_fb-performance
 endif
@@ -254,7 +294,10 @@ ifneq ($(BUCK),no)
 BUILD_SYSTEMS_TESTS += buck_java_flavor
 endif
 ifneq ($(MVN),no)
-BUILD_SYSTEMS_TESTS += mvn
+BUILD_SYSTEMS_TESTS += \
+	mvn \
+	jar \
+	jar_without_sources
 endif
 endif # BUILD_JAVA_ANALYZERS
 
@@ -273,7 +316,6 @@ DIRECT_TESTS += \
   dotnet_nullparam \
   dotnet_numcomparison \
   dotnet_reference \
-  dotnet_resourceleak \
   dotnet_starg \
   dotnet_threadsafetyviolation
 
@@ -316,7 +358,8 @@ SRC_ML:=$(shell find * \( -name _build -or -name facebook-clang-plugins -or -pat
 
 .PHONY: fmt_all
 fmt_all:
-	parallel $(OCAMLFORMAT_EXE) $(OCAMLFORMAT_ARGS) -i ::: $(SRC_ML) $(DUNE_ML)
+	$(QUIET)parallel $(OCAMLFORMAT_EXE) $(OCAMLFORMAT_ARGS) -i ::: $(SRC_ML) $(DUNE_ML)
+	$(MAKE_SOURCE) fmt_dune
 
 # pre-building these avoids race conditions when doing multiple builds in parallel
 .PHONY: src_build_common
@@ -339,13 +382,16 @@ check: src_build_common
 	$(QUIET)$(call silent_on_success,Building artifacts for tooling support,\
 	$(MAKE_SOURCE) check)
 
-# deadcode analysis: only do the deadcode detection on Facebook builds and if GNU sed is available
+.PHONY: watch
+watch: src_build_common
+	$(MAKE_SOURCE) watch
+
 .PHONY: real_deadcode
 real_deadcode: src_build_common
-	$(QUIET)$(call silent_on_success,Building all OCaml code,\
-	$(MAKE_SOURCE) build_all)
 	$(QUIET)$(call silent_on_success,Testing there is no dead OCaml code,\
 	$(MAKE) -C $(SRC_DIR)/deadcode)
+
+# deadcode analysis: only do the deadcode detection on Facebook builds and if GNU sed is available
 
 .PHONY: deadcode
 deadcode:
@@ -469,8 +515,7 @@ clang_plugin: clang_setup
 	  SDKPATH=$(XCODE_ISYSROOT) \
 	)
 	$(QUIET)$(call silent_on_success,Building clang plugin OCaml interface,\
-	$(MAKE) -C $(FCP_DIR)/clang-ocaml all \
-          build/clang_ast_proj.ml build/clang_ast_proj.mli \
+	$(MAKE) -C $(FCP_DIR)/clang-ocaml build/clang_ast_proj.ml build/clang_ast_proj.mli \
 	  CC=$(CC) CXX=$(CXX) \
 	  CFLAGS="$(CFLAGS)" CXXFLAGS="$(CXXFLAGS)" \
 	  CPP="$(CPP)" LDFLAGS="$(LDFLAGS)" LIBS="$(LIBS)" \
@@ -573,18 +618,6 @@ $(DIRECT_TESTS:%=direct_%_replace): infer
 .PHONY: direct_tests
 direct_tests: $(DIRECT_TESTS:%=direct_%_test)
 
-.PHONY: cost_tests
-cost_tests: $(COST_TESTS:%=direct_%_test)
-
-.PHONY: cost_tests_clean
-cost_tests_clean: $(COST_TESTS:%=direct_%_clean)
-
-.PHONY: cost_tests_replace
-cost_tests_replace: $(COST_TESTS:%=direct_%_replace)
-
-.PHONY: cost_tests_print
-cost_tests_print: $(COST_TESTS:%=direct_%_print)
-
 .PHONY: $(BUILD_SYSTEMS_TESTS:%=build_%_test)
 $(BUILD_SYSTEMS_TESTS:%=build_%_test): infer
 	$(QUIET)$(call silent_on_success,Running test: $(subst _, ,$@),\
@@ -665,6 +698,9 @@ mod_dep: src_build_common
 .PHONY: config_tests
 config_tests: ocaml_unit_test validate-skel mod_dep
 	$(MAKE) endtoend_test checkCopyright
+ifneq ($(UTOP),no)
+	$(MAKE) build_infertop_test
+endif
 	$(MAKE) manuals
 
 ifneq ($(filter endtoend_test,$(MAKECMDGOALS)),)
@@ -681,6 +717,10 @@ endif
 .PHONY: test-replace
 test-replace: $(BUILD_SYSTEMS_TESTS:%=build_%_replace) $(DIRECT_TESTS:%=direct_%_replace) \
               clang_plugin_test_replace
+ifneq ($(UTOP),no)
+	$(MAKE) build_infertop_replace
+endif
+
 
 .PHONY: uninstall
 uninstall:
@@ -689,9 +729,6 @@ uninstall:
 	$(REMOVE) $(INFER_COMMANDS:%=$(DESTDIR)$(bindir)/%)
 	$(REMOVE) $(foreach manual,$(INFER_GROFF_MANUALS_GZIPPED),\
 	  $(DESTDIR)$(mandir)/man1/$(notdir $(manual)))
-ifeq ($(IS_FACEBOOK_TREE),yes)
-	$(MAKE) -C facebook uninstall
-endif
 
 .PHONY: test_clean
 test_clean: $(DIRECT_TESTS:%=direct_%_clean) $(BUILD_SYSTEMS_TESTS:%=build_%_clean)
@@ -713,14 +750,16 @@ ifeq ($(BUILD_C_ANALYZERS),yes)
 	    $(MKDIR_P) '$(DESTDIR)$(libdir)'/infer/\$$1" --
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/lib/clang_wrappers/' || \
 	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/lib/clang_wrappers/'
-	test -d      '$(DESTDIR)$(libdir)/infer/infer/lib/linter_rules/' || \
-	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/lib/linter_rules/'
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/etc/' || \
 	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/etc'
 endif
 ifeq ($(BUILD_JAVA_ANALYZERS),yes)
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/lib/java/' || \
 	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/lib/java/'
+endif
+ifeq ($(BUILD_HACK_ANALYZERS),yes)
+	test -d      '$(DESTDIR)$(libdir)/infer/infer/lib/hack/' || \
+	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/lib/hack/'
 endif
 ifeq ($(BUILD_ERLANG_ANALYZERS),yes)
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/lib/erlang/' || \
@@ -730,6 +769,8 @@ ifeq ($(BUILD_ERLANG_ANALYZERS),yes)
 endif
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/annotations/' || \
 	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/annotations/'
+	test -d      '$(DESTDIR)$(libdir)/infer/infer/config/' || \
+	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/config/'
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/lib/wrappers/' || \
 	  $(MKDIR_P) '$(DESTDIR)$(libdir)/infer/infer/lib/wrappers/'
 	test -d      '$(DESTDIR)$(libdir)/infer/infer/bin/' || \
@@ -737,6 +778,10 @@ endif
 # copy files
 	$(INSTALL_DATA) -C          'infer/lib/models.sql' \
 	  '$(DESTDIR)$(libdir)/infer/infer/lib/models.sql'
+ifeq ($(BUILD_HACK_ANALYZERS),yes)
+	$(INSTALL_DATA) -C          'infer/lib/hack/models.sil' \
+	  '$(DESTDIR)$(libdir)/infer/infer/lib/hack/models.sil'
+endif
 ifeq ($(BUILD_C_ANALYZERS),yes)
 	$(INSTALL_DATA) -C          'facebook-clang-plugins/libtooling/build/FacebookClangPlugin.dylib' \
 	  '$(DESTDIR)$(libdir)/infer/facebook-clang-plugins/libtooling/build/FacebookClangPlugin.dylib'
@@ -754,8 +799,6 @@ ifeq ($(BUILD_C_ANALYZERS),yes)
 	  [ $(cc) -ef '$(INFER_BIN)' ] && \
 	  $(REMOVE) '$(notdir $(cc))' && \
 	  $(LN_S) ../../bin/infer '$(notdir $(cc))';))
-	$(INSTALL_DATA) -C          'infer/lib/linter_rules/linters.al' \
-	  '$(DESTDIR)$(libdir)/infer/infer/lib/linter_rules/linters.al'
 	$(INSTALL_DATA) -C          'infer/etc/clang_ast.dict' \
 	  '$(DESTDIR)$(libdir)/infer/infer/etc/clang_ast.dict'
 endif
@@ -767,6 +810,10 @@ ifeq ($(BUILD_JAVA_ANALYZERS),yes)
 	$(INSTALL_PROGRAM) -C      '$(LIB_DIR)'/wrappers/javac \
 	  '$(DESTDIR)$(libdir)'/infer/infer/lib/wrappers/
 endif
+	find infer/config/ -type d -print0 | xargs -0 -I \{\} \
+	  $(MKDIR_P) '$(DESTDIR)$(libdir)'/infer/\{\}
+	find infer/config/ -type f -print0 | xargs -0 -I \{\} \
+	  $(INSTALL_DATA) -C \{\} '$(DESTDIR)$(libdir)'/infer/\{\}
 ifeq ($(BUILD_ERLANG_ANALYZERS),yes)
 	$(INSTALL_PROGRAM) -C      '$(LIB_DIR)'/erlang/erlang.sh \
 	  '$(DESTDIR)$(libdir)'/infer/infer/lib/erlang/
@@ -795,20 +842,6 @@ endif
 	   $(LN_S) infer "$$alias"); done
 	$(foreach man,$(INFER_GROFF_MANUALS_GZIPPED), \
 	  $(INSTALL_DATA) -C $(man) '$(DESTDIR)$(mandir)/man1/$(notdir $(man))';)
-ifeq ($(IS_FACEBOOK_TREE),yes)
-ifdef DESTDIR
-ifeq (,$(findstring :/,:$(DESTDIR)))
-#	DESTDIR is set and relative
-	$(MAKE) -C facebook install 'DESTDIR=../$(DESTDIR)'
-else
-#	DESTDIR is set and absolute
-	$(MAKE) -C facebook install
-endif
-else
-#	DESTDIR not set
-	$(MAKE) -C facebook install
-endif
-endif
 
 # install dynamic libraries
 # use this if you want to distribute infer binaries
@@ -822,9 +855,6 @@ ifneq ($(PLATFORM_ENV),)
 ifeq ($(BUILD_C_ANALYZERS),yes)
 	$(PATCHELF) --set-rpath '$(PLATFORM_ENV)'/lib '$(DESTDIR)$(libdir)'/infer/facebook-clang-plugins/libtooling/build/FacebookClangPlugin.dylib
 endif   # BUILD_C_ANALYZERS
-ifeq ($(IS_FACEBOOK_TREE),yes)
-	$(PATCHELF) --set-rpath '$(PLATFORM_ENV)'/lib '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks
-endif 	# IS_FACEBOOK_TREE
 else	# PLATFORM_ENV
 #	figure out where libgmp, libmpfr, and libsqlite3 are using ldd
 	set -x; \
@@ -838,9 +868,6 @@ else	# PLATFORM_ENV
 	  $(PATCHELF) --set-rpath '$$ORIGIN' --force-rpath "$$sofile"; \
 	done
 	$(PATCHELF) --set-rpath '$$ORIGIN/../libso' --force-rpath '$(DESTDIR)$(libdir)'/infer/infer/bin/infer
-ifeq ($(IS_FACEBOOK_TREE),yes)
-	$(PATCHELF) --set-rpath '$$ORIGIN/../libso' --force-rpath '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks
-endif	# IS_FACEBOOK_TREE
 endif 	# PLATFORM_ENV
 else 	# PATCHELF
 	echo "ERROR: ldd (Linux?) found but not patchelf, please install patchelf" >&2; exit 1
@@ -864,10 +891,6 @@ ifneq ($(INSTALL_NAME_TOOL),no)
 	done
 	$(INSTALL_NAME_TOOL) -add_rpath '@executable_path/../libso' '$(DESTDIR)$(libdir)'/infer/infer/bin/infer
 	scripts/set_libso_path.sh '$(DESTDIR)$(libdir)'/infer/infer/libso '$(DESTDIR)$(libdir)'/infer/infer/bin/infer
-ifeq ($(IS_FACEBOOK_TREE),yes)
-	$(INSTALL_NAME_TOOL) -add_rpath '@executable_path/../libso' '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks
-	scripts/set_libso_path.sh '$(DESTDIR)$(libdir)'/infer/infer/libso '$(DESTDIR)$(libdir)'/infer/infer/bin/InferCreateTraceViewLinks
-endif	# IS_FACEBOOK_TREE
 else 	# INSTALL_NAME_TOOL
 	echo "ERROR: otool (OSX?) found but not install_name_tool, please install install_name_tool" >&2; exit 1
 endif	# INSTALL_NAME_TOOL
@@ -930,20 +953,28 @@ OPAM_DEV_DEPS += tuareg
 endif
 
 .PHONY: devsetup
-devsetup: Makefile.autoconf
+devsetup:
 	$(QUIET)[ $(OPAM) != "no" ] || (echo 'No `opam` found, aborting setup.' >&2; exit 1)
 ifeq ($(OPAM_PIN_OCAMLFORMAT),yes)
 	$(QUIET)$(call silent_on_success,pinning ocamlformat,\
 	  OPAMSWITCH=$(OPAMSWITCH); \
-	  $(OPAM) pin add ocamlformat.0.19.0 'git+https://github.com/ocaml-ppx/ocamlformat#nebuchadnezzar' --yes)
+	  $(OPAM) pin add $$(cat "$(ABSOLUTE_ROOT_DIR)"/opam/ocamlformat) --yes --no-action)
+	$(QUIET)$(call silent_on_success,installing ocamlformat dependencies,\
+	  OPAMSWITCH=$(OPAMSWITCH); \
+	  $(OPAM) install --deps-only --locked --yes opam/ocamlformat.opam.locked)
+	$(QUIET)$(call silent_on_success,installing ocamlformat,\
+	  OPAMSWITCH=$(OPAMSWITCH); \
+	  $(OPAM) install ocamlformat --yes)
 endif
 	$(QUIET)$(call silent_on_success,installing $(OPAM_DEV_DEPS),\
-	  OPAMSWITCH=$(OPAMSWITCH); $(OPAM) install --yes user-setup $(OPAM_DEV_DEPS))
-	$(QUIET)echo '$(TERM_INFO)*** Running `opam user-setup`$(TERM_RESET)' >&2
-	$(QUIET)OPAMSWITCH=$(OPAMSWITCH); OPAMYES=1; $(OPAM) user-setup install
+	  OPAMSWITCH=$(OPAMSWITCH); $(OPAM) install --yes --no-depexts user-setup $(OPAM_DEV_DEPS))
 	$(QUIET)if [ "$(PLATFORM)" = "Darwin" ] && [ x"$(GNU_SED)" = x"no" ]; then \
 	  echo '$(TERM_INFO)*** Installing GNU sed$(TERM_RESET)' >&2; \
 	  brew install gnu-sed; \
+	fi
+	$(QUIET)if [ "$(PLATFORM)" = "Darwin" ] && [ x"$(DIFF_CAN_FORMAT)" = x"no" ] ; then \
+	  echo '$(TERM_INFO)*** Installing diffutils$(TERM_RESET)' >&2; \
+	  brew install diffutils; \
 	fi
 	$(QUIET)if [ "$(PLATFORM)" = "Darwin" ] && ! $$(parallel -h | grep -q GNU); then \
 	  echo '$(TERM_INFO)*** Installing GNU parallel$(TERM_RESET)' >&2; \

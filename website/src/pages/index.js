@@ -38,6 +38,7 @@ const features = [
 ];
 
 const poweredByImages = [
+  { url: "https://www.adacore.com", image: "/img/who/adacore.png" },
   { url: "https://aws.amazon.com", image: "/img/who/aws.svg" },
   { url: "https://facebook.com", image: "/img/who/facebook.png" },
   { url: "https://freefem.org", image: "/img/who/freefem.png" },
@@ -45,6 +46,7 @@ const poweredByImages = [
   { url: "https://www.microsoft.com", image: "/img/who/microsoft.png" },
   { url: "http://www.mozilla.com", image: "/img/who/mozilla.png" },
   { url: "https://www.oculus.com", image: "/img/who/oculus.png" },
+  { url: "https://www.sonatype.com", image: "/img/who/sonatype.png" },
   {
     url: "/blog/2016/03/17/collaboration-with-spotify",
     image: "/img/who/spotify.png",

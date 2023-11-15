@@ -237,7 +237,7 @@ let is_container_read tenv pn =
      treatment between std::map::operator[] and all other operator[]. *)
   | ObjC_Cpp _ | C _ ->
       (not (is_cpp_container_write pn)) && is_cpp_container_read pn
-  | Erlang _ | Linters_dummy_method | Block _ | WithBlockParameters _ ->
+  | Erlang _ | Hack _ | Linters_dummy_method | Block _ | Python _ | WithFunctionParameters _ ->
       false
 
 
@@ -432,6 +432,8 @@ let get_current_class_and_threadsafe_superclasses tenv pname =
 
 
 let is_thread_safe_method pname tenv =
+  Config.racerd_always_report_java
+  ||
   match find_override_or_superclass_annotated is_thread_safe tenv pname with
   | Some (DirectlyAnnotated | Override _) ->
       true
@@ -447,9 +449,9 @@ let is_marked_thread_safe pname tenv =
      |> Option.is_some
 
 
-let is_safe_access (access : 'a HilExp.Access.t) prefix_exp tenv =
+let is_safe_access (access : 'a MemoryAccess.t) prefix_exp tenv =
   match (access, HilExp.AccessExpression.get_typ prefix_exp tenv) with
-  | ( HilExp.Access.FieldAccess fieldname
+  | ( MemoryAccess.FieldAccess fieldname
     , Some ({Typ.desc= Tstruct typename} | {desc= Tptr ({desc= Tstruct typename}, _)}) ) -> (
     match Tenv.lookup tenv typename with
     | Some struct_typ ->
@@ -521,6 +523,7 @@ let synchronized_container_classes =
   ; "androidx.core.util.Pools$SynchronizedPool"
   ; "java.util.concurrent.BlockingDeque"
   ; "java.util.concurrent.BlockingQueue"
+  ; "java.util.concurrent.ConcurrentLinkedDeque"
   ; "java.util.concurrent.ConcurrentMap"
   ; "java.util.concurrent.ConcurrentSkipListSet"
   ; "java.util.concurrent.CopyOnWriteArrayList"
@@ -569,17 +572,17 @@ let is_synchronized_container callee_pname (access_exp : HilExp.AccessExpression
       | None ->
           false
     in
-    let open HilExp in
+    let module AccessExpression = HilExp.AccessExpression in
     match
       AccessExpression.to_accesses access_exp
       |> snd
-      |> List.rev_filter ~f:Access.is_field_or_array_access
+      |> List.rev_filter ~f:MemoryAccess.is_field_or_array_access
     with
-    | Access.FieldAccess base_field :: Access.FieldAccess container_field :: _
-      when Procname.is_java callee_pname ->
+    | FieldAccess base_field :: FieldAccess container_field :: _ when Procname.is_java callee_pname
+      ->
         let base_typename = Fieldname.get_class_name base_field in
         is_annotated_synchronized base_typename container_field tenv
-    | [Access.FieldAccess container_field] -> (
+    | [FieldAccess container_field] -> (
       match (AccessExpression.get_base access_exp |> snd).desc with
       | Typ.Tstruct base_typename | Tptr ({Typ.desc= Tstruct base_typename}, _) ->
           is_annotated_synchronized base_typename container_field tenv
@@ -598,7 +601,7 @@ let is_initializer tenv proc_name =
 
 
 let get_current_class_and_superclasses_satisfying_attr_check check tenv pname =
-  match pname with
+  match Procname.base_of pname with
   | Procname.Java java_pname ->
       let current_class = Procname.Java.get_class_type_name java_pname in
       let satisfying_classes =

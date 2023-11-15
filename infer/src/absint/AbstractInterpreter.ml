@@ -84,8 +84,12 @@ end
 module type Make = functor (TransferFunctions : TransferFunctions.SIL) ->
   S with module TransferFunctions = TransferFunctions
 
-module type TransferFunctionsWithExceptions = sig
+module type TransferFunctions = sig
   include TransferFunctions.SIL
+
+  val join_all : Domain.t list -> into:Domain.t option -> Domain.t option
+  (** Joins the abstract states from predecessors. It returns [None] when the given list is empty
+      and [into] is [None]. *)
 
   val filter_normal : Domain.t -> Domain.t
   (** Refines the abstract state to select non-exceptional concrete states. Should return bottom if
@@ -103,7 +107,7 @@ end
 
 (** internal module that extends transfer functions *)
 module type NodeTransferFunctions = sig
-  include TransferFunctionsWithExceptions
+  include TransferFunctions
 
   val exec_node_instrs :
        Domain.t State.t option
@@ -119,6 +123,11 @@ end
 module SimpleNodeTransferFunctions (T : TransferFunctions.SIL) = struct
   include T
 
+  let join_all x ~into =
+    List.fold x ~init:into ~f:(fun acc astate ->
+        Some (Option.value_map acc ~default:astate ~f:(fun acc -> Domain.join acc astate)) )
+
+
   (* Warning: we provide a very simple default implementation for the three next functions. If
      you really wish to take into account exceptions, you may need to seriously add an exceptional
      state in your abstract domain. *)
@@ -132,7 +141,7 @@ module SimpleNodeTransferFunctions (T : TransferFunctions.SIL) = struct
     Instrs.foldi ~init:pre instrs ~f:exec_instr
 end
 
-module BackwardNodeTransferFunction (T : TransferFunctionsWithExceptions) = struct
+module BackwardNodeTransferFunction (T : TransferFunctions) = struct
   include T
 
   (*
@@ -152,6 +161,44 @@ module BackwardNodeTransferFunction (T : TransferFunctionsWithExceptions) = stru
     Instrs.foldi ~init:pre instrs ~f
 end
 
+module DisjunctiveMetadata = struct
+  (** information about the analysis of a single procedure with [MakeDisjunctiveTransferFunctions] *)
+  type t =
+    { dropped_disjuncts: int
+          (** how many disjuncts were discarded due to hitting the max disjuncts limit *)
+    ; interrupted_loops: int  (** how many loops hit the max unrolling limit without converging *)
+    }
+
+  let empty = {dropped_disjuncts= 0; interrupted_loops= 0}
+
+  let pp fmt ({dropped_disjuncts; interrupted_loops} [@warning "+missing-record-field-pattern"]) =
+    F.fprintf fmt "dropped_disjuncts= %d;@ interrupted_loops= %d" dropped_disjuncts
+      interrupted_loops
+
+
+  (* The metadata for a procedure is kept in a reference to make it easier to keep an accurate track
+     of metadata since otherwise we would need to carry the metadata around the analysis while being
+     careful to avoid double-counting. With a reference this is simpler to achieve as we can simply
+     update it whenever a relevant action is taken (eg dropping a disjunct). *)
+  let proc_metadata = ref empty
+
+  let () = AnalysisGlobalState.register_ref ~init:(fun () -> empty) proc_metadata
+
+  let add_dropped_disjuncts dropped_disjuncts =
+    proc_metadata :=
+      {!proc_metadata with dropped_disjuncts= !proc_metadata.dropped_disjuncts + dropped_disjuncts}
+
+
+  let incr_interrupted_loops () =
+    proc_metadata := {!proc_metadata with interrupted_loops= !proc_metadata.interrupted_loops + 1}
+
+
+  let record_cfg_stats {dropped_disjuncts; interrupted_loops} =
+    Stats.add_pulse_disjuncts_dropped dropped_disjuncts ;
+    Stats.add_pulse_interrupted_loops interrupted_loops ;
+    ()
+end
+
 (** build a disjunctive domain and transfer functions *)
 module MakeDisjunctiveTransferFunctions
     (T : TransferFunctions.DisjReady)
@@ -161,39 +208,58 @@ struct
 
   type analysis_data = T.analysis_data
 
-  let (`UnderApproximateAfter disjunct_limit) = DConfig.join_policy
+  let disjunct_limit =
+    match DConfig.join_policy with UnderApproximateAfter max_states -> max_states
+
+
+  let has_geq_disj ~leq ~than:disj disjs =
+    List.exists disjs ~f:(fun disj' -> leq ~lhs:disj ~rhs:disj')
+
 
   module Domain = struct
     (** a list [\[x1; x2; ...; xN\]] represents a disjunction [x1 ∨ x2 ∨ ... ∨ xN] *)
     type t = T.DisjDomain.t list * T.NonDisjDomain.t
 
+    (** [append_no_duplicates_up_to leq ~limit from ~into ~into_length] is a triple where
+
+        - the first element is [List.take ((rev from') @ into) limit] where [from'] is [from] minus
+          any element that is greater than an element in [into] according to [leq]
+
+        - the second element is the length of the first element
+
+        - the third element is an over-approximation of how many elements from the
+          [(rev from') @ into] were dropped to fit within [limit]; the over-approximation comes from
+          the fact that leftover elements of [from] are not checked for inclusion in [into] so it
+          could be that some of them would have been left out regardless of the limit. *)
     let append_no_duplicates_up_to leq ~limit from ~into ~into_length =
       let rec aux acc n_acc from =
         match from with
         | hd :: tl when n_acc < limit ->
             (* check with respect to the original [into] and not [acc] as we assume lists of
                disjuncts are already deduplicated *)
-            if List.exists into ~f:(fun into_disj -> leq ~lhs:hd ~rhs:into_disj) then
+            if has_geq_disj ~leq ~than:hd into then
               (* [hd] is already implied by one of the states in [into]; skip it
                  ([(a=>b) => (a\/b <=> b)]) *)
               aux acc n_acc tl
             else aux (hd :: acc) (n_acc + 1) tl
         | _ ->
-            (* [from] is empty or [n_acc ≥ limit], either way we are done *) (acc, n_acc)
+            (* [from] is empty or [n_acc ≥ limit], either way we are done *)
+            (acc, n_acc, List.length from)
       in
       aux into into_length from
 
 
     let length_and_cap_to_limit n l =
       let length = List.length l in
-      (List.drop l (length - n), min length n)
+      let n_dropped = max 0 (length - n) in
+      (List.drop l n_dropped, min length n, n_dropped)
 
 
     (** Ignore states in [lhs] that are over-approximated in [rhs] according to [leq] and
         vice-versa. Favors keeping states in [lhs]. Returns no more than [limit] disjuncts. *)
     let join_up_to_with_leq ~limit leq ~into:lhs rhs =
-      let lhs, lhs_length = length_and_cap_to_limit limit lhs in
-      if phys_equal lhs rhs || lhs_length >= limit then (lhs, lhs_length)
+      let lhs, lhs_length, n_dropped = length_and_cap_to_limit limit lhs in
+      if phys_equal lhs rhs || lhs_length >= limit then (lhs, lhs_length, n_dropped)
       else
         (* this filters only in one direction for now, could be worth doing both ways *)
         append_no_duplicates_up_to leq ~limit (List.rev rhs) ~into:lhs ~into_length:lhs_length
@@ -203,10 +269,8 @@ struct
       join_up_to_with_leq ~limit (fun ~lhs ~rhs -> T.DisjDomain.equal_fast lhs rhs) ~into:lhs rhs
 
 
-    let join (lhs_disj, lhs_non_disj) (rhs_disj, rhs_non_disj) =
-      ( join_up_to ~limit:disjunct_limit ~into:lhs_disj rhs_disj |> fst
-      , T.NonDisjDomain.join lhs_non_disj rhs_non_disj )
-
+    (* [join_all] is used instead of [join] but the API requires this function to be present *)
+    let join _ _ = assert false
 
     (** check if elements of [disj] appear in [of_] in the same order, using pointer equality on
         abstract states to compare elements quickly *)
@@ -229,19 +293,25 @@ struct
 
 
     let widen ~prev ~next ~num_iters =
-      let (`UnderApproximateAfterNumIterations max_iter) = DConfig.widen_policy in
+      let max_iter =
+        match DConfig.widen_policy with UnderApproximateAfterNumIterations max_iter -> max_iter
+      in
       if phys_equal prev next then prev
       else if num_iters > max_iter then (
         L.d_printfln "Iteration %d is greater than max iter %d, stopping." num_iters max_iter ;
+        DisjunctiveMetadata.incr_interrupted_loops () ;
         prev )
       else
-        let post_disj, _ =
+        let post_disj, _, n_dropped =
           join_up_to_with_leq ~limit:disjunct_limit T.DisjDomain.leq ~into:(fst prev) (fst next)
         in
         let post =
           (post_disj, T.NonDisjDomain.widen ~prev:(snd prev) ~next:(snd next) ~num_iters)
         in
-        if leq ~lhs:post ~rhs:prev then prev else post
+        if leq ~lhs:post ~rhs:prev then prev
+        else (
+          DisjunctiveMetadata.add_dropped_disjuncts n_dropped ;
+          post )
 
 
     let pp f (disjuncts, non_disj) =
@@ -249,13 +319,54 @@ struct
         List.iteri (List.rev disjuncts) ~f:(fun i disjunct ->
             F.fprintf f "#%d: @[%a@]@;" i T.DisjDomain.pp disjunct )
       in
-      F.fprintf f "@[<v>%d disjuncts:@;%a@]" (List.length disjuncts) pp_disjuncts disjuncts ;
-      F.fprintf f "\n Non-disj state:@[%a@]@;" T.NonDisjDomain.pp non_disj
+      F.fprintf f "@[<v>%d disjuncts:@;%a@;@[<hv 2>Non-disj state:@ %a@]@]" (List.length disjuncts)
+        pp_disjuncts disjuncts T.NonDisjDomain.pp non_disj
   end
+
+  let join_all_disj_astates ~into astates =
+    let leq ~lhs ~rhs = T.DisjDomain.equal_fast lhs rhs in
+    let rec join_hd res res_n to_join =
+      if res_n >= disjunct_limit then (
+        Fqueue.iter to_join ~f:(fun disjuncts ->
+            DisjunctiveMetadata.add_dropped_disjuncts (List.length disjuncts) ) ;
+        res )
+      else
+        match Fqueue.dequeue to_join with
+        | None ->
+            res
+        | Some ([], to_join) ->
+            join_hd res res_n to_join
+        | Some (hd :: tl, to_join) ->
+            let res, res_n =
+              if has_geq_disj ~leq ~than:hd res then (res, res_n) else (hd :: res, res_n + 1)
+            in
+            join_hd res res_n (Fqueue.enqueue to_join tl)
+    in
+    let to_join =
+      List.map astates ~f:(fun (disjuncts, _) -> List.rev disjuncts) |> Fqueue.of_list
+    in
+    join_hd into (List.length into) to_join
+
+
+  let join_all astates ~into =
+    match (astates, into) with
+    | [], _ ->
+        into
+    | [astate], None ->
+        Some astate
+    | _ :: _, _ ->
+        let d_into, nd_into = Option.value into ~default:([], T.NonDisjDomain.bottom) in
+        let d = join_all_disj_astates astates ~into:d_into in
+        let nd =
+          List.fold astates ~init:nd_into ~f:(fun acc (_, nd) -> T.NonDisjDomain.join acc nd)
+        in
+        Some (d, nd)
+
 
   let filter_disjuncts ~f ((l, nd) : Domain.t) =
     let filtered = List.filter l ~f in
-    if List.is_empty filtered then ([], T.NonDisjDomain.bottom) else (filtered, nd)
+    if List.is_empty filtered && not (List.is_empty l) then ([], T.NonDisjDomain.bottom)
+    else (filtered, nd)
 
 
   let filter_normal x = filter_disjuncts x ~f:T.DisjDomain.is_normal
@@ -278,20 +389,26 @@ struct
         ~f:(fun i (((post, non_disj_astates) as post_astate), n_disjuncts) pre_disjunct ->
           if n_disjuncts >= limit then (
             L.d_printfln "@[<v2>Reached max disjuncts limit, skipping disjunct #%d@;@]" i ;
+            DisjunctiveMetadata.add_dropped_disjuncts 1 ;
             (post_astate, n_disjuncts) )
-          else (
-            L.d_printfln "@[<v2>Executing instruction from disjunct #%d@;" i ;
-            let disjuncts', non_disj' =
-              T.exec_instr (pre_disjunct, non_disj) analysis_data node instr
-            in
-            ( if Config.write_html then
-              let n = List.length disjuncts' in
-              L.d_printfln "@]@\n@[Got %d disjunct%s back@]" n (if Int.equal n 1 then "" else "s")
-            ) ;
-            let post_disj', n = Domain.join_up_to ~limit ~into:post disjuncts' in
-            ((post_disj', non_disj' :: non_disj_astates), n) ) )
+          else
+            L.d_with_indent "Executing instruction from disjunct #%d" i ~f:(fun () ->
+                (* check timeout once per disjunct to execute instead of once for all disjuncts *)
+                Timer.check_timeout () ;
+                let disjuncts', non_disj' =
+                  T.exec_instr (pre_disjunct, non_disj) analysis_data node instr
+                in
+                ( if Config.write_html then
+                    let n = List.length disjuncts' in
+                    L.d_printfln "@[Got %d disjunct%s back@]" n (if Int.equal n 1 then "" else "s")
+                ) ;
+                let post_disj', n, dropped = Domain.join_up_to ~limit ~into:post disjuncts' in
+                DisjunctiveMetadata.add_dropped_disjuncts dropped ;
+                ((post_disj', non_disj' :: non_disj_astates), n) ) )
     in
-    (disjuncts, List.fold ~init:T.NonDisjDomain.bottom ~f:T.NonDisjDomain.join non_disj_astates)
+    ( disjuncts
+    , if List.is_empty disjuncts then non_disj
+      else List.fold ~init:T.NonDisjDomain.bottom ~f:T.NonDisjDomain.join non_disj_astates )
 
 
   let exec_node_instrs old_state_opt ~exec_instr (pre, pre_non_disj) instrs =
@@ -305,31 +422,61 @@ struct
     let current_post_n =
       match old_state_opt with
       | None ->
-          (([], []), 0)
-      | Some {State.post= post_disjuncts, _; _} ->
-          ((post_disjuncts, []), List.length post_disjuncts)
+          (([], T.NonDisjDomain.bottom), 0)
+      | Some {State.post= post_disjuncts, post_non_disjunct; _} ->
+          ((post_disjuncts, post_non_disjunct), List.length post_disjuncts)
     in
-    let (disjuncts, non_disj_astates), _ =
-      List.foldi (List.rev pre) ~init:current_post_n
-        ~f:(fun i (((post, non_disj_astates) as post_astate), n_disjuncts) pre_disjunct ->
+    let ((disjuncts, non_disj_astates), _), need_join_non_disj =
+      List.foldi (List.rev pre) ~init:(current_post_n, false)
+        ~f:(fun
+             i
+             ((((post, non_disj_astate) as post_astate), n_disjuncts), need_join_non_disj)
+             pre_disjunct
+           ->
           let limit = disjunct_limit - n_disjuncts in
           AnalysisState.set_remaining_disjuncts limit ;
           if limit <= 0 then (
-            L.d_printfln "@[Reached disjunct limit: already got %d disjuncts@]@;" limit ;
-            (post_astate, n_disjuncts) )
+            L.d_printfln "@[Reached disjunct limit: already got %d disjuncts@]@;" n_disjuncts ;
+            DisjunctiveMetadata.add_dropped_disjuncts 1 ;
+            (((post, non_disj_astate), n_disjuncts), true) )
           else if is_new_pre pre_disjunct then (
             L.d_printfln "@[<v2>Executing node from disjunct #%d, setting limit to %d@;" i limit ;
             let disjuncts', non_disj' =
               Instrs.foldi ~init:([pre_disjunct], pre_non_disj) instrs ~f:exec_instr
             in
             L.d_printfln "@]@\n" ;
-            let disj', n = Domain.join_up_to ~limit:disjunct_limit ~into:post disjuncts' in
-            ((disj', non_disj' :: non_disj_astates), n) )
+            let disj', n, dropped = Domain.join_up_to ~limit:disjunct_limit ~into:post disjuncts' in
+            DisjunctiveMetadata.add_dropped_disjuncts dropped ;
+            (((disj', T.NonDisjDomain.join non_disj_astate non_disj'), n), need_join_non_disj) )
           else (
             L.d_printfln "@[Skipping already-visited disjunct #%d@]@;" i ;
-            (post_astate, n_disjuncts) ) )
+            (* HACK: [pre_non_disj] may have a new information, e.g. when the predecessor node
+               reached the disjunct limit, so join [pre_non_disj]. *)
+            ((post_astate, n_disjuncts), true) ) )
     in
-    (disjuncts, List.fold ~init:T.NonDisjDomain.bottom ~f:T.NonDisjDomain.join non_disj_astates)
+    let non_disjunct =
+      if
+        Config.pulse_prevent_non_disj_top
+        || List.exists disjuncts ~f:T.DisjDomain.is_executable
+        || List.is_empty disjuncts
+      then
+        if need_join_non_disj then
+          (* HACK: When we drop disjuncts due to the disjunct limit, we may lose some information on
+             the non-disjunctive abstract state, i.e. [pre_non_disj], which can result in false
+             positives.  To mitigate the issue, join [pre_non_disj] when dropping disjuncts even
+             though joining without running [exec_instr] is, strictly speaking,
+             incorrect/unsound. *)
+          T.NonDisjDomain.join non_disj_astates pre_non_disj
+        else non_disj_astates
+      else
+        (* When there is no executable disjunct, we did not actually execute the instructions.
+           Instead, we passed the non-executable disjuncts to the next node unchanged.  While this
+           is fine for disjunctive abstract states, it is not for non-disjunctive abstract state,
+           e.g. the unnecessary copy checker since it may miss some modifications of copied values.
+           To mitigate the issue, return top when all disjuncts are non-executable. *)
+        T.NonDisjDomain.top
+    in
+    (disjuncts, non_disjunct)
 
 
   let pp_session_name node f = T.pp_session_name node f
@@ -353,6 +500,8 @@ module AbstractInterpreterCommon (TransferFunctions : NodeTransferFunctions) = s
   (** extract the precondition of node [n] from [inv_map] *)
   let extract_pre node_id inv_map = extract_state node_id inv_map |> Option.map ~f:State.pre
 
+  let pp_domain_html = Pp.html_collapsible_block ~name:"Show/hide the state" Domain.pp
+
   let debug_absint_operation op =
     let pp_op fmt op =
       match op with
@@ -363,21 +512,38 @@ module AbstractInterpreterCommon (TransferFunctions : NodeTransferFunctions) = s
     in
     let left, right, result = match op with `Join lrr | `Widen (_, lrr) -> lrr in
     let pp_right f =
-      if phys_equal right left then F.pp_print_string f "= LEFT" else Domain.pp f right
+      if phys_equal right left then F.pp_print_string f "= LEFT" else pp_domain_html f right
     in
     let pp_result f =
       if phys_equal result left then F.pp_print_string f "= LEFT"
       else if phys_equal result right then F.pp_print_string f "= RIGHT"
-      else Domain.pp f result
+      else pp_domain_html f result
     in
-    L.d_printfln_escaped "%a@\n@\nLEFT:   %a@\nRIGHT:  %t@\nRESULT: %t@." pp_op op Domain.pp left
+    L.d_printfln "%a@\n@\nLEFT:   %a@\nRIGHT:  %t@\nRESULT: %t@." pp_op op pp_domain_html left
       pp_right pp_result
+
+
+  let debug_absint_join_operation (`Join (inputs, into, result)) =
+    match (inputs, into) with
+    | [(_, left); (_, right)], None ->
+        debug_absint_operation (`Join (left, right, result))
+    | _, _ ->
+        let pp_into f =
+          Option.iter into ~f:(fun into -> F.fprintf f "@[<2>INTO:@ %a@]@\n@\n" pp_domain_html into)
+        in
+        (* We set the max number of [inputs] as 99, which is the number of predecessor nodes, but we
+           do not expect it to be hit in usual CFGs. *)
+        L.d_printfln "JOIN@\n@\n@[<v>INPUTS:@,%a@]@\n@\n%t@[<2>RESULT:@ %a@]@\n"
+          (IList.pp_print_list ~max:99 (fun f (node, astate) ->
+               F.fprintf f "@[<2>FROM Node %a:@ @[%a@]@]" Procdesc.Node.pp
+                 (Node.underlying_node node) pp_domain_html astate ) )
+          inputs pp_into pp_domain_html result
 
 
   (** reference to log errors only at the innermost recursive call *)
   let logged_error = ref false
 
-  let dump_html ~pp_instr pre instr post_result =
+  let dump_html f pre post_result =
     let pp_post_error f (exn, _, instr) =
       F.fprintf f "Analysis stopped in `%a` by error: %a."
         (Sil.pp_instr ~print_types:false Pp.text)
@@ -387,46 +553,58 @@ module AbstractInterpreterCommon (TransferFunctions : NodeTransferFunctions) = s
       match post with
       | Ok astate_post ->
           if phys_equal astate_post pre then F.pp_print_string f "STATE UNCHANGED"
-          else F.fprintf f "STATE:@\n@[%a@]" Domain.pp astate_post
+          else F.fprintf f "STATE:@\n@[%a@]" pp_domain_html astate_post
       | Error err ->
           pp_post_error f err
     in
-    let pp_all f =
-      (* we pass [pre] to [pp_instr] because HIL needs it to interpret temporary variables *)
-      match (pp_instr pre instr, post_result) with
-      | None, Ok _ ->
-          ()
-      | None, Error err ->
-          pp_post_error f err
-      | Some pp_instr, _ ->
-          Format.fprintf f "@[<h>INSTR=  %t@]@\n@\n%a@\n" pp_instr pp_post post_result
-    in
-    L.d_printfln_escaped "%t" pp_all
+    F.fprintf f "%a" pp_post post_result
+
+
+  let call_once_in_ten =
+    let n = ref 0 in
+    fun ~f () ->
+      if !n >= 10 then (
+        f () ;
+        n := 0 )
+      else incr n
 
 
   let exec_node_instrs old_state_opt ~pp_instr proc_data node pre =
     let instrs = CFG.instrs node in
-    if Config.write_html then L.d_printfln_escaped "PRE STATE:@\n@[%a@]@\n" Domain.pp pre ;
+    if Config.write_html then L.d_printfln "PRE STATE:@\n@[%a@]@\n" pp_domain_html pre ;
     let exec_instr idx pre instr =
+      call_once_in_ten ~f:!ProcessPoolState.update_heap_words () ;
       AnalysisState.set_instr instr ;
+      let pp_result f result = dump_html f pre result in
       let result =
-        try
-          let post = TransferFunctions.exec_instr pre proc_data node idx instr in
-          (* don't forget to reset this so we output messages for future errors too *)
-          logged_error := false ;
-          Ok post
-        with exn ->
-          (* delay reraising to get a chance to write the debug HTML *)
-          let backtrace = Caml.Printexc.get_raw_backtrace () in
-          Error (exn, backtrace, instr)
+        let pp_instr =
+          match pp_instr pre instr with
+          | Some ppf ->
+              ppf
+          | None ->
+              fun fmt -> F.fprintf fmt "<unknown>"
+        in
+        L.d_with_indent ~name_color:Blue ~collapsible:true ~pp_result ~escape_result:false
+          "exec_instr %t" pp_instr ~f:(fun () ->
+            try
+              let post = TransferFunctions.exec_instr pre proc_data node idx instr in
+              Timer.check_timeout () ;
+              (* don't forget to reset this so we output messages for future errors too *)
+              logged_error := false ;
+              Ok post
+            with exn ->
+              (* delay reraising to get a chance to write the debug HTML *)
+              let backtrace = Caml.Printexc.get_raw_backtrace () in
+              Error (exn, backtrace, instr) )
       in
-      if Config.write_html then dump_html ~pp_instr pre instr result ;
       match result with
       | Ok post ->
           post
       | Error (exn, backtrace, instr) ->
           ( match exn with
-          | RestartSchedulerException.ProcnameAlreadyLocked _ ->
+          | RestartSchedulerException.ProcnameAlreadyLocked _
+          | MissingDependencyException.MissingDependencyException
+          | Timer.Timeout _ ->
               (* this isn't an error; don't log it *)
               ()
           | _ ->
@@ -506,24 +684,24 @@ module AbstractInterpreterCommon (TransferFunctions : NodeTransferFunctions) = s
 
   let compute_pre cfg node inv_map =
     let extract_post_ pred = extract_post (Node.id pred) inv_map in
-    let join_opt =
-      let f a1 a2 =
-        let res = Domain.join a1 a2 in
-        if Config.write_html then debug_absint_operation (`Join (a1, a2, res)) ;
-        res
+    let filter_and_join ~fold ~filter into =
+      let astates =
+        fold cfg node ~init:[] ~f:(fun acc pred ->
+            Option.value_map (extract_post_ pred) ~default:acc ~f:(fun astate ->
+                (pred, filter astate) :: acc ) )
       in
-      Option.merge ~f
+      let res = TransferFunctions.join_all (List.map astates ~f:snd) ~into in
+      if
+        Config.write_html
+        &&
+        let astates_len = List.length astates in
+        astates_len >= 2 || (Int.equal astates_len 1 && Option.is_some into)
+      then Option.iter res ~f:(fun res -> debug_absint_join_operation (`Join (astates, into, res))) ;
+      res
     in
-    let filter_and_join ~f joined_post_opt pred =
-      let pred_post = Option.map ~f (extract_post_ pred) in
-      join_opt pred_post joined_post_opt
-    in
-    let fold_normal =
-      CFG.fold_normal_preds cfg node ~init:None
-        ~f:(filter_and_join ~f:TransferFunctions.filter_normal)
-    in
-    CFG.fold_exceptional_preds cfg node ~init:fold_normal
-      ~f:(filter_and_join ~f:TransferFunctions.transform_on_exceptional_edge)
+    filter_and_join ~fold:CFG.fold_normal_preds ~filter:TransferFunctions.filter_normal None
+    |> filter_and_join ~fold:CFG.fold_exceptional_preds
+         ~filter:TransferFunctions.transform_on_exceptional_edge
 
 
   (* shadowed for HTML debug *)
@@ -720,15 +898,21 @@ module MakeWTONode (TransferFunctions : NodeTransferFunctions) = struct
 end
 
 module MakeWTO (T : TransferFunctions.SIL) = MakeWTONode (SimpleNodeTransferFunctions (T))
+
 module MakeDisjunctive
     (T : TransferFunctions.DisjReady)
     (DConfig : TransferFunctions.DisjunctiveConfig) =
-  MakeWTONode (MakeDisjunctiveTransferFunctions (T) (DConfig))
+struct
+  module DisjunctiveTransferFunctions = MakeDisjunctiveTransferFunctions (T) (DConfig)
+  include MakeWTONode (DisjunctiveTransferFunctions)
 
-module type MakeExceptional = functor (T : TransferFunctionsWithExceptions) ->
-  S with module TransferFunctions = T
+  let get_cfg_metadata () =
+    let metadata = !DisjunctiveMetadata.proc_metadata in
+    DisjunctiveMetadata.record_cfg_stats metadata ;
+    metadata
+end
 
-module MakeBackwardRPO (T : TransferFunctionsWithExceptions) =
-  MakeRPONode (BackwardNodeTransferFunction (T))
-module MakeBackwardWTO (T : TransferFunctionsWithExceptions) =
-  MakeWTONode (BackwardNodeTransferFunction (T))
+module type MakeExceptional = functor (T : TransferFunctions) -> S with module TransferFunctions = T
+
+module MakeBackwardRPO (T : TransferFunctions) = MakeRPONode (BackwardNodeTransferFunction (T))
+module MakeBackwardWTO (T : TransferFunctions) = MakeWTONode (BackwardNodeTransferFunction (T))

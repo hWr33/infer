@@ -10,7 +10,7 @@ open! IStd
 open Javalib_pack
 
 (** map entry for source files with potential basename collision within the same compiler call *)
-type file_entry = Singleton of SourceFile.t | Duplicate of (string * SourceFile.t) list
+type file_entry = Singleton of SourceFile.t | Duplicate of (string list * SourceFile.t) list
 
 type t =
   { classpath_channel: Javalib.class_path
@@ -20,7 +20,7 @@ type t =
 type source =
   | FromVerboseOut of {verbose_out_file: string}
       (** load the list of source files and the list of classes from the javac verbose file *)
-  | FromArguments of {path: string}
+  | FromArguments of {path: string; sources: string list}
       (** load the list of source files and the list of classes from [Config.generated_classes] *)
 
 val with_classpath : f:(t -> unit) -> source -> unit

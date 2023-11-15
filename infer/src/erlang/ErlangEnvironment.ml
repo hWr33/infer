@@ -38,7 +38,10 @@ type record_info = {field_names: string list; field_info: record_field_info Stri
 
 type ('procdesc, 'result) t =
   { cfg: (Cfg.t[@sexp.opaque])
+  ; module_info: (Annot.t String.Map.t[@sexp.opaque])
+        (** used to store data for Module:module_info *)
   ; current_module: module_name  (** used to qualify function names *)
+  ; is_otp: bool  (** does this module come from the OTP library *)
   ; functions: UnqualifiedFunction.Set.t  (** used to resolve function names *)
   ; specs: Ast.spec UnqualifiedFunction.Map.t  (** map functions to their specs *)
   ; types: Ast.type_ String.Map.t  (** user defined types *)
@@ -50,10 +53,14 @@ type ('procdesc, 'result) t =
   ; result: ('result[@sexp.opaque]) }
 [@@deriving sexp_of]
 
-let initialize_environment module_ =
+let unknown_module_name = "__INFER_UNKNOWN_MODULE"
+
+let initialize_environment module_ otp_modules =
   let init =
     { cfg= Cfg.create ()
-    ; current_module= Printf.sprintf "%s:unknown_module" __FILE__
+    ; module_info= String.Map.empty
+    ; current_module= unknown_module_name
+    ; is_otp= false
     ; functions= UnqualifiedFunction.Set.empty
     ; specs= UnqualifiedFunction.Map.empty
     ; types= String.Map.empty
@@ -102,11 +109,13 @@ let initialize_environment module_ =
         | `Duplicate ->
             L.die InternalError "repeated record: %s" name )
     | Module current_module ->
-        {env with current_module}
-    | File {path} ->
-        let file = SourceFile.create path in
-        let location = Location.none file in
-        {env with location}
+        if String.(unknown_module_name <> env.current_module) then
+          L.die InternalError "trying to set current module twice: old: %s, new: %s"
+            env.current_module current_module ;
+        let is_otp = String.Set.mem otp_modules current_module in
+        {env with current_module; is_otp}
+    | File _ ->
+        env (* Handled during translation. *)
     | Function {function_; _} ->
         let key = UnqualifiedFunction.of_ast function_ in
         {env with functions= Set.add env.functions key}
@@ -123,6 +132,18 @@ let initialize_environment module_ =
           {env with types}
       | `Duplicate ->
           L.die InternalError "repeated type '%s'" name )
+    | Attribute (StringAttribute {tag; value}) ->
+        let module_info =
+          let parameter = {Annot.name= Some tag; value= Str value} in
+          let class_name = ErlangTypeName.module_info_attributes_class_name in
+          Map.update env.module_info class_name ~f:(function
+            | None ->
+                {Annot.class_name; parameters= [parameter]}
+            | Some annot ->
+                let {Annot.parameters} = annot in
+                {annot with Annot.parameters= parameter :: parameters} )
+        in
+        {env with module_info}
   in
   List.fold ~init ~f module_
 
@@ -164,9 +185,4 @@ let procname_for_user_type module_name name =
 let load_field_from_expr (env : (_, _) t) into_id expr field_name typ : Sil.instr =
   let any_typ = ptr_typ_of_name Any in
   let field = Fieldname.make (ErlangType typ) field_name in
-  Load
-    { id= into_id
-    ; e= Lfield (expr, field, typ_of_name typ)
-    ; root_typ= any_typ
-    ; typ= any_typ
-    ; loc= env.location }
+  Load {id= into_id; e= Lfield (expr, field, typ_of_name typ); typ= any_typ; loc= env.location}

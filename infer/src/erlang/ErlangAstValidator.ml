@@ -8,6 +8,7 @@
 open! IStd
 module Ast = ErlangAst
 module Env = ErlangEnvironment
+module L = Logging
 
 (** Enforce additional invariants and constraints on the AST based on
     https://erlang.org/doc/apps/erts/absform.html *)
@@ -23,7 +24,7 @@ let pp_location (loc : Ast.location) =
 let validate_record_name (env : (_, _) Env.t) name =
   match String.Map.find env.records name with
   | None ->
-      Logging.debug Capture Verbose "Record definition not found for '%s'@." name ;
+      L.debug Capture Verbose "Record definition not found for '%s'@." name ;
       false
   | Some _ ->
       true
@@ -32,13 +33,12 @@ let validate_record_name (env : (_, _) Env.t) name =
 let validate_record_field (env : (_, _) Env.t) name field =
   match String.Map.find env.records name with
   | None ->
-      Logging.debug Capture Verbose "Record definition not found for '%s'@." name ;
+      L.debug Capture Verbose "Record definition not found for '%s'@." name ;
       false
   | Some record_info -> (
     match String.Map.find record_info.field_info field with
     | None ->
-        Logging.debug Capture Verbose "Record field '%s' not found in definition of '%s'@." field
-          name ;
+        L.debug Capture Verbose "Record field '%s' not found in definition of '%s'@." field name ;
         false
     | Some _ ->
         true )
@@ -63,8 +63,9 @@ let rec validate_pattern env (p : Ast.expression) =
       let validate_assoc (a : Ast.association) =
         match a.kind with
         | Exact ->
-            validate_pattern env a.key && validate_pattern env a.value
+            validate_guard_test env a.key && validate_pattern env a.value
         | _ ->
+            L.debug Capture Verbose "Invalid map association kind (not :=) in pattern@." ;
             false
       in
       is_none map && List.for_all ~f:validate_assoc updates
@@ -89,37 +90,43 @@ let rec validate_pattern env (p : Ast.expression) =
       true
   | _ ->
       (* Everything else is invalid in a pattern *)
-      Logging.debug Capture Verbose "Invalid pattern at %s@." (pp_location p.location) ;
+      L.debug Capture Verbose "Invalid pattern at %s@." (pp_location p.location) ;
       false
 
 
-let validate_patterns env = List.for_all ~f:(validate_pattern env)
+and validate_patterns env = List.for_all ~f:(validate_pattern env)
 
 (** {2 Guards} *)
-
 (** Guards are expressions in general, but with restrictions and constraints. *)
 
-let is_atom (e : Ast.expression) =
+and validate_guard_call_func (e : Ast.expression) =
   match e.simple_expression with
   | Literal lit -> (
     match lit with Atom _ -> true | _ -> false )
   | _ ->
+      L.debug Capture Verbose "Function in guard is not an atom@." ;
       false
 
 
-let validate_guard_call_module (eo : Ast.expression option) =
+and validate_guard_call_module (eo : Ast.expression option) =
   match eo with
   | None ->
       true
   | Some e -> (
     match e.simple_expression with
     | Literal lit -> (
-      match lit with Atom "erlang" -> true | _ -> false )
+      match lit with
+      | Atom "erlang" ->
+          true
+      | _ ->
+          L.debug Capture Verbose "Non-erlang module in call in a guard@." ;
+          false )
     | _ ->
+        L.debug Capture Verbose "Non-atom module in call in a guard@." ;
         false )
 
 
-let rec validate_guard_test env (gt : Ast.expression) =
+and validate_guard_test env (gt : Ast.expression) =
   match gt.simple_expression with
   | BinaryOperator (e1, _, e2) ->
       validate_guard_test env e1 && validate_guard_test env e2
@@ -128,7 +135,7 @@ let rec validate_guard_test env (gt : Ast.expression) =
       List.for_all ~f:(validate_elem env) elems
   | Call {module_; function_; args} ->
       validate_guard_call_module module_
-      && is_atom function_
+      && validate_guard_call_func function_
       && List.for_all ~f:(validate_guard_test env) args
   | Cons {head; tail} ->
       validate_guard_test env head && validate_guard_test env tail
@@ -141,6 +148,7 @@ let rec validate_guard_test env (gt : Ast.expression) =
         | Arrow ->
             validate_guard_test env a.key && validate_guard_test env a.value
         | _ ->
+            L.debug Capture Verbose "Invalid map association kind (not =>) in map create@." ;
             false
       in
       (* Map update accepts '=>' and ':=' *)
@@ -173,7 +181,7 @@ let rec validate_guard_test env (gt : Ast.expression) =
       true
   | _ ->
       (* Everything else is invalid in a guard test *)
-      Logging.debug Capture Verbose "Invalid guard test at %s@." (pp_location gt.location) ;
+      L.debug Capture Verbose "Invalid guard test at %s@." (pp_location gt.location) ;
       false
 
 
@@ -220,6 +228,7 @@ let rec validate_expr env (expr : Ast.expression) =
         | Arrow ->
             validate_expr env a.key && validate_expr env a.value
         | _ ->
+            L.debug Capture Verbose "Invalid map association kind (not =>) in map create@." ;
             false
       in
       (* Map update accepts '=>' and ':=' *)
@@ -231,6 +240,14 @@ let rec validate_expr env (expr : Ast.expression) =
           List.for_all ~f:validate_create updates
       | Some expr ->
           validate_expr env expr && List.for_all ~f:validate_update updates )
+  | MapComprehension {expression= e; qualifiers= qs} -> (
+    match e.kind with
+    | Arrow ->
+        validate_expr env e.key && validate_expr env e.value
+        && List.for_all ~f:(validate_qualifier env) qs
+    | _ ->
+        L.debug Capture Verbose "Invalid map association kind (not =>) in map comprehension@." ;
+        false )
   | Match {pattern; body} ->
       validate_pattern env pattern && validate_expr env body
   | Nil ->
@@ -279,6 +296,13 @@ and validate_qualifier env (q : Ast.qualifier) =
       validate_expr env e
   | Generator {pattern= p; expression= e} ->
       validate_pattern env p && validate_expr env e
+  | MapGenerator {pattern= p; expression= e} -> (
+    match p.kind with
+    | Exact ->
+        validate_pattern env p.key && validate_pattern env p.value && validate_expr env e
+    | _ ->
+        L.debug Capture Verbose "Invalid map association kind (not :=) in map generator@." ;
+        false )
 
 
 and validate_body env = List.for_all ~f:(validate_expr env)
@@ -310,15 +334,63 @@ and validate_function_clause env ({patterns= ps; guards= gs; body= b; _} : Ast.c
 
 let validate_function env _ = List.for_all ~f:(validate_function_clause env)
 
+let rec validate_type (type_ : Ast.type_) =
+  match type_ with
+  | List (Proper t) ->
+      validate_type t
+  | Tuple (FixedSize ts) ->
+      List.for_all ~f:validate_type ts
+  | Union [] ->
+      (* A union is a list of types. This list should not be empty. *)
+      L.debug Capture Verbose "Invalid type: empty union@." ;
+      false
+  | Union ts ->
+      List.for_all ~f:validate_type ts
+  | _ ->
+      (* TODO: validate other kinds of types. *)
+      true
+
+
+let validate_spec_disjunct ({arguments; return; constraints} : Ast.spec_disjunct) =
+  List.for_all ~f:validate_type arguments
+  && validate_type return
+  && String.Map.for_all ~f:validate_type constraints
+
+
+let validate_spec_arities (func_arity : int) (spec : Ast.spec) =
+  (* We check that all the overloads in the function spec have the same arity,
+     and that this agrees with the arity of the function (according to the spec). *)
+  List.for_all
+    ~f:(fun ({arguments: _} : Ast.spec_disjunct) -> Int.equal (List.length arguments) func_arity)
+    spec
+  ||
+  ( L.debug Capture Verbose "Invalid spec: inconsistent arities in function spec@." ;
+    false )
+
+
 let validate_form env (form : Ast.form) =
   match form.simple_form with
   | Function {function_; clauses} ->
       validate_function env function_ clauses
-  (* TODO: validate other forms, e.g., type constraints *)
+  | Spec {spec= []; _} ->
+      (* A function spec is a list of overloads. This list should not be empty *)
+      L.debug Capture Verbose "Invalid spec: empty list of overloads@." ;
+      false
+  | Spec {function_= {arity; _}; spec} ->
+      (validate_spec_arities arity spec && List.for_all ~f:validate_spec_disjunct spec)
+      ||
+      ( L.debug Capture Verbose "Invalid spec@." ;
+        false )
+  | Type {name; type_} ->
+      validate_type type_
+      ||
+      ( L.debug Capture Verbose "Invalid type: %s@." name ;
+        false )
+  (* TODO: validate other forms. *)
   | _ ->
       true
 
 
-let validate env module_ =
-  Logging.debug Capture Verbose "Validating AST@." ;
+let validate (env : (_, _) Env.t) module_ =
+  L.debug Capture Verbose "Validating AST of module %s@." env.current_module ;
   List.for_all ~f:(validate_form env) module_

@@ -18,8 +18,7 @@ type parse_mode =
   | NoParse  (** all arguments are anonymous arguments, no parsing is attempted *)
 [@@deriving compare]
 
-val is_originator : bool
-(** Do not use this value, use [Config.is_originator] instead *)
+val is_originator : bool [@@deprecated "Do not use this value, use [Config.is_originator] instead"]
 
 val init_work_dir : string
 
@@ -74,6 +73,12 @@ val mk_int : default:int -> ?default_to_string:(int -> string) -> ?f:(int -> int
 
 val mk_int_opt :
   ?default:int -> ?default_to_string:(int option -> string) -> ?f:(int -> int) -> int option ref t
+
+val mk_int64_opt :
+     ?default:Int64.t
+  -> ?default_to_string:(Int64.t option -> string)
+  -> ?f:(Int64.t -> Int64.t)
+  -> Int64.t option ref t
 
 val mk_float_opt :
   ?default:float -> ?default_to_string:(float option -> string) -> float option ref t
@@ -138,7 +143,7 @@ val mk_symbol_seq :
 val mk_json : Yojson.Basic.t ref t
 
 val mk_anon : unit -> string RevList.t ref
-  [@@warning "-32"]
+  [@@warning "-unused-value-declaration"]
 (** [mk_anon ()] defines a [string list ref] of the anonymous command line arguments, in the reverse
     order they appeared on the command line. *)
 
@@ -178,8 +183,9 @@ val mk_command_doc :
   -> string
   -> command_doc
 (** [mk_command_doc ~title ~section ~version ~short_description ~synopsis ~description ~see_also
-    command_exe] records information about a command that is used to create its man page. A lot of
-    the concepts are taken from man-pages(7).
+    command_exe]
+    records information about a command that is used to create its man page. A lot of the concepts
+    are taken from man-pages(7).
 
     - [command_exe] is the name of the command, preferably an executable that selects the command
     - [title] will be the title of the manual
@@ -207,6 +213,9 @@ val mk_subcommand :
     automatically generated for [command] based on the information in [command_doc], if available
     (otherwise the command is considered internal). [on_unknown_arg] is the action taken on unknown
     anonymous arguments; it is `Reject by default. *)
+
+val infer_cwd_env_var : string
+(** environment variable pointing to the originator's process results directory *)
 
 val args_env_var : string
 (** environment variable use to pass arguments from parent to child processes *)
@@ -263,3 +272,11 @@ val keep_args_file : bool ref
 
 val inferconfig_path_arg : string
 (** name of argument for choosing path to inferconfig *)
+
+val add_to_env_args : string list -> unit
+(** add the provided extra arguments to arguments held in [args_env_var] in the current process
+    environment *)
+
+val in_env_with_extra_args : string list -> f:(unit -> 'a) -> 'a
+(** like [add_to_env_args] but only add the extra arguments during the execution of [f] and restore
+    the environment after [f] has returned *)

@@ -5,13 +5,17 @@ description: "The eradicate `@Nullable` checker for Java annotations."
 
 The eradicate `@Nullable` checker for Java annotations.
 
+**\*\*\*DEPRECATED\*\*\*** Unmaintained and will be removed in the future. Consider using [NullAway](https://github.com/uber/NullAway) as an alternative to Eradicate.
+
 Activate with `--eradicate`.
 
 Supported languages:
 - C/C++/ObjC: No
 - C#/.Net: No
 - Erlang: No
+- Hack: No
 - Java: Yes
+- Python: No
 
 > "I call it my billion-dollar mistake. It was the invention of the null
 > reference in 1965."

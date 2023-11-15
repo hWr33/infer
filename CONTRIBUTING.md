@@ -145,11 +145,9 @@ module L = Logging
 module MF = MarkupFormatter
 ```
 
-- Use `[@@deriving compare]` to write comparison functions whenever possible. Watch out for
-  [this issue](https://github.com/ocaml-ppx/ppx_deriving/issues/116) when writing
+- Use `[@@deriving compare, equal]` to write comparison/equality functions whenever possible.
+  Watch out for [this issue](https://github.com/ocaml-ppx/ppx_deriving/issues/116) when writing
   `type nonrec t = t [@@deriving compare]`.
-
-- Use `let equal_foo = [%compare.equal : foo]` to write equality functions whenever possible.
 
 - Use named arguments whenever the purpose of the argument is not immediately obvious. In
   particular, use named arguments for boolean and integer parameters unless the name of the function
@@ -160,7 +158,7 @@ module MF = MarkupFormatter
   `f`. For instance: `List.map : 'a list -> f:('a -> 'b) -> 'b list`.
 
 - In modules defining a type `t`, functions that take an argument of that type should generally have
-  that argument come first, except for for optional arguments: `val f : ?optional:bool -> t -> ...`.
+  that argument come first, except for optional arguments: `val f : ?optional:bool -> t -> ...`.
 
 - Use the `_hum` suffix to flag functions that output human-readable strings.
 

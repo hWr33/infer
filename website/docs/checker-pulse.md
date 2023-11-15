@@ -11,7 +11,9 @@ Supported languages:
 - C/C++/ObjC: Yes
 - C#/.Net: No
 - Erlang: Experimental
+- Hack: No
 - Java: Yes
+- Python: No
 
 ## What is Infer:Pulse?
 
@@ -133,14 +135,20 @@ class Registry {
 ## List of Issue Types
 
 The following issue types are reported by this checker:
+- [BAD_ARG](/docs/next/all-issue-types#bad_arg)
+- [BAD_ARG_LATENT](/docs/next/all-issue-types#bad_arg_latent)
 - [BAD_KEY](/docs/next/all-issue-types#bad_key)
 - [BAD_KEY_LATENT](/docs/next/all-issue-types#bad_key_latent)
 - [BAD_MAP](/docs/next/all-issue-types#bad_map)
 - [BAD_MAP_LATENT](/docs/next/all-issue-types#bad_map_latent)
 - [BAD_RECORD](/docs/next/all-issue-types#bad_record)
 - [BAD_RECORD_LATENT](/docs/next/all-issue-types#bad_record_latent)
+- [BAD_RETURN](/docs/next/all-issue-types#bad_return)
+- [BAD_RETURN_LATENT](/docs/next/all-issue-types#bad_return_latent)
+- [CONFIG_USAGE](/docs/next/all-issue-types#config_usage)
 - [CONSTANT_ADDRESS_DEREFERENCE](/docs/next/all-issue-types#constant_address_dereference)
 - [CONSTANT_ADDRESS_DEREFERENCE_LATENT](/docs/next/all-issue-types#constant_address_dereference_latent)
+- [DATA_FLOW_TO_SINK](/docs/next/all-issue-types#data_flow_to_sink)
 - [MEMORY_LEAK_C](/docs/next/all-issue-types#memory_leak_c)
 - [MEMORY_LEAK_CPP](/docs/next/all-issue-types#memory_leak_cpp)
 - [NIL_BLOCK_CALL](/docs/next/all-issue-types#nil_block_call)
@@ -161,13 +169,27 @@ The following issue types are reported by this checker:
 - [NO_TRUE_BRANCH_IN_IF_LATENT](/docs/next/all-issue-types#no_true_branch_in_if_latent)
 - [NULLPTR_DEREFERENCE](/docs/next/all-issue-types#nullptr_dereference)
 - [NULLPTR_DEREFERENCE_LATENT](/docs/next/all-issue-types#nullptr_dereference_latent)
+- [NULL_ARGUMENT](/docs/next/all-issue-types#null_argument)
+- [NULL_ARGUMENT_LATENT](/docs/next/all-issue-types#null_argument_latent)
 - [OPTIONAL_EMPTY_ACCESS](/docs/next/all-issue-types#optional_empty_access)
 - [OPTIONAL_EMPTY_ACCESS_LATENT](/docs/next/all-issue-types#optional_empty_access_latent)
+- [PULSE_CONST_REFABLE](/docs/next/all-issue-types#pulse_const_refable)
+- [PULSE_READONLY_SHARED_PTR_PARAM](/docs/next/all-issue-types#pulse_readonly_shared_ptr_param)
 - [PULSE_RESOURCE_LEAK](/docs/next/all-issue-types#pulse_resource_leak)
 - [PULSE_UNINITIALIZED_VALUE](/docs/next/all-issue-types#pulse_uninitialized_value)
 - [PULSE_UNINITIALIZED_VALUE_LATENT](/docs/next/all-issue-types#pulse_uninitialized_value_latent)
 - [PULSE_UNNECESSARY_COPY](/docs/next/all-issue-types#pulse_unnecessary_copy)
+- [PULSE_UNNECESSARY_COPY_ASSIGNMENT](/docs/next/all-issue-types#pulse_unnecessary_copy_assignment)
+- [PULSE_UNNECESSARY_COPY_ASSIGNMENT_CONST](/docs/next/all-issue-types#pulse_unnecessary_copy_assignment_const)
+- [PULSE_UNNECESSARY_COPY_ASSIGNMENT_MOVABLE](/docs/next/all-issue-types#pulse_unnecessary_copy_assignment_movable)
+- [PULSE_UNNECESSARY_COPY_INTERMEDIATE](/docs/next/all-issue-types#pulse_unnecessary_copy_intermediate)
+- [PULSE_UNNECESSARY_COPY_INTERMEDIATE_CONST](/docs/next/all-issue-types#pulse_unnecessary_copy_intermediate_const)
+- [PULSE_UNNECESSARY_COPY_MOVABLE](/docs/next/all-issue-types#pulse_unnecessary_copy_movable)
+- [PULSE_UNNECESSARY_COPY_OPTIONAL](/docs/next/all-issue-types#pulse_unnecessary_copy_optional)
+- [PULSE_UNNECESSARY_COPY_OPTIONAL_CONST](/docs/next/all-issue-types#pulse_unnecessary_copy_optional_const)
+- [PULSE_UNNECESSARY_COPY_RETURN](/docs/next/all-issue-types#pulse_unnecessary_copy_return)
 - [RETAIN_CYCLE](/docs/next/all-issue-types#retain_cycle)
+- [SENSITIVE_DATA_FLOW](/docs/next/all-issue-types#sensitive_data_flow)
 - [STACK_VARIABLE_ADDRESS_ESCAPE](/docs/next/all-issue-types#stack_variable_address_escape)
 - [TAINT_ERROR](/docs/next/all-issue-types#taint_error)
 - [USE_AFTER_DELETE](/docs/next/all-issue-types#use_after_delete)

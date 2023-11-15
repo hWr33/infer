@@ -10,6 +10,12 @@ module F = Format
 
 (** utilities for writing abstract domains/transfer function tests *)
 
+(** set up results dir and database for StructuredSil test programs *)
+let () =
+  ResultsDir.create_results_dir () ;
+  DBWriter.start ()
+
+
 (** structured language that makes it easy to write small test programs in OCaml *)
 module StructuredSil = struct
   type assertion = string
@@ -75,11 +81,11 @@ module StructuredSil = struct
   let unknown_exp = var_of_str "__unknown__"
 
   let make_load ~rhs_typ lhs_id rhs_exp =
-    Cmd (Sil.Load {id= lhs_id; e= rhs_exp; root_typ= rhs_typ; typ= rhs_typ; loc= dummy_loc})
+    Cmd (Sil.Load {id= lhs_id; e= rhs_exp; typ= rhs_typ; loc= dummy_loc})
 
 
   let make_set ~rhs_typ ~lhs_exp ~rhs_exp =
-    Cmd (Sil.Store {e1= lhs_exp; root_typ= rhs_typ; typ= rhs_typ; e2= rhs_exp; loc= dummy_loc})
+    Cmd (Sil.Store {e1= lhs_exp; typ= rhs_typ; e2= rhs_exp; loc= dummy_loc})
 
 
   let make_call ?(procname = dummy_procname) ?return:return_opt args =
@@ -179,11 +185,19 @@ struct
   module T = I.TransferFunctions
   module M = I.InvariantMap
 
-  let structured_program_to_cfg program test_pname =
+  let gen_pname =
+    let id = ref (-1) in
+    fun () ->
+      Int.incr id ;
+      Procname.from_string_c_fun ("structured_sil_test_" ^ Int.to_string !id)
+
+
+  let structured_program_to_cfg program =
     let cfg = Cfg.create () in
-    let pdesc =
-      Cfg.create_proc_desc cfg (ProcAttributes.default (SourceFile.invalid __FILE__) test_pname)
-    in
+    let src_file = SourceFile.invalid __FILE__ in
+    let pname = gen_pname () in
+    let attrs = ProcAttributes.{(default src_file pname) with is_defined= true} in
+    let pdesc = Cfg.create_proc_desc cfg attrs in
     let create_node kind cmds = Procdesc.create_node pdesc dummy_loc kind cmds in
     let set_succs cur_node succs ~exn_handlers =
       Procdesc.node_set_succs pdesc cur_node ~normal:succs ~exn:exn_handlers
@@ -207,7 +221,7 @@ struct
     in
     let rec structured_instr_to_node (last_node, assert_map) exn_handlers = function
       | Cmd cmd ->
-          let node = create_node (Procdesc.Node.Stmt_node (Skip "")) [cmd] in
+          let node = create_node (Stmt_node Skip) [cmd] in
           set_succs last_node [node] ~exn_handlers ;
           (node, assert_map)
       | If (exp, then_instrs, else_instrs) ->
@@ -260,7 +274,7 @@ struct
           set_succs catch_end_node [finally_start_node] ~exn_handlers ;
           structured_instrs_to_node finally_start_node assert_map'' exn_handlers finally_instrs
       | Invariant (inv_str, inv_label) ->
-          let node = create_node (Procdesc.Node.Stmt_node (Skip "Invariant")) [] in
+          let node = create_node (Stmt_node Skip) [] in
           set_succs last_node [node] ~exn_handlers ;
           (* add the assertion to be checked after analysis converges *)
           (node, M.add (T.CFG.Node.id node) (inv_str, inv_label) assert_map)
@@ -278,15 +292,14 @@ struct
     let exit_node = create_node Procdesc.Node.Exit_node [] in
     set_succs last_node [exit_node] ~exn_handlers:no_exn_handlers ;
     Procdesc.set_exit_node pdesc exit_node ;
-    (Summary.OnDisk.reset pdesc, assert_map)
+    Cfg.store src_file cfg ;
+    (Summary.OnDisk.reset pname, assert_map, pdesc)
 
 
-  let create_test test_program make_analysis_data ~initial pp_opt test_pname _ =
+  let create_test test_program make_analysis_data ~initial pp_opt _ =
     let pp_state = Option.value ~default:I.TransferFunctions.Domain.pp pp_opt in
-    let summary, assert_map = structured_program_to_cfg test_program test_pname in
-    let inv_map =
-      I.exec_pdesc (make_analysis_data summary) ~initial (Summary.get_proc_desc summary)
-    in
+    let summary, assert_map, pdesc = structured_program_to_cfg test_program in
+    let inv_map = I.exec_pdesc (make_analysis_data summary) ~initial pdesc in
     let collect_invariant_mismatches node_id (inv_str, inv_label) error_msgs_acc =
       let post_str =
         try
@@ -328,21 +341,19 @@ struct
 
   let ai_list = [("ai_rpo", AI_RPO.create_test); ("ai_wto", AI_WTO.create_test)]
 
-  let create_tests ?(test_pname = Procname.empty_block) ~initial ?pp_opt make_analysis_data tests =
-    AnalysisCallbacks.set_callbacks
-      { html_debug_new_node_session_f= NodePrinter.with_session
-      ; get_model_proc_desc_f= Summary.OnDisk.get_model_proc_desc } ;
+  let create_tests ~initial ?pp_opt make_analysis_data tests =
+    AnalysisCallbacks.set_callbacks {html_debug_new_node_session_f= NodePrinter.with_session} ;
     let open OUnit2 in
     List.concat_map
       ~f:(fun (name, test_program) ->
         List.map ai_list ~f:(fun (ai_name, create_test) ->
-            name ^ "_" ^ ai_name
-            >:: create_test test_program make_analysis_data ~initial pp_opt test_pname ) )
+            name ^ "_" ^ ai_name >:: create_test test_program make_analysis_data ~initial pp_opt )
+        )
       tests
 end
 
 module Make (T : TransferFunctions.SIL with type CFG.Node.t = Procdesc.Node.t) =
   MakeTesters (AbstractInterpreter.MakeRPO (T)) (AbstractInterpreter.MakeWTO (T))
 module MakeBackwardExceptional
-    (T : AbstractInterpreter.TransferFunctionsWithExceptions with type CFG.Node.t = Procdesc.Node.t) =
+    (T : AbstractInterpreter.TransferFunctions with type CFG.Node.t = Procdesc.Node.t) =
   MakeTesters (AbstractInterpreter.MakeBackwardRPO (T)) (AbstractInterpreter.MakeBackwardWTO (T))

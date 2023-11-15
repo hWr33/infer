@@ -22,10 +22,6 @@ val incr_summary_cache_misses : unit -> unit
 
 val incr_ondemand_procs_analyzed : unit -> unit
 
-val incr_ondemand_local_cache_hits : unit -> unit
-
-val incr_ondemand_local_cache_misses : unit -> unit
-
 val add_to_proc_locker_lock_time : ExecutionDuration.t -> unit
 
 val add_to_proc_locker_unlock_time : ExecutionDuration.t -> unit
@@ -40,9 +36,21 @@ val incr_pulse_args_length_contradictions : unit -> unit
 
 val incr_pulse_captured_vars_length_contradictions : unit -> unit
 
+val add_pulse_disjuncts_dropped : int -> unit
+
+val add_pulse_interrupted_loops : int -> unit
+
+val incr_pulse_summaries_contradictions : unit -> unit
+
 val add_pulse_summaries_count : int -> unit
 
-val add_proc_duration : string -> int -> unit
+val add_proc_duration_us : string -> string -> int -> unit
+
+val incr_topl_reachable_calls : unit -> unit
+
+val incr_timeouts : unit -> unit
+
+val add_timing : Timeable.t -> float -> unit
 
 val reset : unit -> unit
 (** reset all stats *)

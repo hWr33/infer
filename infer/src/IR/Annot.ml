@@ -14,7 +14,7 @@ module F = Format
 (** Type to represent an [@Annotation] with potentially complex parameter values such as arrays or
     other annotations. *)
 type t = {class_name: string  (** name of the annotation *); parameters: parameter list}
-[@@deriving compare, equal]
+[@@deriving compare, equal, hash]
 
 and parameter = {name: string option; value: value} [@@deriving compare]
 
@@ -39,6 +39,8 @@ let rec has_matching_str_value ~pred = function
       pred s
   | Array els ->
       List.exists els ~f:(has_matching_str_value ~pred)
+  | Enum {value} ->
+      pred value
   | _ ->
       false
 
@@ -84,20 +86,18 @@ and pp fmt annotation =
 
 module rec ValueNormalizer : (HashNormalizer.S with type t = value) = struct
   module rec V : (HashNormalizer.NormalizedT with type t = value) = struct
-    type t = value [@@deriving equal]
-
-    let hash = Hashtbl.hash
+    type t = value [@@deriving equal, hash]
 
     let normalize value =
       match value with
       | Str str ->
-          let str' = HashNormalizer.StringNormalizer.normalize str in
+          let str' = HashNormalizer.String.hash_normalize str in
           if phys_equal str str' then value else Str str'
       | Bool _ ->
           value
       | Enum {class_typ; value= str_value} ->
           let class_typ' = Typ.Normalizer.normalize class_typ in
-          let str_value' = HashNormalizer.StringNormalizer.normalize str_value in
+          let str_value' = HashNormalizer.String.hash_normalize str_value in
           if phys_equal class_typ class_typ' && phys_equal str_value str_value' then value
           else Enum {class_typ= class_typ'; value= str_value'}
       | Array list ->
@@ -117,12 +117,10 @@ module rec ValueNormalizer : (HashNormalizer.S with type t = value) = struct
 end
 
 and ParameterNormalizer : (HashNormalizer.S with type t = parameter) = HashNormalizer.Make (struct
-  type t = parameter [@@deriving equal]
-
-  let hash = Hashtbl.hash
+  type t = parameter [@@deriving equal, hash]
 
   let normalize_str_opt str_opt =
-    IOption.map_changed str_opt ~equal:phys_equal ~f:HashNormalizer.StringNormalizer.normalize
+    IOption.map_changed str_opt ~equal:phys_equal ~f:HashNormalizer.String.hash_normalize
 
 
   let normalize parameter =
@@ -133,12 +131,10 @@ and ParameterNormalizer : (HashNormalizer.S with type t = parameter) = HashNorma
 end)
 
 and TNormalizer : (HashNormalizer.S with type t = t) = HashNormalizer.Make (struct
-  type nonrec t = t [@@deriving equal]
-
-  let hash = Hashtbl.hash
+  type nonrec t = t [@@deriving equal, hash]
 
   let normalize t =
-    let class_name = HashNormalizer.StringNormalizer.normalize t.class_name in
+    let class_name = HashNormalizer.String.hash_normalize t.class_name in
     let parameters =
       IList.map_changed ~equal:phys_equal ~f:ParameterNormalizer.normalize t.parameters
     in
@@ -148,7 +144,7 @@ end)
 
 module Item = struct
   (** Annotation for one item: a list of annotations with visibility. *)
-  type nonrec t = t list [@@deriving compare, equal]
+  type nonrec t = t list [@@deriving compare, equal, hash]
 
   (** Pretty print an item annotation. *)
   let pp fmt ann = F.fprintf fmt "<%a>" (Pp.seq pp) ann
@@ -162,9 +158,7 @@ module Item = struct
   let is_final ia = List.exists ia ~f:is_final
 
   module Normalizer = HashNormalizer.Make (struct
-    type nonrec t = t [@@deriving equal]
-
-    let hash = Hashtbl.hash
+    type nonrec t = t [@@deriving equal, hash]
 
     let normalize pairs = IList.map_changed pairs ~equal:phys_equal ~f:TNormalizer.normalize
   end)

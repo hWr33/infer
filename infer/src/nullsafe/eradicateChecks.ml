@@ -115,7 +115,7 @@ let check_field_assignment
     ({IntraproceduralAnalysis.tenv; proc_desc= curr_pdesc; _} as analysis_data) ~nullsafe_mode
     find_canonical_duplicate node instr_ref typestate ~expr_rhs ~field_type loc fname
     (annotated_field : AnnotatedField.t) typecheck_expr : unit =
-  L.d_with_indent ~name:"check_field_assignment" (fun () ->
+  L.d_with_indent "check_field_assignment" ~f:(fun () ->
       let curr_pname = Procdesc.get_proc_name curr_pdesc in
       let curr_pattrs = Procdesc.get_attributes curr_pdesc in
       let _, inferred_nullability_rhs =
@@ -487,9 +487,9 @@ let check_inheritance_rule_for_params analysis_data find_canonical_duplicate loc
             ~overridden_param_name ~base_proc_name
             ~param_index:
               ( if has_implicit_this_param then
-                (* The first param in the list is implicit (not real part of the signature) and should not be counted *)
-                index - 1
-              else index )
+                  (* The first param in the list is implicit (not real part of the signature) and should not be counted *)
+                  index - 1
+                else index )
             ~base_nullability:(AnnotatedNullability.get_nullability annotated_nullability_base)
             ~overridden_proc_name
             ~overridden_nullability:

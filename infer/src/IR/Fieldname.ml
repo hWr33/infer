@@ -8,22 +8,11 @@
 open! IStd
 module F = Format
 
-type 'typ_name t_ = {class_name: 'typ_name; field_name: string}
-[@@deriving compare, equal, yojson_of]
+type 'typ_name t_ =
+  {class_name: 'typ_name; field_name: string; capture_mode: CapturedVar.capture_mode option}
+[@@deriving compare, equal, yojson_of, sexp, hash]
 
-type t = Typ.Name.t t_ [@@deriving compare, equal, yojson_of]
-
-let pp f fld = F.pp_print_string f fld.field_name
-
-let loose_compare = compare_t_ Typ.Name.loose_compare
-
-let compare_name = compare_t_ Typ.Name.compare_name
-
-let make class_name field_name = {class_name; field_name}
-
-let fake_capture_field_prefix = "__capture_"
-
-let fake_capture_field_weak_prefix = fake_capture_field_prefix ^ "weak_"
+type t = Typ.Name.t t_ [@@deriving compare, equal, yojson_of, sexp, hash]
 
 let string_of_capture_mode = function
   | CapturedVar.ByReference ->
@@ -31,6 +20,22 @@ let string_of_capture_mode = function
   | CapturedVar.ByValue ->
       "by_value_"
 
+
+let pp f fld =
+  match fld.capture_mode with
+  | Some capture_mode ->
+      F.fprintf f "%s_captured_%s" fld.field_name (string_of_capture_mode capture_mode)
+  | None ->
+      F.pp_print_string f fld.field_name
+
+
+let compare_name = compare_t_ Typ.Name.compare_name
+
+let make ?capture_mode class_name field_name = {class_name; field_name; capture_mode}
+
+let fake_capture_field_prefix = "__capture_"
+
+let fake_capture_field_weak_prefix = fake_capture_field_prefix ^ "weak_"
 
 let prefix_of_typ typ =
   match typ.Typ.desc with
@@ -46,6 +51,15 @@ let mk_fake_capture_field ~id typ mode =
     (Printf.sprintf "%s%s%d" (prefix_of_typ typ) (string_of_capture_mode mode) id)
 
 
+let mk_capture_field_in_cpp_lambda var_name capture_mode =
+  (* We use this type as before rather than the lambda struct name because
+     when we want to create the same names in Pulse we don't have easy access
+     to that lambda struct name. The struct name as part of the field name is
+     there just to help with inheritance anyway and is not used otherwise. *)
+  let class_tname = Typ.CStruct (QualifiedCppName.of_list ["std"; "function"]) in
+  make ~capture_mode class_tname (Mangled.to_string var_name)
+
+
 let is_fake_capture_field {field_name} =
   String.is_prefix ~prefix:fake_capture_field_prefix field_name
 
@@ -54,16 +68,10 @@ let is_fake_capture_field_weak {field_name} =
   String.is_prefix ~prefix:fake_capture_field_weak_prefix field_name
 
 
-let is_fake_capture_field_by_ref {field_name} =
-  let capture_by_ref_str = string_of_capture_mode ByReference in
-  let fake_capture_field_by_ref_prefix =
-    Printf.sprintf "%s%s" fake_capture_field_prefix capture_by_ref_str
-  in
-  let fake_capture_field_weak_by_ref_prefix =
-    Printf.sprintf "%s%s" fake_capture_field_weak_prefix capture_by_ref_str
-  in
-  String.is_prefix ~prefix:fake_capture_field_by_ref_prefix field_name
-  || String.is_prefix ~prefix:fake_capture_field_weak_by_ref_prefix field_name
+let is_capture_field_in_cpp_lambda {capture_mode} = Option.is_some capture_mode
+
+let is_capture_field_in_cpp_lambda_by_ref {capture_mode} =
+  Option.exists capture_mode ~f:(fun captured_mode -> CapturedVar.is_captured_by_ref captured_mode)
 
 
 let get_capture_field_position ({field_name} as field) =
@@ -121,8 +129,12 @@ let to_simplified_string ({class_name; field_name} : t) =
         Some (CSharpClassName.classname name)
     | ErlangType _ ->
         None
+    | HackClass name ->
+        Some (HackClassName.classname name)
     | JavaClass name ->
         Some (JavaClassName.classname name)
+    | PythonClass name ->
+        Some (PythonClassName.classname name)
   in
   Option.value_map last_class_name ~default:field_name ~f:(fun last_class_name ->
       let sep = match class_name with CppClass _ -> "::" | _ -> "." in
@@ -148,13 +160,11 @@ let is_java_outer_instance ({field_name} as field) =
 
 
 module Normalizer = HashNormalizer.Make (struct
-  type nonrec t = t [@@deriving equal]
-
-  let hash = Hashtbl.hash
+  type nonrec t = t [@@deriving equal, hash]
 
   let normalize t =
     let class_name = Typ.Name.Normalizer.normalize t.class_name in
-    let field_name = HashNormalizer.StringNormalizer.normalize t.field_name in
+    let field_name = HashNormalizer.String.hash_normalize t.field_name in
     if phys_equal class_name t.class_name && phys_equal field_name t.field_name then t
-    else {class_name; field_name}
+    else {class_name; field_name; capture_mode= t.capture_mode}
 end)

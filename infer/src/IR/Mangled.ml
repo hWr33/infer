@@ -11,7 +11,7 @@
 open! IStd
 module F = Format
 
-type t = {plain: string; mangled: string option} [@@deriving compare, yojson_of, equal]
+type t = {plain: string; mangled: string option} [@@deriving compare, yojson_of, equal, sexp, hash]
 
 (** Convert a string to a mangled name *)
 let from_string (s : string) = {plain= s; mangled= None}
@@ -34,7 +34,7 @@ let pp f pn = F.pp_print_string f (to_string pn)
 
 let this = from_string "this"
 
-let is_this = function {plain= "this"} -> true | _ -> false
+let is_this = function {plain= "this" | "$this"} -> true | _ -> false
 
 let self = from_string "self"
 
@@ -43,6 +43,8 @@ let is_self = function {plain= "self"} -> true | _ -> false
 let return_param = from_string "__return_param"
 
 let is_return_param = function {plain= "__return_param"} -> true | _ -> false
+
+let is_underscore = function {plain= "_"} -> true | _ -> false
 
 module Set = PrettyPrintable.MakePPSet (struct
   type nonrec t = t [@@deriving compare]

@@ -14,7 +14,7 @@ module F = Format
 module L = Logging
 
 (* reverse the natural order on Var *)
-type ident_ = Ident.t
+type ident_ = Ident.t [@@deriving equal, hash]
 
 let compare_ident_ x y = Ident.compare y x
 
@@ -47,11 +47,7 @@ and t =
       (** A field offset, the type is the surrounding struct type *)
   | Lindex of t * t  (** An array index offset: [exp1\[exp2\]] *)
   | Sizeof of sizeof_data
-[@@deriving compare]
-
-let equal = [%compare.equal: t]
-
-let hash = Hashtbl.hash
+[@@deriving compare, equal, hash]
 
 module Set = Caml.Set.Make (struct
   type nonrec t = t [@@deriving compare]
@@ -62,9 +58,7 @@ module Map = Caml.Map.Make (struct
 end)
 
 module Hash = Hashtbl.Make (struct
-  type nonrec t = t [@@deriving equal]
-
-  let hash = hash
+  type nonrec t = t [@@deriving equal, hash]
 end)
 
 let is_null_literal = function Const (Cint n) -> IntLit.isnull n | _ -> false
@@ -316,6 +310,8 @@ let pp_texp_full pe f = function
 let d_texp_full (te : t) = L.d_pp_with_pe pp_texp_full te
 
 let is_objc_block_closure = function Closure {name} -> Procname.is_objc_block name | _ -> false
+
+let is_cpp_closure = function Closure {name} -> Procname.is_cpp_lambda name | _ -> false
 
 let rec gen_free_vars =
   let open Sequence.Generator in

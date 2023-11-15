@@ -42,8 +42,13 @@ let assert_empty scopes =
   if not (List.is_empty scopes) then L.die InternalError "Expected empty stack of scopes."
 
 
-let create_unique_lambda_name (lambda_cntr : lambda_name_counter) =
-  let name = Printf.sprintf "anon_fun_%d_of_%s" lambda_cntr.counter lambda_cntr.funcname in
+let create_unique_lambda_name (lambda_cntr : lambda_name_counter) lambda_name_opt =
+  let lambda_name =
+    match lambda_name_opt with Some name -> Printf.sprintf "_%s" name | None -> ""
+  in
+  let name =
+    Printf.sprintf "anon_fun%s_%d_of_%s" lambda_name lambda_cntr.counter lambda_cntr.funcname
+  in
   lambda_cntr.counter <- lambda_cntr.counter + 1 ;
   name
 
@@ -77,7 +82,7 @@ let rec annotate_expression (env : (_, _) Env.t) lambda_cntr (scopes : scope lis
   | If clauses ->
       annotate_clauses env lambda_cntr scopes clauses
   | ListComprehension {expression; qualifiers} | BitstringComprehension {expression; qualifiers} ->
-      (* TODO: support local variables in list comprehensions: T105967634 *)
+      (* TODO: support local variables in list/bitstring comprehensions: T105967634 *)
       let scopes = annotate_expression env lambda_cntr scopes expression in
       List.fold_left ~f:(annotate_qualifier env lambda_cntr) ~init:scopes qualifiers
   | Literal _ | Nil | RecordIndex _ | Fun _ ->
@@ -85,6 +90,11 @@ let rec annotate_expression (env : (_, _) Env.t) lambda_cntr (scopes : scope lis
   | Map {map; updates} ->
       let scopes = annotate_expression_opt env lambda_cntr scopes map in
       List.fold_left ~f:(annotate_association env lambda_cntr) ~init:scopes updates
+  | MapComprehension {expression; qualifiers} ->
+      (* TODO: support local variables in map comprehensions: T105967634 *)
+      let scopes = annotate_expression env lambda_cntr scopes expression.key in
+      let scopes = annotate_expression env lambda_cntr scopes expression.value in
+      List.fold_left ~f:(annotate_qualifier env lambda_cntr) ~init:scopes qualifiers
   | Match {pattern; body} ->
       annotate_expression_list env lambda_cntr scopes [pattern; body]
   | Receive {cases; timeout} ->
@@ -131,7 +141,7 @@ let rec annotate_expression (env : (_, _) Env.t) lambda_cntr (scopes : scope lis
             L.die InternalError "Lambda has no clauses, cannot determine arity"
       in
       (* A fresh id is created even for named lambdas. *)
-      let function_name = create_unique_lambda_name lambda_cntr in
+      let function_name = create_unique_lambda_name lambda_cntr lambda.name in
       let procname = Procname.make_erlang ~module_name:env.current_module ~function_name ~arity in
       lambda.procname <- Some procname ;
       let scopes = push_scope scopes procname in
@@ -188,6 +198,8 @@ and annotate_qualifier (env : (_, _) Env.t) lambda_cntr (scopes : scope list) (q
       annotate_expression env lambda_cntr scopes expression
   | Generator {pattern; expression} ->
       annotate_expression_list env lambda_cntr scopes [pattern; expression]
+  | MapGenerator {pattern; expression} ->
+      annotate_expression_list env lambda_cntr scopes [pattern.key; pattern.value; expression]
 
 
 and annotate_association (env : (_, _) Env.t) lambda_cntr (scopes : scope list)

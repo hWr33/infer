@@ -134,14 +134,12 @@ void local_array_good() {
   char o[10];
   o[0] = 'a';
   char c = o[0];
-  free(o);
 }
 
 void local_array_bad_FN() {
   char o[10];
   o[0] = 'a';
   char c = o[1];
-  free(o);
 }
 
 struct uninit_nested {
@@ -194,4 +192,37 @@ void uninit_interproc_manifest_bad() {
     *p = 42; // NPE to test that uninit didn't terminate the symbolic execution
     // currently FN as uninit does in fact terminate symbolic execution
   }
+}
+
+// another interprocedural test
+
+void check_range(int range_var_valid, int* range_var) {
+  if (range_var_valid) {
+    *range_var = *range_var + 1;
+  }
+
+  assert(range_var_valid >= 0 && range_var_valid <= 1);
+}
+
+void check_range_wrapper(int range_var_valid, int* range_var) {
+  check_range(range_var_valid, range_var);
+}
+
+void uninit_var_not_read_interproc_ok() {
+  int range_var_valid = 0;
+  int range_var;
+  check_range_wrapper(range_var_valid, &range_var);
+}
+
+struct uninit_s global_uninit_s1;
+
+struct uninit_s global_uninit_s2;
+
+struct uninit_s init_by_conditional_exp(int b) {
+  return b ? global_uninit_s1 : global_uninit_s2;
+}
+
+int call_init_by_conditionaql_exp_ok(int b) {
+  struct uninit_s x = init_by_conditional_exp(b);
+  return x.f1;
 }

@@ -31,9 +31,9 @@ val performance_critical : string
 
 val prop : string
 
-val for_non_ui_thread : string [@@warning "-32"]
+val for_non_ui_thread : string [@@warning "-unused-value-declaration"]
 
-val for_ui_thread : string [@@warning "-32"]
+val for_ui_thread : string [@@warning "-unused-value-declaration"]
 
 val guarded_by : string
 
@@ -73,6 +73,8 @@ val ia_is_field_injector_readwrite : Annot.Item.t -> bool
     null into it. *)
 
 val ia_is_nonnull : Annot.Item.t -> bool
+
+val ia_is_jetbrains_notnull : Annot.Item.t -> bool
 
 val ia_is_nullable : Annot.Item.t -> bool
 

@@ -37,13 +37,58 @@ let pp_std_vector_function f = function
       F.fprintf f "std::vector::shrink_to_fit"
 
 
-type java_iterator_function = Remove [@@deriving compare, equal]
+type map_type = FollyF14Value | FollyF14Vector | FollyF14Fast [@@deriving compare, equal]
 
-let pp_java_iterator_function f = function Remove -> F.pp_print_string f "Iterator.remove"
+type map_function =
+  | Clear
+  | Rehash
+  | Reserve
+  | OperatorEqual
+  | Insert
+  | InsertOrAssign
+  | Emplace
+  | TryEmplace
+  | TryEmplaceToken
+  | EmplaceHint
+  | OperatorBracket
+[@@deriving compare, equal]
+
+let pp_map_type f = function
+  | FollyF14Value ->
+      F.fprintf f "folly::F14ValueMap"
+  | FollyF14Vector ->
+      F.fprintf f "folly::F14VectorMap"
+  | FollyF14Fast ->
+      F.fprintf f "folly::F14FastMap"
+
+
+let pp_map_function f = function
+  | Clear ->
+      F.fprintf f "clear"
+  | Rehash ->
+      F.fprintf f "rehash"
+  | Reserve ->
+      F.fprintf f "reserve"
+  | OperatorEqual ->
+      F.fprintf f "operator="
+  | Insert ->
+      F.fprintf f "insert"
+  | InsertOrAssign ->
+      F.fprintf f "insert_or_assign"
+  | Emplace ->
+      F.fprintf f "emplace"
+  | TryEmplace ->
+      F.fprintf f "try_emplace"
+  | TryEmplaceToken ->
+      F.fprintf f "try_emplace_token"
+  | EmplaceHint ->
+      F.fprintf f "emplace_hint"
+  | OperatorBracket ->
+      F.fprintf f "operator[]"
+
 
 type t =
   | CFree
-  | CustomFree of Procname.t
   | ConstantDereference of IntLit.t
   | CppDelete
   | CppDeleteArray
@@ -51,7 +96,7 @@ type t =
   | GoneOutOfScope of Pvar.t * Typ.t
   | OptionalEmpty
   | StdVector of std_vector_function
-  | JavaIterator of java_iterator_function
+  | CppMap of map_type * map_function
 [@@deriving compare, equal]
 
 type must_be_valid_reason =
@@ -59,6 +104,7 @@ type must_be_valid_reason =
   | InsertionIntoCollectionKey
   | InsertionIntoCollectionValue
   | SelfOfNonPODReturnMethod of Typ.t
+  | NullArgumentWhereNonNullExpected of PulseCallEvent.t * int option
 [@@deriving compare, equal]
 
 let pp_must_be_valid_reason f = function
@@ -72,11 +118,13 @@ let pp_must_be_valid_reason f = function
       F.fprintf f "InsertionIntoCollectionValue"
   | Some (SelfOfNonPODReturnMethod _) ->
       F.fprintf f "SelfOfNonPODReturnMethod"
+  | Some (NullArgumentWhereNonNullExpected _) ->
+      F.fprintf f "NonNullExpected"
 
 
 let issue_type_of_cause ~latent invalidation must_be_valid_reason =
   match invalidation with
-  | CFree | CustomFree _ ->
+  | CFree ->
       IssueType.use_after_free ~latent
   | ConstantDereference i when IntLit.iszero i -> (
     match must_be_valid_reason with
@@ -87,7 +135,9 @@ let issue_type_of_cause ~latent invalidation must_be_valid_reason =
     | Some InsertionIntoCollectionKey | Some InsertionIntoCollectionValue ->
         IssueType.nil_insertion_into_collection ~latent
     | Some (SelfOfNonPODReturnMethod _) ->
-        IssueType.nil_messaging_to_non_pod ~latent )
+        IssueType.nil_messaging_to_non_pod ~latent
+    | Some (NullArgumentWhereNonNullExpected _) ->
+        IssueType.null_argument ~latent )
   | ConstantDereference _ ->
       IssueType.constant_address_dereference ~latent
   | CppDelete | CppDeleteArray ->
@@ -98,26 +148,16 @@ let issue_type_of_cause ~latent invalidation must_be_valid_reason =
       IssueType.use_after_lifetime ~latent
   | OptionalEmpty ->
       IssueType.optional_empty_access ~latent
-  | JavaIterator _ | StdVector _ ->
+  | StdVector _ ->
       IssueType.vector_invalidation ~latent
-
-
-let isl_equiv v1 v2 =
-  match (v1, v2) with
-  | ConstantDereference i1, ConstantDereference i2 ->
-      IntLit.eq i1 i2
-  | (CFree | CppDelete), (CFree | CppDelete) ->
-      true
-  | _ ->
-      equal v1 v2
+  | CppMap _ ->
+      IssueType.pulse_reference_stability
 
 
 let describe f cause =
   match cause with
   | CFree ->
       F.pp_print_string f "was invalidated by call to `free()`"
-  | CustomFree proc_name ->
-      F.fprintf f "was invalidated by call to `%a` (user config)" Procname.pp proc_name
   | ConstantDereference i when IntLit.iszero i ->
       F.pp_print_string f "is assigned to the null pointer"
   | ConstantDereference i ->
@@ -138,14 +178,14 @@ let describe f cause =
   | OptionalEmpty ->
       F.pp_print_string f "is assigned an empty value"
   | StdVector std_vector_f ->
-      F.fprintf f "was potentially invalidated by `%a()`" pp_std_vector_function std_vector_f
-  | JavaIterator java_iterator_f ->
-      F.fprintf f "was potentially invalidated by `%a()`" pp_java_iterator_function java_iterator_f
+      F.fprintf f "was potentially invalidated by `%a`" pp_std_vector_function std_vector_f
+  | CppMap (map_t, map_f) ->
+      F.fprintf f "was potentially invalidated by `%a::%a`" pp_map_type map_t pp_map_function map_f
 
 
 let pp f invalidation =
   match invalidation with
-  | CFree | CustomFree _ ->
+  | CFree ->
       F.fprintf f "CFree(%a)" describe invalidation
   | ConstantDereference _ ->
       F.fprintf f "ConstantDereference(%a)" describe invalidation
@@ -155,5 +195,5 @@ let pp f invalidation =
       describe f invalidation
   | StdVector _ ->
       F.fprintf f "StdVector(%a)" describe invalidation
-  | JavaIterator _ ->
-      F.fprintf f "JavaIterator(%a)" describe invalidation
+  | CppMap _ ->
+      F.fprintf f "CppMap(%a)" describe invalidation

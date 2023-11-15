@@ -121,8 +121,6 @@ module Unsafe : sig
   val equal_to : IntLit.t -> t
 
   val not_equal_to : IntLit.t -> t
-
-  val ge_to : IntLit.t -> t
 end = struct
   type t = Between of Bound.t * Bound.t | Outside of IntLit.t * IntLit.t
   [@@deriving compare, equal]
@@ -143,10 +141,6 @@ end = struct
 
 
   let not_equal_to i = Outside (i, i)
-
-  let ge_to i =
-    let b = Bound.Int i in
-    Between (b, Bound.PlusInfinity)
 end
 
 include Unsafe
@@ -182,16 +176,7 @@ let is_not_equal_to_zero = function
       false
 
 
-let has_empty_intersection a1 a2 =
-  match (a1, a2) with
-  | Outside _, Outside _ ->
-      false
-  | Between (lower1, upper1), Between (lower2, upper2) ->
-      Bound.lt upper1 lower2 || Bound.lt upper2 lower1
-  | Between (lower1, upper1), Outside (l2, u2) | Outside (l2, u2), Between (lower1, upper1) ->
-      (* is \[l1, u1\] inside \[l2, u2\]? *)
-      Bound.le (Int l2) lower1 && Bound.ge (Int u2) upper1
-
+let is_non_pointer = function Between (Int _, Int _) -> true | _ -> false
 
 let add_int a i =
   match a with
@@ -328,6 +313,16 @@ let rec abduce_eq (a1 : t) (a2 : t) =
         Satisfiable (tighter, tighter)
 
 
+let intersection a1 a2 =
+  match abduce_eq a1 a2 with
+  | Unsatisfiable ->
+      None
+  | Satisfiable (inter1_opt, inter2_opt) ->
+      Option.first_some inter1_opt inter2_opt |> Option.value ~default:a1 |> Option.some
+
+
+let has_empty_intersection a1 a2 = Option.is_none (intersection a1 a2)
+
 let abduce_ne (a1 : t) (a2 : t) =
   if has_empty_intersection a1 a2 then Satisfiable (None, None)
   else
@@ -428,8 +423,6 @@ let abduce_binop_constraints ~negated (bop : Binop.t) (a1 : t) (a2 : t) =
       Satisfiable (None, None)
 
 
-let zero_inf = between (Int IntLit.zero) PlusInfinity
-
 let abduce_binop_is_true ~negated bop v1 v2 =
   Logging.d_printfln "abduce_binop_is_true ~negated:%b %s (%a) (%a)" negated (Binop.str Pp.text bop)
     (Pp.option pp) v1 (Pp.option pp) v2 ;
@@ -490,3 +483,15 @@ let binop (bop : Binop.t) a_lhs a_rhs =
 
 
 let unop (unop : Unop.t) a = match unop with Neg -> minus a | BNot | LNot -> None
+
+let requires_integer_reasoning = function
+  | Between (MinusInfinity, _) | Between (_, PlusInfinity) ->
+      false
+  | Between (Int i1, Int i2) | Outside (i1, i2) ->
+      (* [x=i] and [x≠i] are faithfully represented in the rationals too but, eg [x∈\[0,2\]] isn't
+         (or at least isn't faithfully represented in the rest of [PulseFormula] since we won't
+         break it down into [x=0∨x=1∨x=2]) *)
+      not (IntLit.equal i1 i2)
+  | Between (PlusInfinity, (MinusInfinity | Int _)) | Between (Int _, MinusInfinity) ->
+      (* these values cannot be created thanks to [Unsafe] *)
+      assert false

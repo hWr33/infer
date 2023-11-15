@@ -11,7 +11,7 @@ module F = Format
 exception ParseError of string
 
 (* internally it uses reversed list to store qualified name, for example: ["get", "shared_ptr<int>", "std"]*)
-type t = string list [@@deriving compare, yojson_of]
+type t = string list [@@deriving compare, equal, yojson_of, sexp, hash, normalize]
 
 let empty = []
 
@@ -42,11 +42,11 @@ let append_template_args_to_last quals ~args =
 
 let to_list = List.rev
 
-let to_rev_list = ident
+let to_rev_list = Fn.id
 
 let of_list = List.rev
 
-let of_rev_list = ident
+let of_rev_list = Fn.id
 
 let cpp_separator = "::"
 
@@ -83,8 +83,8 @@ module Match = struct
 
   let qualifiers_list_matcher ?prefix quals_list =
     ( if List.is_empty quals_list then "a^" (* regexp that does not match anything *)
-    else
-      List.rev_map ~f:(regexp_string_of_qualifiers ?prefix) quals_list |> String.concat ~sep:"\\|"
+      else
+        List.rev_map ~f:(regexp_string_of_qualifiers ?prefix) quals_list |> String.concat ~sep:"\\|"
     )
     |> Str.regexp
 
@@ -113,8 +113,12 @@ module Match = struct
     Str.string_match matcher (to_separated_string ~sep:matching_separator normalized_qualifiers) 0
 end
 
-module Set = PrettyPrintable.MakePPSet (struct
-  type nonrec t = t [@@deriving compare]
+module Normalizer : HashNormalizer.S with type t = t = struct
+  type nonrec t = t
 
-  let pp = pp
-end)
+  let normalize = hash_normalize
+
+  let normalize_opt = hash_normalize_opt
+
+  let normalize_list = hash_normalize_list
+end

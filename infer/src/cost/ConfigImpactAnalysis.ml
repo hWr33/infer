@@ -7,7 +7,7 @@
 
 open! IStd
 module F = Format
-module ConfigName = FbGKInteraction.ConfigName
+module ConfigName = FbPulseConfigName
 
 type mode = Jsonconfigimpact_t.config_impact_mode [@@deriving equal]
 
@@ -15,10 +15,6 @@ let pp_mode f mode = F.pp_print_string f (Jsonconfigimpact_j.string_of_config_im
 
 let is_in_strict_mode_paths file =
   SourceFile.is_matching Config.config_impact_strict_mode_paths file
-
-
-let is_in_strict_beta_mode_paths file =
-  SourceFile.is_matching Config.config_impact_strict_beta_mode_paths file
 
 
 let is_in_test_paths file = SourceFile.is_matching Config.config_impact_test_paths file
@@ -30,13 +26,9 @@ let mode =
     | None ->
         (* NOTE: ConfigImpact analysis assumes that non-empty changed files are always given. The
            next condition check is only for checker's tests. *)
-        if not (List.is_empty Config.config_impact_strict_mode_paths) then `Strict
-        else if not (List.is_empty Config.config_impact_strict_beta_mode_paths) then `StrictBeta
-        else `Normal
+        if not (List.is_empty Config.config_impact_strict_mode_paths) then `Strict else `Normal
     | Some changed_files ->
-        if SourceFile.Set.exists is_in_strict_mode_paths changed_files then `Strict
-        else if SourceFile.Set.exists is_in_strict_beta_mode_paths changed_files then `StrictBeta
-        else `Normal
+        if SourceFile.Set.exists is_in_strict_mode_paths changed_files then `Strict else `Normal
 
 
 module Branch = struct
@@ -761,10 +753,12 @@ module Dom = struct
           [ +BuiltinDecl.(match_builtin __cast) <>--> KnownCheap
           ; +BuiltinDecl.(match_builtin __java_throw) <>--> KnownCheap
           ; +PatternMatch.Java.implements_android "content.SharedPreferences"
-            &:: "edit" &--> KnownExpensive
+            &:: "edit" &--> KnownCheap
           ; +PatternMatch.Java.implements_android "content.SharedPreferences"
             &::+ (fun _ method_name -> String.is_prefix method_name ~prefix:"get")
             &--> KnownExpensive
+          ; +PatternMatch.Java.implements_arrays &:: "sort" $ any_arg $+...$--> KnownExpensive
+          ; +PatternMatch.Java.implements_collections &:: "sort" $ any_arg $+...$--> KnownExpensive
           ; +PatternMatch.Java.implements_google "common.base.Preconditions"
             &:: "checkArgument" $ any_arg $+ any_arg $+...$--> KnownExpensive
           ; +PatternMatch.Java.implements_google "common.base.Preconditions"
@@ -777,6 +771,7 @@ module Dom = struct
             &:: "checkState" $ any_arg $+ any_arg $+...$--> KnownExpensive
           ; +PatternMatch.Java.implements_lang "String" &:: "concat" &--> KnownExpensive
           ; +PatternMatch.Java.implements_lang "StringBuilder" &:: "append" &--> KnownExpensive
+          ; +PatternMatch.Java.implements_list &:: "sort" $ any_arg $+...$--> KnownExpensive
           ; +PatternMatch.Java.implements_regex "Pattern" &:: "compile" &--> KnownExpensive
           ; +PatternMatch.Java.implements_regex "Pattern" &:: "matcher" &--> KnownExpensive
           ; +PatternMatch.Java.implements_kotlin_intrinsics &::.*--> KnownCheap
@@ -843,29 +838,45 @@ module Dom = struct
              && String.is_suffix method_name ~suffix:"Value" )
 
 
+  let is_kotlin_getter pname args =
+    match (Attributes.load pname, args) with
+    | Some {loc= {file}}, [_] ->
+        (not (SourceFile.is_invalid file))
+        && SourceFile.has_extension ~ext:Config.kotlin_source_extension file
+        && String.is_prefix (Procname.get_method pname) ~prefix:"get"
+    | _, _ ->
+        false
+
+
   let update_gated_callees ~callee args
       ({condition_checks= config_checks, latent_config_checks; gated_classes} as astate) =
-    match args with
-    | [(Exp.Sizeof {typ= {desc= Tstruct typ_name}}, _)]
-      when Procname.equal callee BuiltinDecl.__objc_alloc_no_fail ->
-        if ConfigChecks.exists (fun _ -> function True -> true | _ -> false) config_checks then
-          (* Gated by true gate condition *)
-          {astate with gated_classes= GatedClasses.add_gated typ_name gated_classes}
+    let update_gated_class_constructor typ_name =
+      if ConfigChecks.exists (fun _ -> function True -> true | _ -> false) config_checks then
+        (* Gated by true gate condition *)
+        {astate with gated_classes= GatedClasses.add_gated typ_name gated_classes}
+      else
+        let cond =
+          LatentConfigChecks.fold
+            (fun latent_config branch acc ->
+              match branch with True -> LatentConfigs.add latent_config acc | _ -> acc )
+            latent_config_checks LatentConfigs.empty
+        in
+        if LatentConfigs.is_empty cond then
+          (* Ungated by any condition *)
+          {astate with gated_classes= GatedClasses.add typ_name Top gated_classes}
         else
-          let cond =
-            LatentConfigChecks.fold
-              (fun latent_config branch acc ->
-                match branch with True -> LatentConfigs.add latent_config acc | _ -> acc )
-              latent_config_checks LatentConfigs.empty
-          in
-          if LatentConfigs.is_empty cond then
-            (* Ungated by any condition *)
-            {astate with gated_classes= GatedClasses.add typ_name Top gated_classes}
-          else
-            (* Gated by latent configs *)
-            {astate with gated_classes= GatedClasses.add_cond typ_name cond gated_classes}
-    | _ ->
-        astate
+          (* Gated by latent configs *)
+          {astate with gated_classes= GatedClasses.add_cond typ_name cond gated_classes}
+    in
+    let typ_name =
+      match args with
+      | [(Exp.Sizeof {typ= {desc= Tstruct typ_name}}, _)]
+        when Procname.equal callee BuiltinDecl.__objc_alloc_no_fail ->
+          Some typ_name
+      | _ ->
+          if Procname.is_constructor callee then Procname.get_class_type_name callee else None
+    in
+    Option.value_map typ_name ~default:astate ~f:update_gated_class_constructor
 
 
   let update_latent_params formals args astate =
@@ -884,8 +895,7 @@ module Dom = struct
             astate )
 
 
-  let call tenv analyze_dependency ~(instantiated_cost : CostInstantiate.instantiated_cost option)
-      ret_typ ~callee formals args location
+  let call tenv analyze_dependency ret_typ ~callee formals args location
       ( { condition_checks= config_checks, latent_config_checks
         ; unchecked_callees
         ; unchecked_callees_cond } as astate ) =
@@ -927,21 +937,15 @@ module Dom = struct
     in
     let astate =
       if ConfigChecks.is_top config_checks then
-        let (callee_summary : Summary.t option) =
-          match analyze_dependency callee with
-          | None ->
-              None
-          | Some (_, (_, analysis_data, _)) ->
-              analysis_data
-        in
+        let (callee_summary : Summary.t option) = analyze_dependency callee in
         let expensiveness_model = get_expensiveness_model tenv callee args in
         let has_expensive_callee =
           Option.exists callee_summary ~f:Summary.has_known_expensive_callee
         in
-        let is_cheap_call = match instantiated_cost with Some Cheap -> true | _ -> false in
-        let is_unmodeled_call = match instantiated_cost with Some NoModel -> true | _ -> false in
+        (* We apply a heuristic to ignore Kotlin's getter as cheap. *)
+        let is_cheap_call = is_kotlin_getter callee args in
         match mode with
-        | `StrictBeta | `Strict -> (
+        | `Strict -> (
             let is_static = Procname.is_static callee in
             match (callee_summary, expensiveness_model) with
             | _, Some KnownCheap ->
@@ -969,7 +973,7 @@ module Dom = struct
                 add_callee_name ~is_known_expensive:false )
         | `Normal -> (
           match expensiveness_model with
-          | None when is_cheap_call && not has_expensive_callee ->
+          | None when not has_expensive_callee ->
               (* If callee is cheap by heuristics, ignore it. *)
               astate
           | Some KnownCheap ->
@@ -996,8 +1000,8 @@ module Dom = struct
                 in
                 (* If callee's summary is not leaf, use it. *)
                 join_callee_summary callee_summary callee_summary_cond
-            | None when Procname.is_objc_init callee || is_unmodeled_call ->
-                (* If callee is unknown ObjC initializer or has no cost model, ignore it. *)
+            | None when Procname.is_objc_init callee ->
+                (* If callee is unknown ObjC initializer, ignore it. *)
                 astate
             | _ ->
                 (* Otherwise, add callee's name. *)
@@ -1014,11 +1018,8 @@ module Dom = struct
 end
 
 type analysis_data =
-  { interproc:
-      (BufferOverrunAnalysisSummary.t option * Summary.t option * CostDomain.summary option)
-      InterproceduralAnalysis.t
+  { interproc: Summary.t InterproceduralAnalysis.t
   ; get_formals: Procname.t -> (Pvar.t * Typ.t) list option
-  ; get_instantiated_cost: CostInstantiate.Call.t -> CostInstantiate.instantiated_cost option
   ; is_param: Pvar.t -> bool }
 
 module TransferFunctions = struct
@@ -1085,14 +1086,45 @@ module TransferFunctions = struct
 
   let add_ret analyze_dependency id callee astate =
     match analyze_dependency callee with
-    | Some (_, (_, Some {Summary.ret= ret_val}, _)) ->
+    | Some {Summary.ret= ret_val} ->
         Dom.add_mem (Loc.of_id id) ret_val astate
-    | _ ->
+    | None ->
         astate
 
 
-  let call {interproc= {tenv; analyze_dependency}; get_formals; get_instantiated_cost; is_param}
-      node idx ((ret_id, ret_typ) as ret) callee args captured_vars location astate =
+  let get_kotlin_lazy_method =
+    let regexp =
+      (* NOTE: Found two cases so far, `getFoo` and `getFoo$<full class path>`. *)
+      Re.Str.regexp "^get\\([a-zA-Z0-9_]*\\)"
+    in
+    fun ~caller ~callee ->
+      if
+        Procname.is_java callee && String.equal (Procname.to_string callee) "Object Lazy.getValue()"
+      then
+        let getter = Procname.get_method caller in
+        match Procname.get_class_type_name caller with
+        | Some class_name when Re.Str.string_match regexp getter 0 ->
+            let original_method = String.uncapitalize (Re.Str.matched_group 1 getter) in
+            let invoke_class_name =
+              Typ.Name.Java.from_string (Typ.Name.name class_name ^ "$" ^ original_method ^ "$2")
+            in
+            Some
+              (Procname.make_java ~class_name:invoke_class_name
+                 ~return_type:(Some StdTyp.Java.pointer_to_java_lang_object) ~method_name:"invoke"
+                 ~parameters:[] ~kind:Non_Static )
+        | _ ->
+            None
+      else None
+
+
+  let call {interproc= {proc_desc; tenv; analyze_dependency}; get_formals; is_param}
+      (ret_id, ret_typ) callee args location astate =
+    let callee =
+      get_kotlin_lazy_method ~caller:(Procdesc.get_proc_name proc_desc) ~callee
+      |> Option.value_map ~default:callee ~f:(fun invoke ->
+             Logging.d_printfln_escaped "Replace (%a) to (%a)" Procname.pp callee Procname.pp invoke ;
+             invoke )
+    in
     match FbGKInteraction.get_config_check ~is_param tenv callee args with
     | Some (`Config config) ->
         Dom.call_config_check ret_id config astate
@@ -1107,24 +1139,13 @@ module TransferFunctions = struct
         Dom.add_mem (Loc.of_pvar pvar) (Val.of_config config) astate
     | None ->
         (* normal function calls *)
-        let call =
-          CostInstantiate.Call.
-            { loc= location
-            ; pname= callee
-            ; node= CFG.Node.to_instr idx node
-            ; args
-            ; captured_vars
-            ; ret }
-        in
-        let instantiated_cost = get_instantiated_cost call in
         let formals = get_formals callee in
-        Dom.call tenv analyze_dependency ~instantiated_cost ret_typ ~callee formals args location
-          astate
+        Dom.call tenv analyze_dependency ret_typ ~callee formals args location astate
         |> add_ret analyze_dependency ret_id callee
 
 
   let exec_instr ({Dom.condition_checks} as astate)
-      ({interproc= {tenv; analyze_dependency}; is_param} as analysis_data) node idx instr =
+      ({interproc= {tenv; analyze_dependency}; is_param} as analysis_data) _node _idx instr =
     match (instr : Sil.instr) with
     | Load {id; e} -> (
       match FbGKInteraction.get_config ~is_param e with
@@ -1169,11 +1190,10 @@ module TransferFunctions = struct
         , _ )
       when Procname.equal dispatch_sync BuiltinDecl.dispatch_sync ->
         let args = List.map captured_vars ~f:(fun (exp, _, typ, _) -> (exp, typ)) in
-        call analysis_data node idx ret callee args [] location astate
-    | Call (ret, Const (Cfun callee), args, location, _) ->
-        call analysis_data node idx ret callee args [] location astate
-    | Call (ret, Closure {name= callee; captured_vars}, args, location, _) ->
-        call analysis_data node idx ret callee args captured_vars location astate
+        call analysis_data ret callee args location astate
+    | Call (ret, Const (Cfun callee), args, location, _)
+    | Call (ret, Closure {name= callee}, args, location, _) ->
+        call analysis_data ret callee args location astate
     | Prune (e, _, _, _) ->
         Dom.prune e astate
     | _ ->
@@ -1205,12 +1225,11 @@ let checker ({InterproceduralAnalysis.proc_desc} as analysis_data) =
     let get_formals pname =
       Attributes.load pname |> Option.map ~f:ProcAttributes.get_pvar_formals
     in
-    let get_instantiated_cost = CostInstantiate.get_instantiated_cost analysis_data in
     let is_param =
       let formals = Procdesc.get_pvar_formals proc_desc in
       fun pvar -> List.exists formals ~f:(fun (formal, _) -> Pvar.equal pvar formal)
     in
-    let analysis_data = {interproc= analysis_data; get_formals; get_instantiated_cost; is_param} in
+    let analysis_data = {interproc= analysis_data; get_formals; is_param} in
     Option.map (Analyzer.compute_post analysis_data ~initial:Dom.init proc_desc) ~f:(fun astate ->
         let has_call_stmt = has_call_stmt proc_desc in
         Dom.to_summary pname ~has_call_stmt astate )

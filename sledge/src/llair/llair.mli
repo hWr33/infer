@@ -12,7 +12,7 @@ module Loc = Loc
 module Typ = Typ
 module Reg = Reg
 module Exp = Exp
-module Function = Function
+module FuncName = FuncName
 module Global = Global
 module GlobalDefn = GlobalDefn
 
@@ -82,22 +82,31 @@ type label = string
 (** A jump to a block. *)
 type jump = private {mutable dst: block; mutable retreating: bool}
 
+and call_target =
+  { mutable func: func
+  ; mutable recursive: bool
+        (** Holds unless this call target is definitely not recursive *) }
+
+and icall_target =
+  { ptr: Exp.t  (** Dynamically resolved function pointer. *)
+  ; mutable candidates: call_target iarray
+        (** Statically computed over-approximation of possible call targets. *)
+  }
+
 and callee =
-  | Direct of func  (** Statically resolved function *)
-  | Indirect of Exp.t  (** Dynamically resolved function-pointer *)
+  | Direct of call_target  (** Statically resolved function *)
+  | Indirect of icall_target  (** Dynamically resolved function *)
   | Intrinsic of Intrinsic.t
       (** Intrinsic implemented in analyzer rather than source code *)
 
 (** A call to a function. *)
 and 'a call =
-  { mutable callee: 'a
+  { callee: 'a
   ; typ: Typ.t  (** Type of the callee. *)
   ; actuals: Exp.t iarray  (** Actual arguments. *)
   ; areturn: Reg.t option  (** Register to receive return value. *)
   ; return: jump  (** Return destination. *)
   ; throw: jump option  (** Handler destination. *)
-  ; mutable recursive: bool
-        (** Holds unless [callee] is definitely not recursive. *)
   ; loc: Loc.t }
 
 (** Block terminators for function call/return or other control transfers. *)
@@ -125,14 +134,14 @@ and block = private
   ; mutable parent: func
   ; mutable sort_index: int
         (** Position in a topological order, ignoring [retreating] edges. *)
-  ; mutable checkpoint_dists: int Function.Map.t
-        (** Distances from this block to some checkpoint functions' entries,
-            as computed by [Program.compute_distances]. *) }
+  ; mutable goal_distance: int
+        (** An upper bound on the distance from this block to the end of the
+            current goal trace, measured in blocks. *) }
 
 (** A function is a control-flow graph with distinguished entry block, whose
     parameters are the function parameters. *)
 and func = private
-  { name: Function.t
+  { name: FuncName.t
   ; formals: Reg.t iarray  (** Formal parameters *)
   ; freturn: Reg.t option
   ; fthrow: Reg.t
@@ -141,7 +150,7 @@ and func = private
   ; loc: Loc.t }
 
 type ip
-type functions = func Function.Map.t
+type functions = func FuncName.Map.t
 
 type program = private
   { globals: GlobalDefn.t iarray  (** Global definitions. *)
@@ -217,7 +226,7 @@ module Term : sig
     -> return:jump
     -> throw:jump option
     -> loc:Loc.t
-    -> t * (callee:func -> unit)
+    -> term * (callee:func -> unit)
 
   val icall :
        callee:Exp.t
@@ -227,7 +236,7 @@ module Term : sig
     -> return:jump
     -> throw:jump option
     -> loc:Loc.t
-    -> term
+    -> term * (candidates:func iarray -> unit)
 
   val intrinsic :
        callee:Intrinsic.t
@@ -250,7 +259,10 @@ module Block : sig
   type t = block [@@deriving compare, equal, sexp_of]
 
   val pp : t pp
+  val pp_ident : t pp
   val mk : lbl:label -> cmnd:cmnd -> term:term -> block
+  val set_goal_distance : int -> t -> unit
+  val iter : t -> ip iter
 
   module Map : Map.S with type key := t
   module Tbl : HashTable.S with type key := t
@@ -262,7 +274,9 @@ module IP : sig
   val pp : t pp
   val mk : block -> t
   val block : t -> block
+  val index : t -> int
   val inst : t -> inst option
+  val loc : t -> Loc.t
   val succ : t -> t
   val is_schedule_point : t -> bool
 
@@ -278,7 +292,7 @@ module Func : sig
   include Invariant.S with type t := t
 
   val mk :
-       name:Function.t
+       name:FuncName.t
     -> formals:Reg.t iarray
     -> freturn:Reg.t option
     -> fthrow:Reg.t
@@ -288,7 +302,7 @@ module Func : sig
     -> t
 
   val mk_undefined :
-       name:Function.t
+       name:FuncName.t
     -> formals:Reg.t iarray
     -> freturn:Reg.t option
     -> fthrow:Reg.t
@@ -313,10 +327,4 @@ module Program : sig
   include Invariant.S with type t := t
 
   val mk : globals:GlobalDefn.t list -> functions:func list -> t
-
-  val compute_distances :
-    entry:block -> trace:Function.t iarray -> t -> unit
-  (** Compute distances to the next "checkpoint" function in the [trace] for
-      each block reachable from the last checkpoint, and store the results
-      in the [checkpoint_dists] field of those blocks. *)
 end

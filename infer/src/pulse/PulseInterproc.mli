@@ -9,12 +9,43 @@ open! IStd
 open PulseBasicInterface
 open PulseDomainInterface
 
-val apply_prepost :
+type call_state
+
+type contradiction = private
+  | Aliasing of
+      { addr_caller: AbstractValue.t
+      ; addr_callee: AbstractValue.t
+      ; addr_callee': AbstractValue.t
+      ; call_state: call_state }
+      (** raised when the precondition and the current state disagree on the aliasing, i.e. some
+          addresses [callee_addr] and [callee_addr'] that are distinct in the pre are aliased to a
+          single address [caller_addr] in the caller's current state. Typically raised when calling
+          [foo(z,z)] where the spec for [foo(x,y)] says that [x] and [y] are disjoint. *)
+  | DynamicTypeNeeded of AbstractValue.t Specialization.HeapPath.Map.t
+      (** A map [path -> value] such that each path leads to a value (in the caller space) that
+          requires dynamic type specialization *)
+  | CapturedFormalActualLength of
+      { captured_formals: (Var.t * Typ.t) list
+      ; captured_actuals: ((AbstractValue.t * ValueHistory.t) * Typ.t) list }
+  | FormalActualLength of
+      {formals: (Var.t * Typ.t) list; actuals: ((AbstractValue.t * ValueHistory.t) * Typ.t) list}
+  | PathCondition
+
+val is_aliasing_contradiction : contradiction -> bool
+
+val is_dynamic_type_needed_contradiction :
+  contradiction -> AbstractValue.t Specialization.HeapPath.Map.t option
+
+val merge_contradictions : contradiction option -> contradiction option -> contradiction option
+(** applying a summary in the caller context may lead to a contradiction; if the summary is a
+    non-trivial list of disjuncts, we will merge all possible contradictions, in each disjunct, into
+    a single one, using this [merge_contradictions] function. *)
+
+val apply_summary :
      PathContext.t
-  -> is_isl_error_prepost:bool
   -> Procname.t
   -> Location.t
-  -> callee_prepost:AbductiveDomain.t
+  -> callee_summary:AbductiveDomain.Summary.t
   -> captured_formals:(Var.t * Typ.t) list
   -> captured_actuals:((AbstractValue.t * ValueHistory.t) * Typ.t) list
   -> formals:(Var.t * Typ.t) list
@@ -22,12 +53,14 @@ val apply_prepost :
   -> AbductiveDomain.t
   -> ( AbductiveDomain.t
      * (AbstractValue.t * ValueHistory.t) option
-     * (AbstractValue.t * ValueHistory.t) AbstractValue.Map.t )
+     * (AbstractValue.t * ValueHistory.t) AbstractValue.Map.t
+     * ValueHistory.t CellId.Map.t )
      AccessResult.t
      SatUnsat.t
+     * contradiction option
 (** result of applying one pre/post pair of a callee's summary:
 
-    - {!SatUnsat.Unsat} if that path in the callee is infeasible
+    - {!PulseSatUnsat.Unsat} if that path in the callee is infeasible
     - otherwise, there can be an error detected
     - otherwise, the result is a new abstract state, an optional return value, and a substitution
       [callee_abstract_value -> caller_abstract_value] mapping callee's abstract values to what they

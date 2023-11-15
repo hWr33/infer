@@ -30,19 +30,18 @@ let method_signature_of_pointer tenv pointer =
   with CFrontend_errors.Invalid_declaration -> None
 
 
-let get_method_name_from_clang tenv ms_opt =
+let get_method_name_from_clang ms_opt =
   match ms_opt with
   | Some ms -> (
     match CAst_utils.get_decl_opt ms.CMethodSignature.pointer_to_parent with
     | Some decl -> (
-        ignore (CType_decl.add_types_from_decl_to_tenv tenv decl) ;
-        match ObjcCategory_decl.get_base_class_name_from_category decl with
-        | Some class_typename ->
-            let procname = ms.CMethodSignature.name in
-            let new_procname = Procname.replace_class procname class_typename in
-            Some new_procname
-        | None ->
-            Some ms.CMethodSignature.name )
+      match ObjcCategory_decl.get_base_class_name_from_category decl with
+      | Some class_typename ->
+          let procname = ms.CMethodSignature.name in
+          let new_procname = Procname.replace_class procname class_typename in
+          Some new_procname
+      | None ->
+          Some ms.CMethodSignature.name )
     | None ->
         Some ms.CMethodSignature.name )
   | None ->
@@ -144,6 +143,19 @@ let get_const_params_indices params =
   aux [] params
 
 
+(** Returns a list of the indices of expressions in [args] which are passed by reference *)
+let get_reference_indices params =
+  let i = ref 0 in
+  let rec aux result = function
+    | [] ->
+        List.rev result
+    | ({is_reference} : CMethodSignature.param_type) :: tl ->
+        incr i ;
+        if is_reference then aux ((!i - 1) :: result) tl else aux result tl
+  in
+  aux [] params
+
+
 let get_objc_property_accessor tenv ms =
   let open Clang_ast_t in
   match CAst_utils.get_decl_opt ms.CMethodSignature.pointer_to_property_opt with
@@ -185,9 +197,8 @@ let find_sentinel_attribute attrs =
         None )
 
 
-(** Creates a procedure description. *)
-let create_local_procdesc ?(set_objc_accessor_attr = false) ?(record_lambda_captured = false)
-    ?(is_cpp_lambda_call_operator = false) trans_unit_ctx cfg tenv ms fbody captured =
+let create_attributes_helper ?loc_instantiated ?(set_objc_accessor_attr = false) trans_unit_ctx tenv
+    ms fbody captured_mangled_not_formals =
   let defined = not (List.is_empty fbody) in
   let proc_name = ms.CMethodSignature.name in
   let clang_method_kind = ms.CMethodSignature.method_kind in
@@ -202,6 +213,69 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) ?(record_lambda_capt
     | `Public ->
         Public
   in
+  let all_params = Option.to_list ms.CMethodSignature.class_param @ ms.CMethodSignature.params in
+  let has_added_return_param = ms.CMethodSignature.has_added_return_param in
+  let formals =
+    List.map
+      ~f:(fun ({name; typ; annot} : CMethodSignature.param_type) -> (name, typ, annot))
+      all_params
+  in
+  let const_formals = get_const_params_indices all_params in
+  let reference_formals = get_reference_indices all_params in
+  let source_range = ms.CMethodSignature.loc in
+  let loc_start =
+    CLocation.location_of_source_range trans_unit_ctx.CFrontend_config.source_file source_range
+  in
+  let ret_type, ret_annots = ms.CMethodSignature.ret_type in
+  let objc_property_accessor =
+    if set_objc_accessor_attr then get_objc_property_accessor tenv ms else None
+  in
+  let translation_unit = trans_unit_ctx.CFrontend_config.source_file in
+  { (ProcAttributes.default translation_unit proc_name) with
+    ProcAttributes.captured= captured_mangled_not_formals
+  ; formals
+  ; const_formals
+  ; reference_formals
+  ; has_added_return_param
+  ; is_ret_type_pod= ms.CMethodSignature.is_ret_type_pod
+  ; is_ret_constexpr= ms.CMethodSignature.is_ret_constexpr
+  ; access
+  ; is_cpp_const_member_fun= ms.CMethodSignature.is_cpp_const_member_fun
+  ; is_cpp_copy_ctor= ms.CMethodSignature.is_cpp_copy_ctor
+  ; is_cpp_move_ctor= ms.CMethodSignature.is_cpp_move_ctor
+  ; is_cpp_copy_assignment= ms.CMethodSignature.is_cpp_copy_assignment
+  ; is_cpp_deleted= ms.CMethodSignature.is_cpp_deleted
+  ; is_cpp_implicit= ms.CMethodSignature.is_cpp_implicit
+  ; is_defined= defined
+  ; is_biabduction_model= Config.biabduction_models_mode
+  ; block_as_arg_attributes= ms.CMethodSignature.block_as_arg_attributes
+  ; is_no_return= ms.CMethodSignature.is_no_return
+  ; is_objc_arc_on= trans_unit_ctx.CFrontend_config.is_objc_arc_on
+  ; is_clang_variadic= ms.CMethodSignature.is_variadic
+  ; sentinel_attr= find_sentinel_attribute ms.CMethodSignature.attributes
+  ; loc= loc_start
+  ; loc_instantiated
+  ; clang_method_kind
+  ; objc_accessor= objc_property_accessor
+  ; ret_type
+  ; ret_annots }
+
+
+let create_attributes ?loc_instantiated ?(set_objc_accessor_attr = false) trans_unit_ctx tenv ms
+    fbody captured =
+  let captured_mangled =
+    List.map ~f:(fun (pvar, typ, capture_mode) -> {CapturedVar.pvar; typ; capture_mode}) captured
+  in
+  create_attributes_helper ?loc_instantiated ~set_objc_accessor_attr trans_unit_ctx tenv ms fbody
+    captured_mangled
+
+
+(** Creates a procedure description. *)
+let create_local_procdesc ?loc_instantiated ?(set_objc_accessor_attr = false)
+    ?(record_lambda_captured = false) ?(is_cpp_lambda_call_operator = false) trans_unit_ctx cfg tenv
+    ms fbody captured =
+  let defined = not (List.is_empty fbody) in
+  let proc_name = ms.CMethodSignature.name in
   let captured_mangled =
     List.map
       ~f:(fun (pvar, typ, capture_mode) ->
@@ -223,56 +297,23 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) ?(record_lambda_capt
     else captured_mangled
   in
   let create_new_procdesc () =
-    let all_params = Option.to_list ms.CMethodSignature.class_param @ ms.CMethodSignature.params in
-    let has_added_return_param = ms.CMethodSignature.has_added_return_param in
-    let formals =
-      List.map
-        ~f:(fun ({name; typ; annot} : CMethodSignature.param_type) -> (name, typ, annot))
-        all_params
-    in
-    let const_formals = get_const_params_indices all_params in
-    let source_range = ms.CMethodSignature.loc in
     L.(debug Capture Verbose)
       "@\nCreating a new procdesc for function: '%a'@\n@." Procname.pp proc_name ;
     L.(debug Capture Verbose) "@\nms = %a@\n@." CMethodSignature.pp ms ;
-    let loc_start =
-      CLocation.location_of_source_range trans_unit_ctx.CFrontend_config.source_file source_range
+    let proc_attributes =
+      create_attributes_helper ?loc_instantiated ~set_objc_accessor_attr trans_unit_ctx tenv ms
+        fbody captured_mangled_not_formals
     in
-    let loc_exit =
-      CLocation.location_of_source_range ~pick_location:`End
-        trans_unit_ctx.CFrontend_config.source_file source_range
-    in
-    let ret_type, ret_annots = ms.CMethodSignature.ret_type in
-    let objc_property_accessor =
-      if set_objc_accessor_attr then get_objc_property_accessor tenv ms else None
-    in
-    let translation_unit = trans_unit_ctx.CFrontend_config.source_file in
-    let procdesc =
-      let proc_attributes =
-        { (ProcAttributes.default translation_unit proc_name) with
-          ProcAttributes.captured= captured_mangled_not_formals
-        ; formals
-        ; const_formals
-        ; has_added_return_param
-        ; is_ret_type_pod= ms.CMethodSignature.is_ret_type_pod
-        ; is_ret_constexpr= ms.CMethodSignature.is_ret_constexpr
-        ; access
-        ; is_defined= defined
-        ; is_biabduction_model= Config.biabduction_models_mode
-        ; passed_as_noescape_block_to= ms.CMethodSignature.passed_as_noescape_block_to
-        ; is_no_return= ms.CMethodSignature.is_no_return
-        ; is_objc_arc_on= trans_unit_ctx.CFrontend_config.is_objc_arc_on
-        ; is_variadic= ms.CMethodSignature.is_variadic
-        ; sentinel_attr= find_sentinel_attribute ms.CMethodSignature.attributes
-        ; loc= loc_start
-        ; clang_method_kind
-        ; objc_accessor= objc_property_accessor
-        ; ret_type
-        ; ret_annots }
-      in
-      Cfg.create_proc_desc cfg proc_attributes
-    in
+    let procdesc = Cfg.create_proc_desc cfg proc_attributes in
     if defined then (
+      let source_range = ms.CMethodSignature.loc in
+      let loc_start =
+        CLocation.location_of_source_range trans_unit_ctx.CFrontend_config.source_file source_range
+      in
+      let loc_exit =
+        CLocation.location_of_source_range ~pick_location:`End
+          trans_unit_ctx.CFrontend_config.source_file source_range
+      in
       let start_node = Procdesc.create_node procdesc loc_start Procdesc.Node.Start_node [] in
       let exit_node = Procdesc.create_node procdesc loc_exit Procdesc.Node.Exit_node [] in
       Procdesc.set_start_node procdesc start_node ;
@@ -286,14 +327,14 @@ let create_local_procdesc ?(set_objc_accessor_attr = false) ?(record_lambda_capt
        then we want to record captured variables in the previously created procdesc *)
     ignore
       ( if record_lambda_captured then
-        match Procname.Hash.find cfg proc_name with
-        | procdesc_prev ->
-            let new_attributes =
-              {(Procdesc.get_attributes procdesc_prev) with captured= captured_mangled}
-            in
-            Procdesc.set_attributes procdesc_prev new_attributes
-        | exception Caml.Not_found ->
-            () ) ;
+          match Procname.Hash.find cfg proc_name with
+          | procdesc_prev ->
+              let new_attributes =
+                {(Procdesc.get_attributes procdesc_prev) with captured= captured_mangled}
+              in
+              Procdesc.set_attributes procdesc_prev new_attributes
+          | exception Caml.Not_found ->
+              () ) ;
     false )
 
 
@@ -306,7 +347,14 @@ let create_external_procdesc trans_unit_ctx cfg proc_name clang_method_kind type
           ( ret_type
           , List.map ~f:(fun typ -> (Mangled.from_string "x", typ, Annot.Item.empty)) arg_types )
       | None ->
-          (StdTyp.void, [])
+          if
+            Option.exists (Procname.get_class_name proc_name) ~f:(String.equal "NSArray")
+            && String.equal (Procname.get_method proc_name) "objectEnumerator"
+          then
+            let nsenumerator_typ = Typ.mk_struct (Typ.Name.Objc.from_string "NSEnumerator") in
+            let nsarray_typ = Typ.mk_struct (Typ.Name.Objc.from_string "NSArray") in
+            (nsenumerator_typ, [(Mangled.from_string "self", nsarray_typ, Annot.Item.empty)])
+          else (StdTyp.void, [])
     in
     let proc_attributes =
       { (ProcAttributes.default trans_unit_ctx.CFrontend_config.source_file proc_name) with

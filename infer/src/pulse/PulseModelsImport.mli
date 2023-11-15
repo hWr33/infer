@@ -8,12 +8,24 @@
 open! IStd
 open PulseBasicInterface
 open PulseDomainInterface
-open PulseOperations.Import
+open PulseOperationResult.Import
 
-type arg_payload = AbstractValue.t * ValueHistory.t
+type arg_payload = ValueOrigin.t
 
 type model_data =
   { analysis_data: PulseSummary.t InterproceduralAnalysis.t
+  ; dispatch_call_eval_args:
+         PulseSummary.t InterproceduralAnalysis.t
+      -> PathContext.t
+      -> Ident.t * Typ.t
+      -> Exp.t
+      -> (Exp.t * Typ.t) list
+      -> arg_payload PulseAliasSpecialization.FuncArg.t list
+      -> Location.t
+      -> CallFlags.t
+      -> AbductiveDomain.t
+      -> Procname.t option
+      -> ExecutionDomain.t AccessResult.t list
   ; path: PathContext.t
   ; callee_procname: Procname.t
   ; location: Location.t
@@ -26,22 +38,38 @@ type matcher = (Tenv.t * Procname.t, model, arg_payload) ProcnameDispatcher.Call
 module Hist : sig
   val alloc_event : PathContext.t -> Location.t -> ?more:string -> string -> ValueHistory.event
 
-  val call_event : PathContext.t -> Location.t -> ?more:string -> string -> ValueHistory.event
+  val call_event :
+       PathContext.t
+    -> ?in_call:ValueHistory.t
+    -> Location.t
+    -> ?more:string
+    -> string
+    -> ValueHistory.event
 
   val add_event : PathContext.t -> ValueHistory.event -> ValueHistory.t -> ValueHistory.t
 
   val single_event : PathContext.t -> ValueHistory.event -> ValueHistory.t
 
   val add_call :
-    PathContext.t -> Location.t -> string -> ?more:string -> ValueHistory.t -> ValueHistory.t
+       PathContext.t
+    -> ?in_call:ValueHistory.t
+    -> Location.t
+    -> string
+    -> ?more:string
+    -> ValueHistory.t
+    -> ValueHistory.t
 
-  val single_call : PathContext.t -> Location.t -> ?more:string -> string -> ValueHistory.t
+  val single_call :
+       PathContext.t
+    -> ?in_call:ValueHistory.t
+    -> Location.t
+    -> ?more:string
+    -> string
+    -> ValueHistory.t
 
   val single_alloc : PathContext.t -> Location.t -> ?more:string -> string -> ValueHistory.t
 
   val binop : PathContext.t -> Binop.t -> ValueHistory.t -> ValueHistory.t -> ValueHistory.t
-
-  val hist : PathContext.t -> ValueHistory.t -> ValueHistory.t
 end
 
 module Basic : sig
@@ -74,6 +102,21 @@ module Basic : sig
   val shallow_copy_model :
     string -> AbstractValue.t * ValueHistory.t -> AbstractValue.t * ValueHistory.t -> model
 
+  val deep_copy :
+       PathContext.t
+    -> Location.t
+    -> value:AbstractValue.t * ValueHistory.t
+    -> desc:string
+    -> AbductiveDomain.t
+    -> (AbductiveDomain.t * (AbstractValue.t * ValueHistory.t)) PulseOperationResult.t
+
+  val alloc_value_address :
+       Typ.t
+    -> desc:string
+    -> model_data
+    -> AbductiveDomain.t
+    -> (AbductiveDomain.t * (AbstractValue.t * ValueHistory.t)) PulseOperationResult.t
+
   val early_exit : model
 
   val return_int : desc:string -> int64 -> model
@@ -87,7 +130,7 @@ module Basic : sig
   val free_or_delete :
        [< `Delete | `Free]
     -> Invalidation.t
-    -> (AbstractValue.t * ValueHistory.t) ProcnameDispatcher.Call.FuncArg.t
+    -> ValueOrigin.t ProcnameDispatcher.Call.FuncArg.t
     -> model
 
   val alloc_not_null :
@@ -97,7 +140,7 @@ module Basic : sig
     -> initialize:bool
     -> model_data
     -> AbductiveDomain.t
-    -> AbductiveDomain.t AccessResult.t
+    -> AbductiveDomain.t PulseOperationResult.t
 
   val alloc_no_leak_not_null :
        ?desc:string
@@ -105,7 +148,18 @@ module Basic : sig
     -> initialize:bool
     -> model_data
     -> AbductiveDomain.t
-    -> AbductiveDomain.t AccessResult.t
+    -> AbductiveDomain.t PulseOperationResult.t
+
+  val call_constructor :
+       Typ.name
+    -> Typ.t list
+    -> ValueOrigin.t PulseAliasSpecialization.FuncArg.t list
+    -> Exp.t
+    -> model_data
+    -> AbductiveDomain.t
+    -> ExecutionDomain.t AccessResult.t list
+
+  val assert_ : (AbstractValue.t * ValueHistory.t) ProcnameDispatcher.Call.FuncArg.t -> model
 
   val unknown_call :
     string -> (AbstractValue.t * ValueHistory.t) ProcnameDispatcher.Call.FuncArg.t list -> model

@@ -9,15 +9,12 @@ open! IStd
 module F = Format
 
 (** Names for fields of class/struct/union *)
-type t [@@deriving compare, equal, yojson_of]
-
-val loose_compare : t -> t -> int
-(** Similar to compare, but addresses [CStruct x] and [CppClass x] as equal. *)
+type t [@@deriving compare, equal, yojson_of, sexp, hash]
 
 val compare_name : t -> t -> int
 (** Similar to compare, but compares only names, except template arguments. *)
 
-val make : Typ.Name.t -> string -> t
+val make : ?capture_mode:CapturedVar.capture_mode -> Typ.Name.t -> string -> t
 (** create a field of the given class and fieldname *)
 
 val get_class_name : t -> Typ.Name.t
@@ -26,11 +23,15 @@ val get_field_name : t -> string
 
 val mk_fake_capture_field : id:int -> Typ.t -> CapturedVar.capture_mode -> t
 
+val mk_capture_field_in_cpp_lambda : Mangled.t -> CapturedVar.capture_mode -> t
+
 val is_fake_capture_field : t -> bool
+
+val is_capture_field_in_cpp_lambda : t -> bool
 
 val is_fake_capture_field_weak : t -> bool
 
-val is_fake_capture_field_by_ref : t -> bool
+val is_capture_field_in_cpp_lambda_by_ref : t -> bool
 
 val get_capture_field_position : t -> int option
 

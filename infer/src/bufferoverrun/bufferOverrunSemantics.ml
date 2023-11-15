@@ -15,12 +15,19 @@ module BoField = BufferOverrunField
 module L = Logging
 module TraceSet = BufferOverrunTrace.Set
 
-let eval_const : Typ.IntegerWidths.t -> Const.t -> Val.t =
+let eval_const : IntegerWidths.t -> Const.t -> Val.t =
  fun integer_type_widths -> function
   | Const.Cint intlit ->
       Val.of_big_int (IntLit.to_big_int intlit)
   | Const.Cstr s ->
       Val.of_literal_string integer_type_widths s
+  | Const.Cfun _ ->
+      (* Const.Cfun represents the address of a function call.
+         For now, return just non-null unknown pointer.
+         TODO: set func_ptrs field to be a singleton set representing the function. To do that,
+         FuncPtr would have to be changed to store functions represented by Procname. Currently,
+         FuncPtr only stores functions represented as symbolic paths and closures.*)
+      {Val.unknown with itv= Itv.one}
   | _ ->
       Val.Itv.top
 
@@ -137,13 +144,13 @@ let rec must_alias_cmp : Exp.t -> Mem.t -> bool =
 let set_array_stride integer_type_widths typ v =
   match typ with
   | Typ.{desc= Tptr ({desc= Tint ikind}, Pk_pointer)} ->
-      let width = Typ.width_of_ikind integer_type_widths ikind in
+      let width = IntegerWidths.width_of_ikind integer_type_widths ikind in
       Val.set_array_stride (Z.of_int (width / 8)) v
   | _ ->
       v
 
 
-let rec eval : Typ.IntegerWidths.t -> Exp.t -> Mem.t -> Val.t =
+let rec eval : IntegerWidths.t -> Exp.t -> Mem.t -> Val.t =
  fun integer_type_widths exp mem ->
   if (not (Language.curr_language_is Java)) && must_alias_cmp exp mem then Val.Itv.zero
   else
@@ -217,13 +224,13 @@ and eval_lindex integer_type_widths array_exp index_exp mem =
         Val.plus_pi array_v index_v
 
 
-and eval_unop : Typ.IntegerWidths.t -> Unop.t -> Exp.t -> Mem.t -> Val.t =
+and eval_unop : IntegerWidths.t -> Unop.t -> Exp.t -> Mem.t -> Val.t =
  fun integer_type_widths unop e mem ->
   let v = eval integer_type_widths e mem in
   match unop with Unop.Neg -> Val.neg v | Unop.BNot -> Val.unknown_bit v | Unop.LNot -> Val.lnot v
 
 
-and eval_binop : Typ.IntegerWidths.t -> Binop.t -> Exp.t -> Exp.t -> Mem.t -> Val.t =
+and eval_binop : IntegerWidths.t -> Binop.t -> Exp.t -> Exp.t -> Mem.t -> Val.t =
  fun integer_type_widths binop e1 e2 mem ->
   let v1 = eval integer_type_widths e1 mem in
   let v2 = eval integer_type_widths e2 mem in
@@ -300,7 +307,7 @@ let rec eval_locs : Exp.t -> Mem.t -> PowLoc.t =
    when "x" is a program variable, (eval_arr "x") returns array blocks
    the "x" is pointing to, on the other hand, (eval "x") returns the
    abstract location of "x". *)
-let rec eval_arr : Typ.IntegerWidths.t -> Exp.t -> Mem.t -> Val.t =
+let rec eval_arr : IntegerWidths.t -> Exp.t -> Mem.t -> Val.t =
  fun integer_type_widths exp mem ->
   match exp with
   | Exp.Var id ->
@@ -404,20 +411,49 @@ let rec eval_sympath_partial ~mode params p mem =
         Mem.find (Loc.of_allocsite (Allocsite.make_symbol p)) mem
     | EvalPOCond | EvalPOReachability ->
         Val.Itv.top )
-  | BoField.(Prim (Symb.SymbolPath.Deref _) | Field _ | StarField _) ->
+  | BoField.(Field _ | StarField _ | Prim (Symb.SymbolPath.Deref _)) ->
       let locs = eval_locpath ~mode params p mem in
       Mem.find_set locs mem
 
 
+(* Import a path p from a callee as a set of locations to a caller.
+   There are the following cases:
+   (1) p involves dereference of a formal parameter:
+     Substitute the formal parameter with actual expression evaluating dereferences:
+     Example: p = "**A.f1", A is a formal parameter, actual is &B, B points
+       to C and D.
+       Return: {"C.f1", "D.f1"}
+   (2) p involves a formal parameter passed by value:
+     Return unknown location.
+     Example: p = A, A is a formal parameter, actual is B
+     Return: {"unknown"}
+     The reason why it is not possible to import A as B is that there is a mapping
+     from formal locations to evaluations of actual expressions in ParamBindings and
+     not to actual expression. That is, if the actual expression is A, we can get its
+     value, not the location itself. This is also why we can import dereferences precisely
+     (we get powloc part of such value). *)
 and eval_locpath ~mode params p mem =
   let res =
     match p with
     | BoField.Prim (Symb.SymbolPath.Pvar _ | Symb.SymbolPath.Callsite _) ->
-        let v = eval_sympath_partial ~mode params p mem in
-        Val.get_all_locs v
-    | BoField.Prim (Symb.SymbolPath.Deref (_, p)) ->
-        let v = eval_sympath_partial ~mode params p mem in
-        Val.get_all_locs v
+        PowLoc.unknown
+    | BoField.Prim (Symb.SymbolPath.Deref (deref_kind, p_base)) ->
+        let v = eval_sympath_partial ~mode params p_base mem in
+        if Val.is_unknown v then
+          (* The target of the pointer is unknown -> get the location representing the deref
+               symbolically. *)
+          let ptr_locs = eval_locpath ~mode params p_base mem in
+          let create_deref ptr_loc =
+            match Loc.get_path ptr_loc with
+            | None ->
+                Loc.unknown
+            | Some path ->
+                Loc.of_path (Symb.SymbolPath.deref ~deref_kind path)
+          in
+          PowLoc.fold
+            (fun ptr_loc ptr_locs -> PowLoc.add (create_deref ptr_loc) ptr_locs)
+            ptr_locs PowLoc.bot
+        else Val.get_all_locs v
     | BoField.Field {fn; prefix= p} ->
         let locs = eval_locpath ~mode params p mem in
         PowLoc.append_field ~fn locs
@@ -544,10 +580,14 @@ module Prune = struct
     eval_array_locs_length arr_locs mem
 
 
-  let update_mem_in_prune lv v ?(pruning_exp = PruningExp.Unknown) {prune_pairs; mem} =
-    let prune_pairs = PrunePairs.add lv (PrunedVal.make v pruning_exp) prune_pairs in
-    let mem = Mem.update_mem (PowLoc.singleton lv) v mem in
-    {prune_pairs; mem}
+  let update_mem_in_prune lv v ?(pruning_exp = PruningExp.Unknown)
+      ({prune_pairs; mem} as prune_state) =
+    (* Explicitly disable prune of locations which can be only weakly updated.*)
+    if AbsLoc.can_strong_update (PowLoc.singleton lv) then
+      let prune_pairs = PrunePairs.add lv (PrunedVal.make v pruning_exp) prune_pairs in
+      let mem = Mem.update_mem (PowLoc.singleton lv) v mem in
+      {prune_pairs; mem}
+    else prune_state
 
 
   let prune_has_next ~true_branch iterator ({mem} as astate) =
@@ -609,18 +649,30 @@ module Prune = struct
       tgts acc
 
 
+  let prune_stack_var pruned_id prune ({mem} as astate) =
+    let pruned_loc = Loc.of_id pruned_id in
+    let pruned_val = Mem.find pruned_loc mem in
+    let resulting_val = prune pruned_val in
+    let mem = Mem.update_mem (PowLoc.singleton pruned_loc) resulting_val mem in
+    (pruned_val, {astate with mem})
+
+
   let prune_unop : Exp.t -> t -> t =
    fun e ({mem} as astate) ->
     match e with
     | Exp.Var x ->
+        (* (1) prune the stack variable corresponding to x *)
+        let x_val, astate = prune_stack_var x Val.prune_ne_zero astate in
+        (* (2) prune heap variables which are aliases of the stack variable *)
         let accum_prune_var rhs tgt acc =
           match tgt with
           | AliasTarget.Simple {i} when IntLit.iszero i ->
-              (let v = Mem.find rhs mem in
+              (let v = Val.prune_eq x_val (Mem.find rhs mem) in
                if Val.is_bot v then acc
                else
                  let v' = Val.prune_ne_zero v in
-                 update_mem_in_prune rhs v' acc )
+                 let pruning_exp = PruningExp.make Binop.Ne ~lhs:v ~rhs:(Val.of_int 0) in
+                 update_mem_in_prune rhs v' ~pruning_exp acc )
               |> prune_linked_list_index rhs mem
               |> prune_iterator_offset_objc rhs mem
           | AliasTarget.Empty ->
@@ -643,10 +695,13 @@ module Prune = struct
         in
         AliasTargets.fold accum_prune_var (Mem.find_alias_id x mem) astate
     | Exp.UnOp (Unop.LNot, Exp.Var x, _) ->
+        (* (1) prune the stack variable corresponding to x *)
+        let x_val, astate = prune_stack_var x Val.prune_eq_zero astate in
+        (* (2) prune heap variables which are aliases of the stack variable *)
         let accum_prune_not_var rhs tgt acc =
           match tgt with
           | AliasTarget.Simple {i} when IntLit.iszero i ->
-              let v = Mem.find rhs mem in
+              let v = Val.prune_eq x_val (Mem.find rhs mem) in
               if Val.is_bot v then acc
               else
                 let v' = Val.prune_eq_zero v in
@@ -705,12 +760,18 @@ module Prune = struct
   let prune_simple_alias =
     let prune_alias_core ~val_prune_eq ~val_prune_le:_ ~make_pruning_exp _location
         integer_type_widths x e ({mem} as astate) =
+      let expr_val = eval integer_type_widths e mem in
+      (* (1) prune the stack variable corresponding to x *)
+      let x_val, astate = prune_stack_var x (fun loc_val -> val_prune_eq loc_val expr_val) astate in
+      (* (2) prune the heap variable which is an simple alias of the stack variable *)
       List.fold (Mem.find_simple_alias x mem) ~init:astate ~f:(fun acc (lv, i) ->
-          let lhs = Mem.find lv mem in
-          let rhs =
-            let v' = eval integer_type_widths e mem in
-            if IntLit.iszero i then v' else Val.minus_a v' (Val.of_int_lit i)
+          let lhs, rhs =
+            if IntLit.iszero i then (x_val, expr_val)
+            else
+              let i_val = Val.of_int_lit i in
+              (Val.minus_a x_val i_val, Val.minus_a expr_val i_val)
           in
+          let lhs = Val.prune_eq lhs (Mem.find lv mem) in
           if Val.is_bot lhs || Val.is_bot rhs then acc
           else
             let v = val_prune_eq lhs rhs in
@@ -760,7 +821,7 @@ module Prune = struct
     gen_prune_alias_functions ~prune_alias_core
 
 
-  let rec prune_binop_left : Location.t -> Typ.IntegerWidths.t -> Exp.t -> t -> t =
+  let rec prune_binop_left : Location.t -> IntegerWidths.t -> Exp.t -> t -> t =
    fun location integer_type_widths e astate ->
     match e with
     | Exp.BinOp (comp, Exp.Cast (_, e1), e2) ->
@@ -796,7 +857,7 @@ module Prune = struct
         astate
 
 
-  let prune_binop_right : Location.t -> Typ.IntegerWidths.t -> Exp.t -> t -> t =
+  let prune_binop_right : Location.t -> IntegerWidths.t -> Exp.t -> t -> t =
    fun location integer_type_widths e astate ->
     match e with
     | Exp.BinOp (((Binop.Lt | Binop.Gt | Binop.Le | Binop.Ge | Binop.Eq | Binop.Ne) as c), e1, e2)
@@ -806,7 +867,7 @@ module Prune = struct
         astate
 
 
-  let prune_unreachable : Typ.IntegerWidths.t -> Exp.t -> t -> t =
+  let prune_unreachable : IntegerWidths.t -> Exp.t -> t -> t =
    fun integer_type_widths e ({mem} as astate) ->
     match mem with
     | Mem.(Unreachable | ExcRaised) ->
@@ -858,6 +919,8 @@ module Prune = struct
         astate
         |> prune_helper location integer_type_widths (Exp.UnOp (Unop.LNot, e1, t))
         |> prune_helper location integer_type_widths (Exp.UnOp (Unop.LNot, e2, t))
+    | Exp.UnOp (Unop.LNot, UnOp (Unop.LNot, e, _), _) ->
+        prune_helper location integer_type_widths e astate
     | Exp.UnOp (Unop.LNot, Exp.BinOp ((Binop.Lt as c), e1, e2), _)
     | Exp.UnOp (Unop.LNot, Exp.BinOp ((Binop.Gt as c), e1, e2), _)
     | Exp.UnOp (Unop.LNot, Exp.BinOp ((Binop.Le as c), e1, e2), _)
@@ -880,7 +943,7 @@ module Prune = struct
         astate
 
 
-  let prune : Location.t -> Typ.IntegerWidths.t -> Exp.t -> Mem.t -> Mem.t =
+  let prune : Location.t -> IntegerWidths.t -> Exp.t -> Mem.t -> Mem.t =
    fun location integer_type_widths e mem ->
     let mem, prune_pairs = Mem.apply_latest_prune e mem in
     let {mem; prune_pairs} = prune_helper location integer_type_widths e {mem; prune_pairs} in

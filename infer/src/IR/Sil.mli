@@ -47,48 +47,52 @@ type instr_metadata =
   | Skip  (** no-op *)
   | TryEntry of {try_id: int; loc: Location.t}  (** entry of C++ try block *)
   | TryExit of {try_id: int; loc: Location.t}  (** exit of C++ try block *)
-  | VariableLifetimeBegins of Pvar.t * Typ.t * Location.t  (** stack variable declared *)
+  | VariableLifetimeBegins of
+      {pvar: Pvar.t; typ: Typ.t; loc: Location.t; is_cpp_structured_binding: bool}
+      (** stack variable declared *)
 [@@deriving compare]
 
-(** An instruction. *)
+(** An instruction. Syntactic invariants of instructions per-frontend are documented in
+    {!SilValidation}, where Clang is the most general validator (that is, it properly subsumes all
+    other validators). These invariants are enforced when --sil-validation is passed. *)
 type instr =
-  (* Note for frontend writers:
-     [x] must be used in a subsequent instruction, otherwise the entire
-     `Load` instruction may be eliminated by copy-propagation. *)
-  | Load of {id: Ident.t; e: Exp.t; root_typ: Typ.t; typ: Typ.t; loc: Location.t}
+  | Load of {id: Ident.t; e: Exp.t; typ: Typ.t; loc: Location.t}
       (** Load a value from the heap into an identifier.
 
-          [id = *exp:typ(root_typ)] where
+          [id = *e:typ] where
 
-          - [exp] is an expression denoting a heap address
-          - [typ] is typ of [exp] and [id]
-          - [root_typ] is the root type of [exp]
-
-          The [root_typ] is deprecated: it is broken in C/C++. We are removing [root_typ] in the
-          future, so please use [typ] instead. *)
-  | Store of {e1: Exp.t; root_typ: Typ.t; typ: Typ.t; e2: Exp.t; loc: Location.t}
+          - [e] is an expression denoting a heap address
+          - [typ] is the type of [*e] and [id]. *)
+  | Store of {e1: Exp.t; typ: Typ.t; e2: Exp.t; loc: Location.t}
       (** Store the value of an expression into the heap.
 
-          [*exp1:typ(root_typ) = exp2] where
+          [*e1:typ = e2] where
 
-          - [exp1] is an expression denoting a heap address
-          - [typ] is typ of [*exp1] and [exp2]
-          - [root_typ] is the root type of [exp1]
-          - [exp2] is the expression whose value is stored.
-
-          The [root_typ] is deprecated: it is broken in C/C++. We are removing [root_typ] in the
-          future, so please use [typ] instead. *)
+          - [e1] is an expression denoting a heap address
+          - [typ] is the type of [*e1] and [e2]. *)
   | Prune of Exp.t * Location.t * bool * if_kind
-      (** prune the state based on [exp=1], the boolean indicates whether true branch *)
+      (** The semantics of [Prune (exp, loc, is_then_branch, if_kind)] is that it prunes the state
+          (blocks, or diverges) if [exp] evaluates to [1]; the boolean [is_then_branch] is [true] if
+          this is the [then] branch of an [if] condition, [false] otherwise (it is meaningless if
+          [if_kind] is not [Ik_if], [Ik_bexp], or other [if]-like cases
+
+          This instruction, together with the CFG structure, is used to encode control-flow with
+          tests in the source program such as [if] branches and [while] loops. *)
   | Call of (Ident.t * Typ.t) * Exp.t * (Exp.t * Typ.t) list * Location.t * CallFlags.t
       (** [Call ((ret_id, ret_typ), e_fun, arg_ts, loc, call_flags)] represents an instruction
-          [ret_id = e_fun(arg_ts);] *)
+          [ret_id = e_fun(arg_ts)] *)
   | Metadata of instr_metadata
       (** hints about the program that are not strictly needed to understand its semantics, for
           instance information about its original syntactic structure *)
 [@@deriving compare]
 
 val equal_instr : instr -> instr -> bool
+
+val equal_structural_instr : instr -> instr -> Exp.t Exp.Map.t -> bool * Exp.t Exp.Map.t
+(** Compare instructions from different procedures without considering [loc]s, [ident]s, [pvar]s, or
+    [try_id]s. The [exp_map] parameter gives a mapping of names used in the first [instr] to those
+    used in the second, and the returned [exp_map] includes any additional mappings inferred from
+    this comparison. *)
 
 val skip_instr : instr
 

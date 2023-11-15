@@ -13,7 +13,9 @@ Supported languages:
 - C/C++/ObjC: Yes
 - C#/.Net: No
 - Erlang: No
+- Hack: No
 - Java: No
+- Python: No
 
 
 

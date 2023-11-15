@@ -25,12 +25,18 @@ val versionJson : string
 
 val clang_enabled : bool
 
+val erlang_enabled : bool
+
+val hack_enabled : bool
+
 val java_enabled : bool
 
 val java_version : int option
 
-val erlang_enabled : bool
-
 val xcode_enabled : bool
 
 val man_pages_last_modify_date : string
+
+val python_exe : string [@@warning "-unused-value-declaration"] (* used in unit tests *)
+
+val python_enabled : bool

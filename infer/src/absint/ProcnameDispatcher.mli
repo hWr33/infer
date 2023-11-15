@@ -124,6 +124,13 @@ module type NameCommon = sig
        ('context, 'f_in, 'f_out, _, 'arg_payload) templ_matcher
     -> 'f_in
     -> ('context, 'f_out, 'arg_payload) matcher
+  (** Ends template arguments with accept-NO further template arguments *)
+
+  val ( &+...>--> ) :
+       ('context, 'f_in, 'f_out, accept_more, 'arg_payload) templ_matcher
+    -> 'f_in
+    -> ('context, 'f_out, 'arg_payload) matcher
+  (** Ends template arguments with accept-ALL further template arguments *)
 
   val ( <>--> ) :
        ('context, 'f_in, 'f_out, 'arg_payload) name_matcher
@@ -153,18 +160,25 @@ module Call : sig
   (** Little abstraction over arguments: currently actual args, we'll want formal args later *)
   module FuncArg : sig
     type 'arg_payload t = {exp: Exp.t; typ: Typ.t; arg_payload: 'arg_payload}
+
+    val map_payload : f:('arg_payload -> 'arg_payload') -> 'arg_payload t -> 'arg_payload' t
   end
 
   include
     Common
       with type ('context, 'f, 'arg_payload) dispatcher =
-            'context -> Procname.t -> 'arg_payload FuncArg.t list -> 'f option
+        'context -> Procname.t -> 'arg_payload FuncArg.t list -> 'f option
 
   val merge_dispatchers :
        ('context, 'f, 'arg_payload) dispatcher
     -> ('context, 'f, 'arg_payload) dispatcher
     -> ('context, 'f, 'arg_payload) dispatcher
   (** Merges two dispatchers into a dispatcher *)
+
+  val contramap_arg_payload :
+       ('context, 'f, 'unwrapped_payload) matcher
+    -> f:('wrapped_payload -> 'unwrapped_payload)
+    -> ('context, 'f, 'wrapped_payload) matcher
 
   type ('context, 'f_in, 'f_proc_out, 'f_out, 'arg_payload) args_matcher
 
@@ -191,6 +205,11 @@ module Call : sig
     -> ('context, unit, _, 'f, 'f, 'arg_payload) one_arg
   (** Eats one arg of the given type *)
 
+  val any_arg_of_typ_exists :
+       ('context, unit, _, 'arg_payload) name_matcher list
+    -> ('context, unit, _, 'f, 'f, 'arg_payload) one_arg
+  (** Eats one arg of any of the given types *)
+
   val capt_arg_of_typ :
        ('context, unit, _, 'arg_payload) name_matcher
     -> ( 'context
@@ -202,25 +221,50 @@ module Call : sig
        one_arg
   (** Captures one arg of the given type *)
 
+  val capt_arg_of_typ_exists :
+       ('context, unit, _, 'arg_payload) name_matcher list
+    -> ( 'context
+       , 'arg_payload FuncArg.t
+       , 'wrapped_arg
+       , 'wrapped_arg -> 'f
+       , 'f
+       , 'arg_payload )
+       one_arg
+  (** Captures one arg of any of the given types *)
+
   val capt_arg_payload_of_typ :
        ('context, unit, _, 'arg_payload) name_matcher
     -> ('context, 'arg_payload, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg
   (** Captures the payload of one arg of the given type *)
+
+  val capt_arg_payload_of_typ_exists :
+       ('context, unit, _, 'arg_payload) name_matcher list
+    -> ('context, 'arg_payload, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg
+  (** Captures the payload of one arg of any of the given types *)
 
   val capt_exp_of_typ :
        ('context, unit, _, 'arg_payload) name_matcher
     -> ('context, Exp.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg
   (** Captures one arg expression of the given type *)
 
+  val capt_exp_of_typ_exists :
+       ('context, unit, _, 'arg_payload) name_matcher list
+    -> ('context, Exp.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg
+  (** Captures one arg expression of any of the given types *)
+
   val any_arg_of_prim_typ : Typ.t -> ('context, unit, _, 'f, 'f, 'arg_payload) one_arg
   (** Eats one arg of the given primitive type *)
+
+  val capt_arg_payload_of_prim_typ :
+    Typ.t -> ('context, 'arg_payload, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg
+  (** Captures the payload of one arg of the given primitive type *)
 
   val capt_exp_of_prim_typ :
     Typ.t -> ('context, Exp.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg
   (** Captures one arg expression of the given primitive type *)
 
-  val capt_var_exn : ('context, Ident.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg
-  (** Captures one arg Var. Fails with an internal error if the expression is not a Var *)
+  val capt_var : ('context, Ident.t, 'wrapped_arg, 'wrapped_arg -> 'f, 'f, 'arg_payload) one_arg
+  (** Captures one arg Var *)
 
   val ( $+ ) :
        ('context, 'f_in, 'f_proc_out, 'f_interm, 'arg_payload) args_matcher
@@ -337,4 +381,4 @@ module Call : sig
   (** Ends function arguments, accepts NO more function arguments. If the args do not match, raise
       an internal error. *)
 end
-[@@warning "-32"]
+[@@warning "-unused-value-declaration"]

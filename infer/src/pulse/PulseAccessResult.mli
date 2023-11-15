@@ -8,29 +8,26 @@
 open! IStd
 open PulseBasicInterface
 module AbductiveDomain = PulseAbductiveDomain
-module Decompiler = PulseAbductiveDecompiler
+module DecompilerExpr = PulseDecompilerExpr
 module Diagnostic = PulseDiagnostic
-
-type summary_error =
-  | PotentialInvalidAccessSummary of
-      { astate: AbductiveDomain.summary
-      ; address: Decompiler.expr
-      ; must_be_valid: Trace.t * Invalidation.must_be_valid_reason option }
-  | ReportableErrorSummary of {astate: AbductiveDomain.summary; diagnostic: Diagnostic.t}
-  | ISLErrorSummary of {astate: AbductiveDomain.summary}
 
 type error =
   | PotentialInvalidAccess of
       { astate: AbductiveDomain.t
-      ; address: Decompiler.expr
+      ; address: DecompilerExpr.t
       ; must_be_valid: Trace.t * Invalidation.must_be_valid_reason option }
   | ReportableError of {astate: AbductiveDomain.t; diagnostic: Diagnostic.t}
-  | ISLError of {astate: AbductiveDomain.t}
-  | Summary of summary_error
+  | WithSummary of error * AbductiveDomain.Summary.t
+      (** An error for which the summary corresponding to the abstract state has already been
+          computed, to avoid having to compute the summary for a given abstract state multiple
+          times. For convenience this is part of the [error] datatype but the invariant that an
+          [error] within a [WithSummary (error, summary)] cannot itself be a [WithSummary _]. *)
+
+val astate_of_error : error -> AbductiveDomain.t
 
 type 'a t = ('a, error) PulseResult.t
 
-type 'a summary = ('a, summary_error) PulseResult.t
+val with_summary : ('a, error * AbductiveDomain.Summary.t) PulseResult.t -> 'a t
 
 (** Intermediate datatype since {!AbductiveDomain} cannot refer to this module without creating a
     circular dependency.
@@ -38,14 +35,15 @@ type 'a summary = ('a, summary_error) PulseResult.t
     Purposefully omits [`MemoryLeak] errors as it's a good idea to double-check if you really want
     to report a leak. *)
 type abductive_error =
-  [ `ISLError of AbductiveDomain.t
-  | `PotentialInvalidAccess of
+  [ `PotentialInvalidAccess of
     AbductiveDomain.t * AbstractValue.t * (Trace.t * Invalidation.must_be_valid_reason option) ]
 
 type abductive_summary_error =
   [ `PotentialInvalidAccessSummary of
-    AbductiveDomain.summary * Decompiler.expr * (Trace.t * Invalidation.must_be_valid_reason option)
-  ]
+    AbductiveDomain.Summary.t
+    * AbductiveDomain.t
+    * DecompilerExpr.t
+    * (Trace.t * Invalidation.must_be_valid_reason option) ]
 
 val of_result_f : ('a, error) result -> f:(error -> 'a) -> 'a t
 
@@ -53,28 +51,30 @@ val of_result : (AbductiveDomain.t, error) result -> AbductiveDomain.t t
 
 val of_error_f : error -> f:(error -> 'a) -> 'a t
 
-val of_abductive_summary_error : [< abductive_summary_error] -> summary_error
+val of_abductive_summary_error : [< abductive_summary_error] -> error * AbductiveDomain.Summary.t
 
 val of_abductive_result : ('a, [< abductive_error]) result -> 'a t
 
-val of_abductive_summary_result : ('a, [< abductive_summary_error]) result -> 'a summary
-
-val of_abductive_access_result :
-     Trace.t
-  -> ( 'a
-     , [< `InvalidAccess of AbstractValue.t * Invalidation.t * Trace.t * AbductiveDomain.t
-       | abductive_error ] )
-     result
-  -> 'a t
-
-val of_summary : 'a summary -> 'a t
+val of_abductive_summary_result :
+  ('a, [< abductive_summary_error]) result -> ('a, error * AbductiveDomain.Summary.t) PulseResult.t
 
 val ignore_leaks :
-     ( AbductiveDomain.summary
-     , [< `MemoryLeak of AbductiveDomain.summary * Attribute.allocator * Trace.t * Location.t
-       | `ResourceLeak of AbductiveDomain.summary * JavaClassName.t * Trace.t * Location.t
+     ( AbductiveDomain.Summary.t
+     , [< `MemoryLeak of
+          AbductiveDomain.Summary.t * AbductiveDomain.t * Attribute.allocator * Trace.t * Location.t
+       | `JavaResourceLeak of
+         AbductiveDomain.Summary.t * AbductiveDomain.t * JavaClassName.t * Trace.t * Location.t
+       | `HackUnawaitedAwaitable of
+         AbductiveDomain.Summary.t * AbductiveDomain.t * Trace.t * Location.t
+       | `CSharpResourceLeak of
+         AbductiveDomain.Summary.t * AbductiveDomain.t * CSharpClassName.t * Trace.t * Location.t
        | `RetainCycle of
-         AbductiveDomain.summary * Trace.t list * Decompiler.expr * Decompiler.expr * Location.t
+         AbductiveDomain.Summary.t
+         * AbductiveDomain.t
+         * Trace.t list
+         * DecompilerExpr.t
+         * DecompilerExpr.t
+         * Location.t
        | abductive_summary_error ] )
      result
-  -> (AbductiveDomain.summary, [> abductive_summary_error]) result
+  -> (AbductiveDomain.Summary.t, [> abductive_summary_error]) result

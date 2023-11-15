@@ -34,15 +34,6 @@ Example:
   }
 ```
 
-## ASSIGN_POINTER_WARNING
-
-Reported as "Assign Pointer Warning" by [linters](/docs/next/checker-linters).
-
-This check fires when a pointer to an Obj-C object is tagged with an `assign`
-property (similar to the `-Warc-unsafe-retained-assign` compiler flag). Not
-holding a strong reference to the object makes it easy to accidentally create
-and use a dangling pointer.
-
 ## AUTORELEASEPOOL_SIZE_COMPLEXITY_INCREASE
 
 Reported as "Autoreleasepool Size Complexity Increase" by [cost](/docs/next/checker-cost).
@@ -72,6 +63,30 @@ Reported as "Autoreleasepool Size Unreachable At Exit" by [cost](/docs/next/chec
 \[EXPERIMENTAL\] This issue type indicates that the program's execution doesn't reach the exit
 node. Hence, we cannot compute a static bound of ObjC autoreleasepool's size for the procedure.
 
+## BAD_ARG
+
+Reported as "Bad Arg" by [pulse](/docs/next/checker-pulse).
+
+Bad arg in Erlang: Reports an error when the type of an argument is wrong or the argument is badly formed. Corresponds to the `badarg` error in the Erlang runtime.
+
+For example, trying to concatenate the number `3` with  the list `[1,2]` gives `badarg` error because `3` is not a list.
+```erlang
+f() ->
+    3 ++ [1,2]. // badarg error
+```
+
+Note that although the first argument needs to be a list, the second argument may not be a list.
+For instance, concatenating [1,2] with the number `3` raises no error in Erlang.
+```erlang
+g() ->
+    [1,2] ++ 3. // no error. Result: [1,2|3]
+```
+
+## BAD_ARG_LATENT
+
+Reported as "Bad Arg Latent" by [pulse](/docs/next/checker-pulse).
+
+A latent [BAD_ARG](#bad_arg). See the [documentation on Pulse latent issues](/docs/next/checker-pulse#latent-issues).
 ## BAD_KEY
 
 Reported as "Bad Key" by [pulse](/docs/next/checker-pulse).
@@ -81,9 +96,12 @@ Bad key in Erlang: Reports an error when trying to access or update a non-existi
 For example, trying to update the key `2` in `M` gives `{badkey,2}` error because `2` is not present as a key in `M`.
 ```erlang
 f() ->
-    M = #{1 => 2},
+    M = #{},
     M#{2 := 3}.
 ```
+
+Note that maps currently use a recency abstraction, meaning that only the most recent key/value is tracked.
+Therefore, if a map is non-empty and we try to access a key other than the one we track, we just assume that it is there to avoid false positives.
 
 ## BAD_KEY_LATENT
 
@@ -108,25 +126,6 @@ f() ->
 Reported as "Bad Map Latent" by [pulse](/docs/next/checker-pulse).
 
 A latent [BAD_MAP](#bad_map). See the [documentation on Pulse latent issues](/docs/next/checker-pulse#latent-issues).
-## BAD_POINTER_COMPARISON
-
-Reported as "Bad Pointer Comparison" by [linters](/docs/next/checker-linters).
-
-Infer reports these warnings in Objective-C when a boxed primitive type such as
-`NSNumber *` is coerced to a boolean in a comparison. For example, consider the
-code
-
-```objectivec
-void foo(NSNumber * n) {
-  if (n) ...
-```
-
-The branch in the above code will be taken when the pointer `n` is non-`nil`,
-but the programmer might have actually wanted the branch to be taken when the
-integer pointed to by `n` is nonzero (e.g., she may have meant to call an
-accessor like `[n intValue]` instead). Infer will ask the programmer explicitly
-compare `n` to `nil` or call an accessor to clarify her intention.
-
 ## BAD_RECORD
 
 Reported as "Bad Record" by [pulse](/docs/next/checker-pulse).
@@ -140,7 +139,7 @@ For example, accessing `R` as a `person` record gives `{badrecord,person}` error
 
 f() ->
     R = #rabbit{name = "Bunny", color = "Brown"},
-    R#person.name
+    R#person.name.
 ```
 
 ## BAD_RECORD_LATENT
@@ -148,6 +147,25 @@ f() ->
 Reported as "Bad Record Latent" by [pulse](/docs/next/checker-pulse).
 
 A latent [BAD_RECORD](#bad_record). See the [documentation on Pulse latent issues](/docs/next/checker-pulse#latent-issues).
+## BAD_RETURN
+
+Reported as "Bad Return" by [pulse](/docs/next/checker-pulse).
+
+Bad return in Erlang: The dynamic type of a returned value disagrees with the static type given in the spec.
+
+For example, this function returns an integer, while the spec says it returns an atom.
+```erlang
+-spec f() -> atom().
+f() -> 1.
+```
+
+Note that this will *not* lead to a runtime error when running the Erlang program.
+
+## BAD_RETURN_LATENT
+
+Reported as "Bad Return Latent" by [pulse](/docs/next/checker-pulse).
+
+A latent [BAD_RETURN](#bad_return). See the [documentation on Pulse latent issues](/docs/next/checker-pulse#latent-issues).
 ## BIABDUCTION_MEMORY_LEAK
 
 Reported as "Memory Leak" by [biabduction](/docs/next/checker-biabduction).
@@ -443,11 +461,6 @@ This error is reported when the argument types to a `printf` method do not match
 
 Action: fix the mismatch between format string and argument types.
 
-## COMPONENT_WITH_MULTIPLE_FACTORY_METHODS
-
-Reported as "Component With Multiple Factory Methods" by [linters](/docs/next/checker-linters).
-
-
 ## CONFIG_IMPACT
 
 Reported as "Config Impact" by [config-impact-analysis](/docs/next/checker-config-impact-analysis).
@@ -513,6 +526,35 @@ Reported as "Config Impact Strict" by [config-impact-analysis](/docs/next/checke
 This is similar to [`CONFIG_IMPACT` issue](#config_impact) but the analysis reports **all** ungated
 codes irrespective of whether they are expensive or not.
 
+## CONFIG_IMPACT_STRICT_BETA
+
+Reported as "Config Impact Strict Beta" by [config-impact-analysis](/docs/next/checker-config-impact-analysis).
+
+This is similar to [`CONFIG_IMPACT_STRICT` issue](#config_impact_strict) but it is only used for
+beta testing that fine-tunes the checker to analysis targets.
+
+## CONFIG_USAGE
+
+Reported as "Config Usage" by [pulse](/docs/next/checker-pulse).
+
+Infer reports this issue when a *config* value is used as branch condition in a function.  The
+*config* is usually a boolean value that enables experimental new features and it is defined per
+application/codebase, e.g. gatekeepers.
+
+For instance, if we have the following code
+
+```cpp
+void foo() {
+  if(config_check("my_new_feature")){ ... }
+}
+```
+
+then analysis would provide information that "the function `foo` uses the config `my_new_feature` as
+branch condition".
+
+Note: This type of issue is only for providing semantic information, rather than warning or
+reporting actual problem.
+
 ## CONSTANT_ADDRESS_DEREFERENCE
 
 Reported as "Constant Address Dereference" by [pulse](/docs/next/checker-pulse).
@@ -541,30 +583,21 @@ Create an intent/start a component using a (possibly user-controlled) URI. may o
 Reported as "Cross Site Scripting" by [quandary](/docs/next/checker-quandary).
 
 Untrusted data flows into HTML; XSS risk.
-## CXX_REFERENCE_CAPTURED_IN_OBJC_BLOCK
-
-Reported as "Cxx Reference Captured In Objc Block" by [linters](/docs/next/checker-linters).
-
-With this check, Infer detects C++ references captured in a block. Doing this is
-almost always wrong. The reason is that C++ references are not managed pointers
-(like ARC pointers) and so the referent is likely to be gone by the time the
-block gets executed. One solution is to do a local copy of the reference and
-pass that to the block. Example:
-
-```c
-(int &) v;
-...
-const int copied_v = v;
-^{
-// use copied_v not v
-};
-```
-
 ## DANGLING_POINTER_DEREFERENCE
 
 Reported as "Dangling Pointer Dereference" by [biabduction](/docs/next/checker-biabduction).
 
 
+## DATALOG_FACT
+
+Reported as "Datalog Fact" by [datalog](/docs/next/checker-datalog).
+
+Datalog fact used as input for a datalog solver.
+## DATA_FLOW_TO_SINK
+
+Reported as "Data Flow to Sink" by [pulse](/docs/next/checker-pulse).
+
+A flow of data was detected to a sink.
 ## DEADLOCK
 
 Reported as "Deadlock" by [starvation](/docs/next/checker-starvation).
@@ -637,95 +670,11 @@ Reported as "Dead Store" by [liveness](/docs/next/checker-liveness).
 This error is reported in C++. It fires when the value assigned to a variables
 is never used (e.g., `int i = 1; i = 2; return i;`).
 
-## DIRECT_ATOMIC_PROPERTY_ACCESS
-
-Reported as "Direct Atomic Property Access" by [linters](/docs/next/checker-linters).
-
-This check warns you when you are accessing an atomic property directly with an
-ivar. This makes the atomic property not atomic anymore. So potentially you may
-get a race condition.
-
-To fix the problem you need to access properties with their getter or setter.
-
-## DISCOURAGED_WEAK_PROPERTY_CUSTOM_SETTER
-
-Reported as "Discouraged Weak Property Custom Setter" by [linters](/docs/next/checker-linters).
-
-This check warns you when you have a custom setter for a weak property. When
-compiled with Automatic Reference Counting (ARC, `-fobj-arc`) ARC may set the
-property to `nil` without invoking the setter, for example:
-
-```objectivec
-#import <Foundation/Foundation.h>
-
-@interface Employee : NSObject {
-  NSString* _name;
-  __weak Employee* _manager;
-}
--(id)initWithName:(NSString*)name;
-@property(atomic, weak) Employee* manager;
--(void)report;
-@end
-
-@implementation Employee
-
--(id)initWithName:(NSString*)name {
-  _name = name;
-  return self;
-}
-
--(NSString*)description {
-  return _name;
-}
-
--(void)report {
-  NSLog(@"I work for %@", _manager);
-}
-
--(Employee*)manager {
-  return _manager;
-}
-
-// DON'T do this; ARC will not call this when setting _manager to nil.
--(void)setManager:(Employee*)newManager {
-  NSLog(@"Meet the new boss...");
-  _manager = newManager;
-}
-
-@end
-
-int main(int argc, char *argv[])
-{
-  Employee* bob = [[Employee alloc] initWithName:@"Bob"];
-  Employee* sue = [[Employee alloc] initWithName:@"Sue"];
-  bob.manager = sue;
-  [bob report];
-  sue = nil;
-  [bob report];
-  return 0;
-}
-```
-
-This prints:
-
-```
-Meet the new boss...
-I work for Sue
-I work for (null)
-```
-
-Note that the custom setter was only invoked once.
-
 ## DIVIDE_BY_ZERO
 
 Reported as "Divide By Zero" by [biabduction](/docs/next/checker-biabduction).
 
 
-## DOTNET_RESOURCE_LEAK
-
-Reported as "Dotnet Resource Leak" by [dotnet-resource-leak](/docs/next/checker-dotnet-resource-leak).
-
-Resource leak checker for .NET.
 ## EMPTY_VECTOR_ACCESS
 
 Reported as "Empty Vector Access" by [biabduction](/docs/next/checker-biabduction).
@@ -995,7 +944,7 @@ class C {
 
 Action: The preferred action is to ensure that a null value is never returned by
 the method, by changing the code or changing annotations. If this cannot be
-done, add a @Nullable annotation to the the method declaration. This annotation
+done, add a @Nullable annotation to the method declaration. This annotation
 might trigger more warnings in the callers of method m, as the callers must now
 deal with null values.
 
@@ -1138,15 +1087,6 @@ void symbolic_expensive_hoist(int size) {
 Reported as "Exposed Insecure Intent Handling" by [quandary](/docs/next/checker-quandary).
 
 Undocumented.
-## GLOBAL_VARIABLE_INITIALIZED_WITH_FUNCTION_OR_METHOD_CALL
-
-Reported as "Global Variable Initialized With Function Or Method Call" by [linters](/docs/next/checker-linters).
-
-This checker warns you when the initialization of global variable contain a
-method or function call. The warning wants to make you aware that some functions
-are expensive. As the global variables are initialized before main() is called,
-these initializations can slow down the start-up time of an app.
-
 ## GUARDEDBY_VIOLATION
 
 Reported as "GuardedBy Violation" by [racerd](/docs/next/checker-racerd).
@@ -1360,6 +1300,13 @@ marked `@ThreadSafe`). The fix is to add the `@ThreadSafe` annotation to the
 interface or to the interface method. For background on why these annotations
 are needed, see the detailed explanation
 [here](/docs/next/checker-racerd#interface-not-thread-safe).
+
+## INVALID_SIL
+
+Reported as "Invalid Sil" by [sil-validation](/docs/next/checker-sil-validation).
+
+The SIL instruction does not conform to the expected subset of instructions
+expected for the front-end of the language for the analyzed code.
 
 ## INVARIANT_CALL
 
@@ -1636,12 +1583,6 @@ we assume that any captured weak pointer whose name contains "self" is a weak re
 In contrast, `strongSelf` is a local variable to the block, so the check supports any name given to
 a local strong pointer that has been assigned `weakSelf`.
 
-## MUTABLE_LOCAL_VARIABLE_IN_COMPONENT_FILE
-
-Reported as "Mutable Local Variable In Component File" by [linters](/docs/next/checker-linters).
-
-[Doc in ComponentKit page](http://componentkit.org/docs/avoid-local-variables)
-
 ## NIL_BLOCK_CALL
 
 Reported as "Nil Block Call" by [pulse](/docs/next/checker-pulse).
@@ -1717,7 +1658,7 @@ that the object passed will never be `nil`, or adding a check for `nil` before c
 
 ## NIL_INSERTION_INTO_COLLECTION_LATENT
 
-Reported as "Nil Insertion Into Collection Latent" by [pulse](/docs/next/checker-pulse).
+Reported as "Nil Insertion Into Collection" by [pulse](/docs/next/checker-pulse).
 
 A latent [NIL_INSERTION_INTO_COLLECTION](#nil_insertion_into_collection). See the [documentation on Pulse latent issues](/docs/next/checker-pulse#latent-issues).
 ## NIL_MESSAGING_TO_NON_POD
@@ -1953,6 +1894,30 @@ also have a dedicated issue type for this case:
 Reported as "Null Dereference" by [pulse](/docs/next/checker-pulse).
 
 A latent [NULLPTR_DEREFERENCE](#nullptr_dereference). See the [documentation on Pulse latent issues](/docs/next/checker-pulse#latent-issues).
+## NULL_ARGUMENT
+
+Reported as "Null Argument" by [pulse](/docs/next/checker-pulse).
+
+```objc
+This issue type indicates `nil` being passed as argument where a non-nil value expected.
+
+#import <Foundation/Foundation.h>
+
+// Test (non-nil) returned values of NSString methods against `nil`
+NSString* stringNotNil(NSString* str) {
+  if (!str) {
+        // ERROR: NSString:stringWithString: expects a non-nil value
+	return [NSString stringWithString:nil];
+  }
+  return str;
+}
+```
+
+## NULL_ARGUMENT_LATENT
+
+Reported as "Null Argument Latent" by [pulse](/docs/next/checker-pulse).
+
+A latent [NULL_ARGUMENT](#null_argument). See the [documentation on Pulse latent issues](/docs/next/checker-pulse#latent-issues).
 ## NULL_DEREFERENCE
 
 Reported as "Null Dereference" by [biabduction](/docs/next/checker-biabduction).
@@ -2019,15 +1984,6 @@ int value_no_check() {
 Reported as "Optional Empty Access Latent" by [pulse](/docs/next/checker-pulse).
 
 A latent [OPTIONAL_EMPTY_ACCESS](#optional_empty_access). See the [documentation on Pulse latent issues](/docs/next/checker-pulse#latent-issues).
-## POINTER_TO_CONST_OBJC_CLASS
-
-Reported as "Pointer To Const Objc Class" by [linters](/docs/next/checker-linters).
-
-In Objective-C, `const Class *` represents a mutable pointer pointing to an
-Objective-C class where the ivars cannot be changed. More useful is
-`Class *const` instead, meaning the destination of the pointer cannot be
-changed.
-
 ## PREMATURE_NIL_TERMINATION_ARGUMENT
 
 Reported as "Premature Nil Termination Argument" by [biabduction](/docs/next/checker-biabduction).
@@ -2047,6 +2003,54 @@ An example of such variadic methods is
 
 In this example, if `str` is `nil` then an array `@[@"aaa"]` of size 1 will be
 created, and not an array `@[@"aaa", str, @"bbb"]` of size 3 as expected.
+
+## PULSE_CONST_REFABLE
+
+Reported as "Const Refable Parameter" by [pulse](/docs/next/checker-pulse).
+
+This issue is reported when a function parameter is a) passed by value and b) is not modified inside the function. Instead, parameter can be passed by const reference, i.e. converted to a `const&` so that no unnecessary copy is created at the callsite of the function.
+
+For example,
+
+```cpp
+#include <vector>
+
+int read_first(const std::vector<int>& vec) { return vec[0]; }
+
+void const_refable(std::vector<int> vec) {
+  int first = read_first(vec); // vec is never modified, so the parameter should have type const&
+}
+```
+
+## PULSE_READONLY_SHARED_PTR_PARAM
+
+Reported as "Read-only Shared Parameter" by [pulse](/docs/next/checker-pulse).
+
+This issue is reported when a shared pointer parameter is a) passed by value and b) is used only for reading, rather than lifetime extension. At the callsite, this might cause a potentially expensive unnecessary copy of the shared pointer, especially when many number of threads are sharing it. To avoid this, consider 1) passing the raw pointer instead and 2) use `std::shared_ptr::get` at callsites.
+
+For example,
+
+```cpp
+void callee(std::shared_ptr<T> x) {
+  // read_T(*x);
+}
+
+void caller() {
+  callee(shared_ptr);
+}
+```
+
+can be changed to
+
+```cpp
+void callee(T* p) {
+  // read_T(*p);
+}
+
+void caller() {
+  callee(shared_ptr.get());
+}
+```
 
 ## PULSE_RESOURCE_LEAK
 
@@ -2086,6 +2090,134 @@ int use_reference_instead(A& x){
   return y.a;
 }
 ```
+## PULSE_UNNECESSARY_COPY_ASSIGNMENT
+
+Reported as "Unnecessary Copy Assignment" by [pulse](/docs/next/checker-pulse).
+
+See [PULSE_UNNECESSARY_COPY](#pulse_unnecessary_copy).
+## PULSE_UNNECESSARY_COPY_ASSIGNMENT_CONST
+
+Reported as "Unnecessary Copy Assignment from Const" by [pulse](/docs/next/checker-pulse).
+
+See [PULSE_UNNECESSARY_COPY](#pulse_unnecessary_copy).
+## PULSE_UNNECESSARY_COPY_ASSIGNMENT_MOVABLE
+
+Reported as "Unnecessary Copy Assignment Movable" by [pulse](/docs/next/checker-pulse).
+
+See [PULSE_UNNECESSARY_COPY_MOVABLE](#pulse_unnecessary_copy_movable).
+## PULSE_UNNECESSARY_COPY_INTERMEDIATE
+
+Reported as "Unnecessary Copy Intermediate" by [pulse](/docs/next/checker-pulse).
+
+This is reported when Infer detects an unnecessary temporary copy of an intermediate object where copy is created to be passed down to a function unnecessarily. Instead, the intermediate object should either be moved into the callee or the type of the callee's parameter should be made `const &`.
+
+A prime example of this occurs when we call a function with a call-by-value parameter as follows:
+
+```cpp
+void callee(ExpensiveObject obj) {
+  // ....
+}
+
+void caller() {
+  callee(myExpensiveObj); // a copy of myExpensiveObj is created
+  // the copy is destroyed right after the call  
+}
+```
+
+In this case, when we call `callee`, under the hood, a copy of the argument `myExpensiveObj` is created to be passed to the function call. However, the copy might be unnecessary if
+
+ -   `callee` doesn’t modify its parameter → then we can change its type to `const ExpensiveObject&`, getting rid of the copy at caller
+ -   even if `callee` might modify the object, if the argument `myExpensiveObj` is never used later on, we can get rid of the copy by moving it instead: `callee(std::move(myExpensiveObj))`.
+
+
+The analysis is careful about suggesting moves blindly though: if the argument `myExpensiveObj` is of type `const & ExpensiveObject` then we also recommend that for move to work, const-reference needs to be removed.
+
+
+PS: We check for other conditions on the argument here: e.g. it should be local to the procedure, as moving a non-local member might cause other memory correctness issues like use-after-move later on.
+## PULSE_UNNECESSARY_COPY_INTERMEDIATE_CONST
+
+Reported as "Unnecessary Copy Intermediate from Const" by [pulse](/docs/next/checker-pulse).
+
+See [PULSE_UNNECESSARY_COPY](#pulse_unnecessary_copy).
+## PULSE_UNNECESSARY_COPY_MOVABLE
+
+Reported as "Unnecessary Copy Movable" by [pulse](/docs/next/checker-pulse).
+
+This is reported when Infer detects an unnecessary copy into a field where
+- the source is an rvalue-reference
+- the source is not modified before it goes out of scope or is destroyed.
+
+Note that the copy can be modified since it has the ownership of the object.
+
+Fix: Rather than the copying into the field, the source should be moved into it.
+
+For example,
+
+```cpp
+struct A {
+  std::vector<int> vec;
+};
+
+class Test {
+  A mem_a;
+
+  void unnecessary_copy(A&& src) {
+   mem_a = src;
+   // fix is to move as follows
+   // mem_a = std::move(src);
+  }
+
+};
+
+```
+## PULSE_UNNECESSARY_COPY_OPTIONAL
+
+Reported as "Unnecessary Copy to Optional" by [pulse](/docs/next/checker-pulse).
+
+This is reported when Infer detects an unnecessary copy of an object via `optional` value
+construction where the source is not modified before it goes out of scope.  To avoid the copy, we
+can move the source object or change the callee's type.
+
+For example,
+
+```cpp
+void get_optional_value(std::optional<A> x) {}
+
+void pass_non_optional_value(A x) {
+  get_optional_value(x);
+  // fix is to move as follows
+  // get_optional_value(std::move(x));
+}
+```
+
+## PULSE_UNNECESSARY_COPY_OPTIONAL_CONST
+
+Reported as "Unnecessary Copy to Optional from Const" by [pulse](/docs/next/checker-pulse).
+
+See [PULSE_UNNECESSARY_COPY_OPTIONAL](#pulse_unnecessary_copy_optional).
+## PULSE_UNNECESSARY_COPY_RETURN
+
+Reported as "Unnecessary Copy Return" by [pulse](/docs/next/checker-pulse).
+
+This is similar to [PULSE_UNNECESSARY_COPY](#pulse_unnecessary_copy), but reported when a callee returns a copied value and it is not modified in its caller.  We may be able to return const-ref typed value or try `std::move` to avoid the copy.
+
+For example,
+
+```cpp
+class MyClass {
+  T v;
+ public:
+  T get() {
+    return v; // v is copied here, which is avoidable.
+  }
+};
+
+void caller(MyClass obj) {
+  T x = obj.get();
+  std::cout << x; // x is not modified.
+}
+```
+
 ## PURE_FUNCTION
 
 Reported as "Pure Function" by [purity](/docs/next/checker-purity).
@@ -2290,7 +2422,7 @@ NullPointerException.
 ### Nested_Allocations
 
 When a resource allocation is included as an argument to a constructor, if the
-constructor fails it can leave an an unreachable resource that no one can close.
+constructor fails it can leave an unreachable resource that no one can close.
 
 For example gzipOutputStream = new GZIPOutputStream(new FileOutputStream(out));
 is bad in case the outer constructor, GZIPOutputStream, throws an exception. In
@@ -2447,6 +2579,55 @@ hierarchy:
 @end
 ```
 
+## SCOPE_LEAKAGE
+
+Reported as "Scope Leakage" by [scope-leakage](/docs/next/checker-scope-leakage).
+
+This issue type indicates that a class with scope annotation A stores a field
+with whose (dynamic) type (or one of its super types) is annotated with scope
+B such that a scope nesting restriction is violated. By "stores", we mean
+either directly or transitively.
+
+A configuration is used to list the set of scopes and the must-not-hold relation.
+
+In the following Java example, the set of scopes is Outer and Inner, and the must-not-hold
+relation is simply {(Outer, Inner)}:
+```java
+@ScopeType(value = Outer.class)
+class ClassOfOuterScope {
+  final ClassOfInner c = new ClassOfInner(); // <-- warn here that ClassOfInner would leak.
+}
+
+@ScopeType(value = Inner.class)
+class ClassOfInner {}
+```
+
+Here is a more detailed description of the analysis.
+
+This analysis operates over Java bytecode. It assumes that types (classes, interfaces, enums,
+etc.) may be annotated with so-called scope annotations. The analysis is parameterized by a set
+of scopes and a "must-not-hold" relation over pairs of scopes, which it reads from a
+configuration file.
+
+The analysis aims to detect violations of the following property: if there exist a path of
+fields from object OA to object OB and the type of OA (or one of its super-types) is annotated
+with scope SA and the type of OB (or one of its super-types) is annotated with scope SB then
+must-not-hold(SA, SB) must be false. Intuitively, the given objects have different scopes that
+should not be nested, for example, different intended lifetimes, and a forbidden path from OA to
+OB results in OB "leaking" out of the scope SA.
+
+The implementation reads a configuration to determine a list of (scope) "generators" for each
+type of scope and a scope class for each type of scope. A generator for a scope type SA is given
+by the name of a class and a list of methods where it is understood that any of the methods
+listed for the given class returns an object that is known to have scope SA. (This can be seen
+as a form of lightweight modeling.) A scope class is the name of the class that represents a
+given scope.
+
+## SENSITIVE_DATA_FLOW
+
+Reported as "Sensitive Data Flow" by [pulse](/docs/next/checker-pulse).
+
+A flow of sensitive data was detected from a source.
 ## SHELL_INJECTION
 
 Reported as "Shell Injection" by [quandary](/docs/next/checker-quandary).
@@ -2570,14 +2751,6 @@ ability to statically detect such violations.
 
 To suppress this warning, it's enough to annotate the offending method with
 `@SuppressLint("STRICT_MODE_VIOLATION")`.
-
-## STRONG_DELEGATE_WARNING
-
-Reported as "Strong Delegate Warning" by [linters](/docs/next/checker-linters).
-
-This check warns you when you have a property called delegate or variations
-thereof which is declared strong. The idea is that delegates should generally be
-weak, otherwise this may cause retain cycles.
 
 ## STRONG_SELF_NOT_CHECKED
 
@@ -2729,6 +2902,11 @@ This indicates that the code has a user-defined undesired behavior.
 
 See [Topl](/docs/next/checker-topl##what-is-it) for an example
 
+## TOPL_ERROR_LATENT
+
+Reported as "Topl Error Latent" by [topl](/docs/next/checker-topl).
+
+A latent [TOPL_ERROR](#topl_error). See the [documentation on Pulse latent issues](/docs/next/checker-pulse#latent-issues).
 ## UNINITIALIZED_VALUE
 
 Reported as "Uninitialized Value" by [uninit](/docs/next/checker-uninit).

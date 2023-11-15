@@ -7,8 +7,6 @@
 open! IStd
 module L = Logging
 
-let al_callback_ref = ref (fun _ _ -> ())
-
 (** enable debug mode (to get more data saved to disk for future inspections) *)
 let debug_mode = Config.debug_mode || Config.frontend_stats
 
@@ -67,7 +65,7 @@ let run_clang_frontend ast_source =
         in
         let integer_type_widths =
           let widths = info.Clang_ast_t.tudi_integer_type_widths in
-          { Typ.IntegerWidths.char_width= widths.itw_char_type
+          { IntegerWidths.char_width= widths.itw_char_type
           ; short_width= widths.itw_short_type
           ; int_width= widths.itw_int_type
           ; long_width= widths.itw_long_type
@@ -89,7 +87,6 @@ let run_clang_frontend ast_source =
   L.(debug Capture Medium)
     "Start %s the AST of %a@\n" Config.clang_frontend_action_string pp_ast_filename ast_source ;
   (* run callbacks *)
-  !al_callback_ref trans_unit_ctx ast_decl ;
   if Config.process_clang_ast then ProcessAST.process_ast trans_unit_ctx ast_decl ;
   if Config.capture then CFrontend.do_source_file trans_unit_ctx ast_decl ;
   L.(debug Capture Medium)
@@ -101,7 +98,7 @@ let run_clang_frontend ast_source =
 let run_clang_frontend ast_source =
   PerfEvent.(
     log (fun logger ->
-        PerfEvent.log_begin_event logger ~categories:["frontend"] ~name:"clang frontend" () )) ;
+        PerfEvent.log_begin_event logger ~categories:["frontend"] ~name:"clang frontend" () ) ) ;
   run_clang_frontend ast_source ;
   PerfEvent.(log (fun logger -> PerfEvent.log_end_event logger ()))
 
@@ -132,7 +129,7 @@ let run_clang clang_command read =
 
 let run_clang clang_command read =
   PerfEvent.(
-    log (fun logger -> PerfEvent.log_begin_event logger ~categories:["frontend"] ~name:"clang" ())) ;
+    log (fun logger -> PerfEvent.log_begin_event logger ~categories:["frontend"] ~name:"clang" ()) ) ;
   let result = run_clang clang_command read in
   PerfEvent.(log (fun logger -> PerfEvent.log_end_event logger ())) ;
   result
@@ -162,8 +159,11 @@ let cc1_capture clang_cmd =
   let source_path =
     let root = Unix.getcwd () in
     let orig_argv = ClangCommand.get_orig_argv clang_cmd in
-    (* the source file is always the last argument of the original -cc1 clang command *)
-    Utils.filename_to_absolute ~root (List.last_exn orig_argv)
+    (* the source file is always the last argument of the original -cc1 clang command, except when it isnt *)
+    let argv_without_flags =
+      List.filter orig_argv ~f:(fun arg -> not (String.is_prefix ~prefix:"-" arg))
+    in
+    Utils.filename_to_absolute ~root (List.last_exn argv_without_flags)
   in
   L.(debug Capture Quiet) "@\n*** Beginning capture of file %s ***@\n" source_path ;
   if

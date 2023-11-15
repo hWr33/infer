@@ -19,15 +19,17 @@ let manpage_s_notes = "NOTES"
 
 let is_env_var_set v = Option.value (Option.map (Sys.getenv v) ~f:(String.equal "1")) ~default:false
 
+let infer_cwd_env_var = "INFER_CWD"
+
 (** The working directory of the initial invocation of infer, to which paths passed as command line
     options are relative. *)
 let init_work_dir, is_originator =
-  match Sys.getenv "INFER_CWD" with
+  match Sys.getenv infer_cwd_env_var with
   | Some dir ->
       (dir, false)
   | None ->
       let real_cwd = Utils.realpath (Sys.getcwd ()) in
-      Unix.putenv ~key:"INFER_CWD" ~data:real_cwd ;
+      Unix.putenv ~key:infer_cwd_env_var ~data:real_cwd ;
       (real_cwd, true)
 
 
@@ -546,6 +548,14 @@ let mk_int_opt ?default ?(default_to_string = Option.value_map ~default:"" ~f:st
   let flag = mk_flag ~deprecated ~short ~long in
   mk_option ~deprecated ~long ?short ~default ~default_to_string
     ~decode_json:(int_json_decoder ~flag) ~f ?parse_mode ?in_help ~meta doc
+
+
+let mk_int64_opt ?default ?(default_to_string = Option.value_map ~default:"" ~f:Int64.to_string)
+    ?f:(f0 = Fn.id) ?(deprecated = []) ~long ?short ?parse_mode ?in_help ?(meta = "int64") doc =
+  let f s = Some (f0 (Int64.of_string s)) in
+  let flag = mk_flag ~deprecated ~short ~long in
+  mk_option ~deprecated ~long ?short ~default ~default_to_string
+    ~decode_json:(null_json_decoder ~flag) ~f ?parse_mode ?in_help ~meta doc
 
 
 let mk_float_opt ?default ?(default_to_string = Option.value_map ~default:"" ~f:string_of_float)
@@ -1208,3 +1218,22 @@ let show_manual ?(scrub_defaults = false) ?internal_section format default_doc c
   in
   Cmdliner.Manpage.print format Format.std_formatter (command_doc.title, blocks) ;
   ()
+
+
+let add_to_env_args extra_args =
+  let old_infer_args = Sys.getenv args_env_var |> Option.value ~default:"" in
+  let args =
+    if String.equal old_infer_args "" then extra_args
+    else
+      (* HACK: it's ok to consider the string corresponding to potentially several args as one arg
+         here because when we'll format the final string it will keep it intact *)
+      old_infer_args :: extra_args
+  in
+  let env_value = String.concat ~sep:(String.of_char env_var_sep) args in
+  Unix.putenv ~key:args_env_var ~data:env_value
+
+
+let in_env_with_extra_args extra_args ~f =
+  let old_infer_args = Sys.getenv args_env_var |> Option.value ~default:"" in
+  add_to_env_args extra_args ;
+  protect ~f ~finally:(fun () -> Unix.putenv ~key:args_env_var ~data:old_infer_args)

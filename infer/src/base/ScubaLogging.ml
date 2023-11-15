@@ -30,7 +30,7 @@ let set_common_fields sample =
   let open Scuba in
   sample
   |> add_int ~name:"pid" ~value:(ProcessPoolState.get_pid () |> Pid.to_int)
-  |> add_int ~name:"is_main_process" ~value:(Bool.to_int CommandLineOption.is_originator)
+  |> add_int ~name:"is_main_process" ~value:(Bool.to_int Config.is_originator)
   |> add_normal ~name:"hostname" ~value:hostname
   |> maybe_add_normal ~name:"job_id" ~value:Config.job_id
   |> add_normal ~name:"command" ~value:(InferCommand.to_string Config.command)
@@ -49,9 +49,9 @@ let sample_from_event ({label; created_at_ts; data} : LogEntry.t) =
   | Count {value} ->
       create_sample_with_label (Printf.sprintf "count.%s" label)
       |> Scuba.add_int ~name:"value" ~value
-  | Time {duration_ms} ->
+  | Time {duration_us} ->
       create_sample_with_label (Printf.sprintf "time.%s" label)
-      |> Scuba.add_int ~name:"value" ~value:duration_ms
+      |> Scuba.add_int ~name:"value" ~value:duration_us
   | String {message} ->
       create_sample_with_label (Printf.sprintf "msg.%s" label)
       |> Scuba.add_normal ~name:"message" ~value:message
@@ -71,6 +71,8 @@ let log_one entry = log_many [entry]
 
 let log_count ~label ~value = log_one (LogEntry.mk_count ~label ~value)
 
+let log_duration ~label ~duration_us = log_one (LogEntry.mk_time ~label ~duration_us)
+
 let log_message ~label ~message = log_one (LogEntry.mk_string ~label ~message)
 
 let cost_log_message ~label ~message = if Config.cost_scuba_logging then log_message ~label ~message
@@ -80,8 +82,9 @@ let pulse_log_message ~label ~message =
 
 
 let execute_with_time_logging label f =
-  let ret_val, duration_ms = Utils.timeit ~f in
-  let entry = LogEntry.mk_time ~label ~duration_ms in
+  let ret_val, duration = Utils.timeit ~f in
+  let duration_us = IMtime.span_to_us_int duration in
+  let entry = LogEntry.mk_time ~label ~duration_us in
   log_one entry ;
   ret_val
 

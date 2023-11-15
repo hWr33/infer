@@ -11,19 +11,6 @@
 open! IStd
 module F = Format
 
-module IntegerWidths : sig
-  type t = {char_width: int; short_width: int; int_width: int; long_width: int; longlong_width: int}
-  [@@deriving compare]
-
-  val java : t
-
-  val load : SourceFile.t -> t option
-
-  module SQLite : sig
-    val serialize : t option -> Sqlite3.Data.t
-  end
-end
-
 (** Kinds of integers *)
 type ikind =
   | IChar  (** [char] *)
@@ -40,13 +27,7 @@ type ikind =
   | IULongLong  (** [unsigned long long] (or [unsigned _int64] on Microsoft Visual C) *)
   | I128  (** [__int128_t] *)
   | IU128  (** [__uint128_t] *)
-[@@deriving compare]
-
-val equal_ikind : ikind -> ikind -> bool
-
-val width_of_ikind : IntegerWidths.t -> ikind -> int
-
-val range_of_ikind : IntegerWidths.t -> ikind -> Z.t * Z.t
+[@@deriving compare, equal, hash]
 
 val ikind_is_char : ikind -> bool
 (** Check whether the integer kind is a char *)
@@ -61,7 +42,8 @@ type fkind = FFloat  (** [float] *) | FDouble  (** [double] *) | FLongDouble  (*
 (** kind of pointer *)
 type ptr_kind =
   | Pk_pointer  (** C/C++, Java, Objc standard/__strong pointer *)
-  | Pk_reference  (** C++ reference *)
+  | Pk_lvalue_reference  (** C++ lvalue reference *)
+  | Pk_rvalue_reference  (** C++ rvalue reference *)
   | Pk_objc_weak  (** Obj-C __weak pointer *)
   | Pk_objc_unsafe_unretained  (** Obj-C __unsafe_unretained pointer *)
   | Pk_objc_autoreleasing  (** Obj-C __autoreleasing pointer *)
@@ -69,12 +51,14 @@ type ptr_kind =
 
 val equal_ptr_kind : ptr_kind -> ptr_kind -> bool
 
-type type_quals [@@deriving compare]
+type type_quals [@@deriving compare, equal]
 
 val mk_type_quals :
      ?default:type_quals
   -> ?is_const:bool
+  -> ?is_reference:bool
   -> ?is_restrict:bool
+  -> ?is_trivially_copyable:bool
   -> ?is_volatile:bool
   -> unit
   -> type_quals
@@ -83,10 +67,12 @@ val is_const : type_quals -> bool
 
 val is_restrict : type_quals -> bool
 
+val is_trivially_copyable : type_quals -> bool
+
 val is_volatile : type_quals -> bool
 
 (** types for sil (structured) expressions *)
-type t = {desc: desc; quals: type_quals} [@@deriving compare, yojson_of]
+type t = {desc: desc; quals: type_quals} [@@deriving compare, equal, yojson_of, sexp, hash]
 
 and desc =
   | Tint of ikind  (** integer type *)
@@ -108,9 +94,11 @@ and name =
   | CppClass of {name: QualifiedCppName.t; template_spec_info: template_spec_info; is_union: bool}
   | CSharpClass of CSharpClassName.t
   | ErlangType of ErlangTypeName.t
+  | HackClass of HackClassName.t
   | JavaClass of JavaClassName.t
   | ObjcClass of QualifiedCppName.t  (** ObjC class *)
   | ObjcProtocol of QualifiedCppName.t
+  | PythonClass of PythonClassName.t
 
 and template_arg = TType of t | TInt of Int64.t | TNull | TNullPtr | TOpaque
 
@@ -123,7 +111,10 @@ and template_spec_info =
                 template arguments is also needed for uniqueness. *)
       ; args: template_arg list }
 
-val pp_template_spec_info : Pp.env -> F.formatter -> template_spec_info -> unit [@@warning "-32"]
+val pp_template_spec_info : Pp.env -> F.formatter -> template_spec_info -> unit
+  [@@warning "-unused-value-declaration"]
+
+val is_template_spec_info_empty : template_spec_info -> bool
 
 val mk : ?default:t -> ?quals:type_quals -> desc -> t
 (** Create Typ.t from given desc. if [default] is passed then use its value to set other fields such
@@ -140,6 +131,8 @@ val mk_ptr : ?ptr_kind:ptr_kind -> t -> t
 
 val set_ptr_to_const : t -> t
 
+val set_to_const : t -> t
+
 val get_ikind_opt : t -> ikind option
 (** Get ikind if the type is integer. *)
 
@@ -152,10 +145,7 @@ val is_strong_pointer : t -> bool
 
 module Name : sig
   (** Named types. *)
-  type t = name [@@deriving compare, yojson_of]
-
-  val loose_compare : t -> t -> int
-  (** Similar to compare, but addresses [CStruct x] and [CppClass x] as equal. *)
+  type t = name [@@deriving compare, yojson_of, sexp, hash]
 
   val compare_name : t -> t -> int
   (** Similar to compare, but compares only names, except template arguments. *)
@@ -169,9 +159,6 @@ module Name : sig
   (** convert the typename to a string *)
 
   val pp : Format.formatter -> t -> unit
-
-  val pp_name_only : Format.formatter -> t -> unit
-  (** Print name only without prefix *)
 
   val is_class : t -> bool
   (** [is_class name] holds if [name] names CPP/Objc/Java class *)
@@ -209,6 +196,23 @@ module Name : sig
     val from_string : string -> t
 
     val is_class : t -> bool
+  end
+
+  module Hack : sig
+    val static_companion : t -> t
+    (** See {!HackClassName.static_companion} *)
+
+    val static_companion_origin : t -> t
+    (** See {!HackClassName.static_companion_origin} *)
+
+    val is_static_companion : t -> bool
+    (** See {!HackClassName.is_static_companion} *)
+
+    val is_generated_curry : t -> bool
+    (** See {!HackClassName.is_generated_curry} *)
+
+    val extract_curry_info : t -> (HackClassName.t * string) option
+    (** See {!HackClassName.extract_curry_info} *)
   end
 
   module Java : sig
@@ -254,6 +258,8 @@ module Name : sig
 
   module Map : PrettyPrintable.PPMap with type key = t
 
+  module Hash : Caml.Hashtbl.S with type key = t
+
   module Normalizer : HashNormalizer.S with type t = t
 end
 
@@ -264,10 +270,11 @@ val equal_desc : desc -> desc -> bool
 
 val equal_name : name -> name -> bool
 
-val equal_quals : type_quals -> type_quals -> bool
-
 val equal_ignore_quals : t -> t -> bool
 (** Equality for types, but ignoring quals in it. *)
+
+val overloading_resolution : (t -> t -> bool) list
+(** [overloading_resolution] is a list of predicates that compare whether a type T1 binds a type T2. *)
 
 val pp_full : Pp.env -> F.formatter -> t -> unit
 (** Pretty print a type with all the details. *)
@@ -303,6 +310,9 @@ val strip_ptr : t -> t
 val is_ptr_to_ignore_quals : t -> ptr:t -> bool
 (** check if [ptr] is a pointer type to [t], ignoring quals *)
 
+val is_ptr_to_const : t -> bool
+(** check if typ is a pointer type to const *)
+
 val array_elem : t option -> t -> t
 (** If an array type, return the type of the element. If not, return the default type if given,
     otherwise raise an exception *)
@@ -313,7 +323,13 @@ val is_cpp_class : t -> bool
 
 val is_pointer_to_cpp_class : t -> bool
 
-val is_pointer_to_objc_non_tagged_class : t -> bool
+val is_pointer_to_smart_pointer : t -> bool
+
+val is_pointer_to_unique_pointer : t -> bool
+
+val shared_pointer_matcher : QualifiedCppName.Match.quals_matcher
+
+val is_shared_pointer : t -> bool
 
 val is_pointer_to_void : t -> bool
 
@@ -321,11 +337,17 @@ val is_void : t -> bool
 
 val is_pointer_to_int : t -> bool
 
+val is_pointer_to_const : t -> bool
+
 val is_pointer_to_function : t -> bool
 
 val is_pointer : t -> bool
 
 val is_reference : t -> bool
+
+val is_rvalue_reference : t -> bool
+
+val is_const_reference_on_source : t -> bool
 
 val is_struct : t -> bool
 
@@ -340,8 +362,6 @@ val is_csharp_type : t -> bool
 
 val is_java_type : t -> bool
 (** is [t] a type produced by the Java frontend? *)
-
-val has_block_prefix : string -> bool
 
 val unsome : string -> t option -> t
 

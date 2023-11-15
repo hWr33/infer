@@ -89,7 +89,7 @@ type report_issue_type = NotIssue | Issue of IssueType.t | SymbolicIssue
 type checked_condition = {report_issue_type: report_issue_type; propagate: bool}
 
 module AllocSizeCondition = struct
-  type t = {length: ItvPure.t; can_be_zero: bool} [@@deriving compare]
+  type t = {length: ItvPure.t; can_be_zero: bool} [@@deriving compare, equal]
 
   let get_symbols {length} = ItvPure.get_symbols length
 
@@ -184,7 +184,7 @@ end
 
 module ArrayAccessCondition = struct
   type t = {offset: ItvPure.t; idx: ItvPure.t; size: ItvPure.t; last_included: bool; void_ptr: bool}
-  [@@deriving compare]
+  [@@deriving compare, equal]
 
   let get_symbols c =
     Symb.SymbolSet.union3 (ItvPure.get_symbols c.offset) (ItvPure.get_symbols c.idx)
@@ -394,11 +394,11 @@ module BinaryOperationCondition = struct
   type t =
     { binop: binop_t
     ; typ: Typ.ikind
-    ; integer_widths: Typ.IntegerWidths.t
+    ; integer_widths: IntegerWidths.t
     ; lhs: ItvPure.t
     ; rhs: ItvPure.t
     ; pname: Procname.t }
-  [@@deriving compare]
+  [@@deriving compare, equal]
 
   let get_symbols c = Symb.SymbolSet.union (ItvPure.get_symbols c.lhs) (ItvPure.get_symbols c.rhs)
 
@@ -456,7 +456,7 @@ module BinaryOperationCondition = struct
     | _ ->
         F.fprintf fmt "%s%d"
           (if Typ.ikind_is_unsigned typ then "unsigned" else "signed")
-          (Typ.width_of_ikind integer_widths typ)
+          (IntegerWidths.width_of_ikind integer_widths typ)
 
 
   let pp = pp_description ~markup:false
@@ -516,7 +516,7 @@ module BinaryOperationCondition = struct
       in
       let v_lb, v_ub = (ItvPure.lb v, ItvPure.ub v) in
       let typ_lb, typ_ub =
-        let lb, ub = Typ.range_of_ikind integer_widths typ in
+        let lb, ub = IntegerWidths.range_of_ikind integer_widths typ in
         (Bound.of_big_int lb, Bound.of_big_int ub)
       in
       let check_underflow, check_overflow = should_check c in
@@ -566,9 +566,7 @@ module Condition = struct
     | AllocSize of AllocSizeCondition.t
     | ArrayAccess of ArrayAccessCondition.t
     | BinaryOperation of BinaryOperationCondition.t
-  [@@deriving compare]
-
-  let equal = [%compare.equal: t]
+  [@@deriving compare, equal]
 
   let make_alloc_size = Option.map ~f:(fun c -> AllocSize c)
 
@@ -659,11 +657,9 @@ module Condition = struct
 end
 
 module Reported = struct
-  type t = IssueType.t [@@deriving compare]
+  type t = IssueType.t [@@deriving compare, equal]
 
   let make issue_type = issue_type
-
-  let equal = [%compare.equal: t]
 end
 
 module ConditionWithTrace = struct
@@ -678,13 +674,13 @@ module ConditionWithTrace = struct
 
 
   let pp fmt {cond; trace; reachability} =
-    F.fprintf fmt "%a %a" Condition.pp cond ConditionTrace.pp trace ;
-    if Config.bo_debug >= 3 then F.fprintf fmt " reachable when %a" Dom.Reachability.pp reachability
+    F.fprintf fmt "%a %a reachable when %a" Condition.pp cond ConditionTrace.pp trace
+      Dom.Reachability.pp reachability
 
 
   let pp_summary fmt {cond; trace; reachability} =
-    F.fprintf fmt "%a %a" Condition.pp cond ConditionTrace.pp_summary trace ;
-    if Config.bo_debug >= 3 then F.fprintf fmt " reachable when %a" Dom.Reachability.pp reachability
+    F.fprintf fmt "%a %a reachable when %a" Condition.pp cond ConditionTrace.pp_summary trace
+      Dom.Reachability.pp reachability
 
 
   let have_same_bounds {cond= cond1} {cond= cond2} = Condition.equal cond1 cond2

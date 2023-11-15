@@ -11,13 +11,13 @@
 open! IStd
 
 (** Program and logical variables. *)
-type t [@@deriving compare, yojson_of]
+type t [@@deriving compare, yojson_of, sexp, hash]
 
 val equal : t -> t -> bool
 (** Equality for identifiers. *)
 
 (** Names used to replace strings. *)
-type name [@@deriving compare]
+type name [@@deriving compare, hash]
 
 val equal_name : name -> name -> bool
 (** Equality for names. *)

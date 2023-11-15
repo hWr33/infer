@@ -59,7 +59,7 @@ let rec type_condition (env : (_, _) Env.t) constraints ((ident, type_) : Ident.
     (Block.all env [is_atom_block; Block.make_instruction env [load_instr]], condition)
   in
   match type_ with
-  | Any ->
+  | Any | Unsupported ->
       succ_true env
   | Atom Any ->
       simple_condition Atom ident
@@ -166,10 +166,7 @@ let process_disjuncts env spec f =
      and somehow Infer can't figure out that this is unsat. Adding a temp variable helps. T115354480 *)
   let cond_id = mk_fresh_id () in
   let load_block = Block.make_load env cond_id condition any_typ in
-  let prune_block =
-    let prune_node = Node.make_if env true (Var cond_id) in
-    {Block.start= prune_node; exit_success= prune_node; exit_failure= Node.make_nop env}
-  in
+  let prune_block = Block.make_branch env (Var cond_id) in
   Block.all env (blocks @ [load_block; prune_block])
 
 

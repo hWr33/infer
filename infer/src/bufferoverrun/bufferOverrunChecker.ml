@@ -117,7 +117,7 @@ let add_unreachable_code (cfg : CFG.t) (node : CFG.Node.t) instr rem_instrs (che
 
 
 let check_binop_array_access :
-       Typ.IntegerWidths.t
+       IntegerWidths.t
     -> is_plus:bool
     -> e1:Exp.t
     -> e2:Exp.t
@@ -133,7 +133,7 @@ let check_binop_array_access :
 
 
 let check_binop :
-       Typ.IntegerWidths.t
+       IntegerWidths.t
     -> bop:Binop.t
     -> e1:Exp.t
     -> e2:Exp.t
@@ -153,7 +153,7 @@ let check_binop :
 
 let check_expr_for_array_access :
        ?sub_expr_only:bool
-    -> Typ.IntegerWidths.t
+    -> IntegerWidths.t
     -> Exp.t
     -> Location.t
     -> Dom.Mem.t
@@ -234,7 +234,7 @@ let rec check_expr_for_integer_overflow integer_type_widths pname exp location m
 
 let instantiate_cond :
        is_args_ref:bool
-    -> Typ.IntegerWidths.t
+    -> IntegerWidths.t
     -> Procname.t
     -> (Pvar.t * Typ.t) list
     -> (Exp.t * Typ.t) list
@@ -271,7 +271,8 @@ let check_call get_checks_summary get_summary get_formals pname tenv integer_typ
   | Some {Models.check} ->
       let model_env =
         let node_hash = CFG.Node.hash node in
-        BoUtils.ModelEnv.mk_model_env pname ~node_hash location tenv integer_type_widths get_summary
+        BoUtils.ModelEnv.mk_model_env callee_pname ~caller_pname:pname ~node_hash location tenv
+          integer_type_widths get_summary
       in
       check model_env mem cond_set
   | None -> (
@@ -293,7 +294,7 @@ let check_instr :
     -> BoUtils.get_formals
     -> Procname.t
     -> Tenv.t
-    -> Typ.IntegerWidths.t
+    -> IntegerWidths.t
     -> CFG.Node.t
     -> Sil.instr
     -> Dom.Mem.t
@@ -340,7 +341,7 @@ let check_instrs :
     -> BoUtils.get_formals
     -> Procname.t
     -> Tenv.t
-    -> Typ.IntegerWidths.t
+    -> IntegerWidths.t
     -> CFG.t
     -> CFG.Node.t
     -> Instrs.not_reversed_t
@@ -378,7 +379,7 @@ let check_node :
     -> BoUtils.get_formals
     -> Procname.t
     -> Tenv.t
-    -> Typ.IntegerWidths.t
+    -> IntegerWidths.t
     -> CFG.t
     -> BufferOverrunAnalysis.invariant_map
     -> Checks.t
@@ -403,7 +404,7 @@ let compute_checks :
     -> BoUtils.get_formals
     -> Procname.t
     -> Tenv.t
-    -> Typ.IntegerWidths.t
+    -> IntegerWidths.t
     -> CFG.t
     -> BufferOverrunAnalysis.invariant_map
     -> checks =
@@ -456,18 +457,8 @@ let checker ({InterproceduralAnalysis.proc_desc; tenv; exe_env; analyze_dependen
       let cfg = CFG.from_pdesc proc_desc in
       let checks =
         let open IOption.Let_syntax in
-        let get_summary_common callee_pname =
-          let+ _, summaries = analyze_dependency callee_pname in
-          summaries
-        in
-        let get_checks_summary callee_pname =
-          let* checker_summary, _analysis_summary = get_summary_common callee_pname in
-          checker_summary
-        in
-        let get_summary callee_pname =
-          let* _checker_summary, analysis_summary = get_summary_common callee_pname in
-          analysis_summary
-        in
+        let get_checks_summary callee_pname = analyze_dependency callee_pname >>= fst in
+        let get_summary callee_pname = analyze_dependency callee_pname >>= snd in
         let get_formals callee_pname =
           Attributes.load callee_pname >>| ProcAttributes.get_pvar_formals
         in

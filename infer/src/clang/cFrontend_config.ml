@@ -14,7 +14,7 @@ type clang_lang = C | CPP | ObjC | ObjCPP [@@deriving compare, equal]
 type translation_unit_context =
   { lang: clang_lang
   ; source_file: SourceFile.t
-  ; integer_type_widths: Typ.IntegerWidths.t
+  ; integer_type_widths: IntegerWidths.t
   ; is_objc_arc_on: bool }
 
 type decl_trans_context = [`DeclTraversal | `Translation | `CppLambdaExprTranslation]
@@ -28,6 +28,8 @@ type instr_type =
 let alloc = "alloc"
 
 let allocWithZone = "allocWithZone:"
+
+let anon_field = "__anon_field"
 
 let arrayWithObjects_count = "arrayWithObjects:count:"
 
@@ -50,10 +52,6 @@ let builtin_memset_chk = "__builtin___memset_chk"
 
 let builtin_object_size = "__builtin_object_size"
 
-let ckcomponent_cl = "CKComponent"
-
-let ckcomponentcontroller_cl = "CKComponentController"
-
 (** script to run our own clang *)
 let clang_bin xx =
   Config.bin_dir ^/ Filename.parent_dir_name ^/ Filename.parent_dir_name ^/ "facebook-clang-plugins"
@@ -74,8 +72,6 @@ let handleFailureInFunction = "handleFailureInFunction:file:lineNumber:descripti
 
 let handleFailureInMethod = "handleFailureInMethod:object:file:lineNumber:description:"
 
-let id_cl = "id"
-
 let infer = "infer"
 
 let init = "init"
@@ -89,10 +85,6 @@ let new_str = "new"
 let next_object = "nextObject"
 
 let nsenumerator_cl = "NSEnumerator"
-
-let nsproxy_cl = "NSProxy"
-
-let nsobject_cl = "NSObject"
 
 let nsstring_cl = "NSString"
 

@@ -8,7 +8,7 @@
 open! IStd
 open PulseBasicInterface
 open PulseDomainInterface
-open PulseOperations.Import
+open PulseOperationResult.Import
 open PulseModelsImport
 
 let free deleted_access : model = Basic.free_or_delete `Free CFree deleted_access
@@ -17,29 +17,29 @@ let alloc_common allocator ~size_exp_opt : model =
  fun ({path; callee_procname; location; ret= ret_id, _} as model_data) astate ->
   let ret_addr = AbstractValue.mk_fresh () in
   let astate_alloc =
-    let continue astate = ContinueProgram astate in
-    Basic.alloc_not_null allocator ~initialize:false size_exp_opt model_data astate >>| continue
+    Basic.alloc_not_null allocator ~initialize:false size_exp_opt model_data astate
+    >>|| ExecutionDomain.continue |> SatUnsat.to_list
   in
   let result_null =
     let ret_null_hist =
       Hist.single_call path location (Procname.to_string callee_procname) ~more:"(null case)"
     in
     let ret_null_value = (ret_addr, ret_null_hist) in
-    let+ astate_null =
-      PulseOperations.write_id ret_id ret_null_value astate
-      |> PulseArithmetic.and_eq_int ret_addr IntLit.zero
-      >>= PulseOperations.invalidate path
-            (StackAddress (Var.of_id ret_id, ret_null_hist))
-            location (ConstantDereference IntLit.zero) ret_null_value
-    in
-    ContinueProgram astate_null
+    PulseOperations.write_id ret_id ret_null_value astate
+    |> PulseArithmetic.and_eq_int ret_addr IntLit.zero
+    >>|| PulseOperations.invalidate path
+           (StackAddress (Var.of_id ret_id, ret_null_hist))
+           location (ConstantDereference IntLit.zero) ret_null_value
+    >>|| ExecutionDomain.continue |> SatUnsat.to_list
   in
-  [astate_alloc; result_null]
+  astate_alloc @ result_null
 
 
 let alloc_not_null_common allocator ~size_exp_opt : model =
  fun model_data astate ->
-  let<+> astate = Basic.alloc_not_null ~initialize:false allocator size_exp_opt model_data astate in
+  let<++> astate =
+    Basic.alloc_not_null ~initialize:false allocator size_exp_opt model_data astate
+  in
   astate
 
 
@@ -69,8 +69,7 @@ let realloc_common allocator pointer size : model =
          | ExitProgram _
          | AbortProgram _
          | LatentAbortProgram _
-         | LatentInvalidAccess _
-         | ISLLatentMemoryError _ ->
+         | LatentInvalidAccess _ ->
              [Ok exec_state] )
 
 
@@ -90,14 +89,16 @@ let matchers : matcher list =
   let map_context_tenv f (x, _) = f x in
   [ +BuiltinDecl.(match_builtin free) <>$ capt_arg $--> free
   ; +match_regexp_opt Config.pulse_model_free_pattern <>$ capt_arg $+...$--> free
-  ; +BuiltinDecl.(match_builtin malloc) <>$ capt_exp $--> malloc
-  ; +match_regexp_opt Config.pulse_model_malloc_pattern <>$ capt_exp $+...$--> custom_malloc
   ; -"realloc" <>$ capt_arg $+ capt_exp $--> realloc
   ; +match_regexp_opt Config.pulse_model_realloc_pattern
-    <>$ capt_arg $+ capt_exp $+...$--> custom_realloc
-  ; +map_context_tenv PatternMatch.ObjectiveC.is_core_graphics_create_or_copy
-    &--> custom_alloc_not_null
-  ; +map_context_tenv PatternMatch.ObjectiveC.is_core_foundation_create_or_copy
-    &--> custom_alloc_not_null
-  ; +BuiltinDecl.(match_builtin malloc_no_fail) <>$ capt_exp $--> malloc_not_null
-  ; +match_regexp_opt Config.pulse_model_alloc_pattern &--> custom_alloc_not_null ]
+    <>$ capt_arg $+ capt_exp $+...$--> custom_realloc ]
+  @ List.map
+      ~f:(ProcnameDispatcher.Call.contramap_arg_payload ~f:ValueOrigin.addr_hist)
+      [ +BuiltinDecl.(match_builtin malloc) <>$ capt_exp $--> malloc
+      ; +match_regexp_opt Config.pulse_model_malloc_pattern <>$ capt_exp $+...$--> custom_malloc
+      ; +map_context_tenv PatternMatch.ObjectiveC.is_core_graphics_create_or_copy
+        &--> custom_alloc_not_null
+      ; +map_context_tenv PatternMatch.ObjectiveC.is_core_foundation_create_or_copy
+        &--> custom_alloc_not_null
+      ; +BuiltinDecl.(match_builtin malloc_no_fail) <>$ capt_exp $--> malloc_not_null
+      ; +match_regexp_opt Config.pulse_model_alloc_pattern &--> custom_alloc_not_null ]

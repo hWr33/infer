@@ -11,7 +11,9 @@ Supported languages:
 - C/C++/ObjC: Yes
 - C#/.Net: No
 - Erlang: No
+- Hack: No
 - Java: No
+- Python: No
 
 This checker checks that an Objective-C block that is passed as a parameter
 to a function or method is checked for `nil` before it's being executed.

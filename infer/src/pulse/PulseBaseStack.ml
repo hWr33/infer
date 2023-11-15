@@ -16,7 +16,18 @@ module VarAddress = struct
 
   let pp f var =
     let pp_ampersand f = function ProgramVar _ -> F.pp_print_string f "&" | LogicalVar _ -> () in
-    F.fprintf f "%a%a" pp_ampersand var Var.pp var
+    let pp_proc_name f var =
+      let open IOption.Let_syntax in
+      match Var.get_pvar var >>= Pvar.get_declaring_function with
+      | Some pvar_proc_name
+        when not
+               (Option.exists (PulseCurrentProcedure.proc_desc ()) ~f:(fun proc_desc ->
+                    Procname.equal (Procdesc.get_proc_name proc_desc) pvar_proc_name ) ) ->
+          F.fprintf f "|%a" Procname.pp pvar_proc_name
+      | _ ->
+          ()
+    in
+    F.fprintf f "%a%a%a" pp_ampersand var Var.pp var pp_proc_name var
 end
 
 module AddrHistPair = struct
@@ -44,7 +55,7 @@ let canonicalize ~get_var_repr stack =
               "CONTRADICTION: %a = %a makes two stack variables' addresses equal (%a=%a) in %a@\n"
               AbstractValue.pp addr AbstractValue.pp addr' AbstractValue.pp addr Var.pp var M.pp
               stack ;
-            raise AliasingContradiction ) ;
+            raise_notrace AliasingContradiction ) ;
           let allocated =
             if Var.is_pvar var then AbstractValue.Set.add addr' allocated else allocated
           in
@@ -72,3 +83,13 @@ let pp fmt m =
     F.fprintf fmt "%a=%a" VarAddress.pp var_address AddrHistPair.pp v
   in
   PrettyPrintable.pp_collection ~pp_item fmt (M.bindings m)
+
+
+(* copy/pasted from the .mli because ocaml *)
+module type S = sig
+  include PrettyPrintable.PPMonoMap with type key = Var.t
+
+  val compare : t -> t -> int
+
+  val equal : t -> t -> bool
+end

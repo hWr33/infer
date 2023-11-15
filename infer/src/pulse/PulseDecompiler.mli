@@ -8,12 +8,15 @@
 open! IStd
 module F = Format
 module AbstractValue = PulseAbstractValue
-module BaseMemory = PulseBaseMemory
+module Access = PulseAccess
 module BaseAddressAttributes = PulseBaseAddressAttributes
 module CallEvent = PulseCallEvent
+module DecompilerExpr = PulseDecompilerExpr
 module ValueHistory = PulseValueHistory
 
 (** {1 Describe abstract values in terms of source code elements} *)
+
+type key = AbstractValue.t
 
 type t
 
@@ -23,20 +26,11 @@ val empty : t
 
 val invalid : t
 
-val add_var_source : AbstractValue.t -> Var.t -> t -> t
+val add_var_source : key -> Var.t -> t -> t
 
 val add_call_source :
-  AbstractValue.t -> CallEvent.t -> ((AbstractValue.t * ValueHistory.t) * Typ.t) list -> t -> t
+  key -> CallEvent.t -> ((AbstractValue.t * ValueHistory.t) * Typ.t) list -> t -> t
 
-val add_access_source :
-  AbstractValue.t -> BaseMemory.Access.t -> src:AbstractValue.t -> BaseAddressAttributes.t -> t -> t
+val add_access_source : key -> Access.t -> src:key -> BaseAddressAttributes.t -> t -> t
 
-type expr [@@deriving compare, equal, yojson_of]
-
-val pp_expr : Format.formatter -> expr -> unit
-
-val find : AbstractValue.t -> t -> expr
-
-val abstract_value_of_expr : expr -> AbstractValue.t
-
-val is_unknown : expr -> bool
+val find : AbstractValue.t -> t -> DecompilerExpr.t

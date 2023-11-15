@@ -12,21 +12,25 @@ module PO = BufferOverrunProofObligations
 
 module ModelEnv : sig
   type model_env =
-    { pname: Procname.t
+    { pname: Procname.t (* the name of the builtin *)
+    ; caller_pname: Procname.t option (* caller of the builtin *)
     ; node_hash: int
     ; location: Location.t
     ; tenv: Tenv.t
-    ; integer_type_widths: Typ.IntegerWidths.t
+    ; integer_type_widths: IntegerWidths.t
     ; get_summary: BufferOverrunAnalysisSummary.get_summary }
 
   val mk_model_env :
        Procname.t
+    -> ?caller_pname:Procname.t
     -> node_hash:int
     -> Location.t
     -> Tenv.t
-    -> Typ.IntegerWidths.t
+    -> IntegerWidths.t
     -> BufferOverrunAnalysisSummary.get_summary
     -> model_env
+  (** Make model environment. caller_pname is relevant only when the model environment is used to
+      process builtins. *)
 end
 
 module Exec : sig
@@ -38,6 +42,12 @@ module Exec : sig
     -> PowLoc.t
     -> Dom.Mem.t
     -> Dom.Mem.t
+  (** [load_locs id typ locs mem] loads the contents of the memory locations [locs] (which have type
+      [typ]) into the identifier [id].
+
+      If [locs] represents a single location, also create an aliasing relation between this location
+      and [id]. This is useful, e.g., to constrain also the location when the identifier is
+      constrained. *)
 
   val decl_local : ModelEnv.model_env -> Dom.Mem.t * int -> Loc.t * Typ.t -> Dom.Mem.t * int
 
@@ -70,7 +80,7 @@ module Check : sig
     -> PO.ConditionSet.checked_t
 
   val lindex :
-       Typ.IntegerWidths.t
+       IntegerWidths.t
     -> array_exp:Exp.t
     -> index_exp:Exp.t
     -> last_included:bool
@@ -80,7 +90,7 @@ module Check : sig
     -> PO.ConditionSet.checked_t
 
   val lindex_byte :
-       Typ.IntegerWidths.t
+       IntegerWidths.t
     -> array_exp:Exp.t
     -> byte_index_exp:Exp.t
     -> last_included:bool
@@ -90,7 +100,7 @@ module Check : sig
     -> PO.ConditionSet.checked_t
 
   val binary_operation :
-       Typ.IntegerWidths.t
+       IntegerWidths.t
     -> Procname.t
     -> Binop.t
     -> lhs:Dom.Val.t

@@ -6,14 +6,41 @@
  *)
 
 open! IStd
+module F = Format
+open PulseBasicInterface
 module AbductiveDomain = PulseAbductiveDomain
-module Arithmetic = PulseArithmetic
+module Decompiler = PulseAbductiveDecompiler
+module DecompilerExpr = PulseDecompilerExpr
 module Diagnostic = PulseDiagnostic
+module L = Logging
+
+let add_call_to_access_to_invalid_address (call_event, location) (call_subst, hist_map) astate
+    invalid_access =
+  let expr_callee = invalid_access.Diagnostic.invalid_address in
+  L.d_printfln "adding call to invalid address %a" DecompilerExpr.pp_with_abstract_value expr_callee ;
+  let expr_caller, default_caller_history =
+    match
+      let open IOption.Let_syntax in
+      let* addr_callee = DecompilerExpr.abstract_value_of_expr expr_callee in
+      AbstractValue.Map.find_opt addr_callee call_subst
+    with
+    | None ->
+        (* the abstract value doesn't make sense in the caller: forget about it *)
+        (DecompilerExpr.reset_abstract_value expr_callee, ValueHistory.epoch)
+    | Some (invalid_address, caller_history) ->
+        (Decompiler.find invalid_address astate, caller_history)
+  in
+  let access_trace =
+    Trace.add_call call_event location hist_map ~default_caller_history
+      invalid_access.Diagnostic.access_trace
+  in
+  {invalid_access with Diagnostic.access_trace; invalid_address= expr_caller}
+
 
 type t =
   | AccessToInvalidAddress of Diagnostic.access_to_invalid_address
-  | ErlangError of Diagnostic.erlang_error
-  | ReadUninitializedValue of Diagnostic.read_uninitialized_value
+  | ErlangError of Diagnostic.ErlangError.t
+  | ReadUninitializedValue of Diagnostic.ReadUninitialized.t
 [@@deriving compare, equal, yojson_of]
 
 let to_diagnostic = function
@@ -21,13 +48,17 @@ let to_diagnostic = function
       Diagnostic.AccessToInvalidAddress access_to_invalid_address
   | ErlangError erlang_error ->
       Diagnostic.ErlangError erlang_error
-  | ReadUninitializedValue read_uninitialized_value ->
-      Diagnostic.ReadUninitializedValue read_uninitialized_value
+  | ReadUninitializedValue read_uninitialized ->
+      Diagnostic.ReadUninitialized read_uninitialized
 
 
-let add_call call_and_loc = function
+let pp fmt latent_issue = Diagnostic.pp fmt (to_diagnostic latent_issue)
+
+let add_call_to_calling_context call_and_loc = function
   | AccessToInvalidAddress access ->
       AccessToInvalidAddress {access with calling_context= call_and_loc :: access.calling_context}
+  | ErlangError (Badarg {calling_context; location}) ->
+      ErlangError (Badarg {calling_context= call_and_loc :: calling_context; location})
   | ErlangError (Badkey {calling_context; location}) ->
       ErlangError (Badkey {calling_context= call_and_loc :: calling_context; location})
   | ErlangError (Badmap {calling_context; location}) ->
@@ -36,6 +67,8 @@ let add_call call_and_loc = function
       ErlangError (Badmatch {calling_context= call_and_loc :: calling_context; location})
   | ErlangError (Badrecord {calling_context; location}) ->
       ErlangError (Badrecord {calling_context= call_and_loc :: calling_context; location})
+  | ErlangError (Badreturn {calling_context; location}) ->
+      ErlangError (Badreturn {calling_context= call_and_loc :: calling_context; location})
   | ErlangError (Case_clause {calling_context; location}) ->
       ErlangError (Case_clause {calling_context= call_and_loc :: calling_context; location})
   | ErlangError (Function_clause {calling_context; location}) ->
@@ -48,20 +81,32 @@ let add_call call_and_loc = function
       ReadUninitializedValue {read with calling_context= call_and_loc :: read.calling_context}
 
 
-let is_manifest (astate : AbductiveDomain.summary) =
-  Arithmetic.has_no_assumptions (astate :> AbductiveDomain.t)
-  && ( (not Config.pulse_isl)
-     || AbductiveDomain.is_isl_without_allocation (astate :> AbductiveDomain.t)
-        && ( (not Config.pulse_manifest_emp)
-           || AbductiveDomain.is_pre_without_isl_abduced (astate :> AbductiveDomain.t) ) )
+let add_call call_and_loc call_substs astate latent_issue =
+  let latent_issue =
+    match latent_issue with
+    | AccessToInvalidAddress invalid_access ->
+        let invalid_access =
+          add_call_to_access_to_invalid_address call_and_loc call_substs astate invalid_access
+        in
+        AccessToInvalidAddress invalid_access
+    | _ ->
+        latent_issue
+  in
+  add_call_to_calling_context call_and_loc latent_issue
 
 
 (* require a summary because we don't want to stop reporting because some non-abducible condition is
    not true as calling context cannot possibly influence such conditions *)
-let should_report (astate : AbductiveDomain.summary) (diagnostic : Diagnostic.t) =
+let should_report (astate : AbductiveDomain.Summary.t) (diagnostic : Diagnostic.t) =
   match diagnostic with
+  | ConfigUsage _
+  | ConstRefableParameter _
+  | CSharpResourceLeak _
+  | JavaResourceLeak _
+  | TransitiveAccess _
+  | HackUnawaitedAwaitable _
   | MemoryLeak _
-  | ResourceLeak _
+  | ReadonlySharedPtrParameter _
   | RetainCycle _
   | StackVariableAddressEscape _
   | TaintFlow _
@@ -70,8 +115,10 @@ let should_report (astate : AbductiveDomain.summary) (diagnostic : Diagnostic.t)
          decision yet *)
       `ReportNow
   | AccessToInvalidAddress latent ->
-      if is_manifest astate then `ReportNow else `DelayReport (AccessToInvalidAddress latent)
+      if PulseArithmetic.is_manifest astate then `ReportNow
+      else `DelayReport (AccessToInvalidAddress latent)
   | ErlangError latent ->
-      if is_manifest astate then `ReportNow else `DelayReport (ErlangError latent)
-  | ReadUninitializedValue latent ->
-      if is_manifest astate then `ReportNow else `DelayReport (ReadUninitializedValue latent)
+      if PulseArithmetic.is_manifest astate then `ReportNow else `DelayReport (ErlangError latent)
+  | ReadUninitialized latent ->
+      if PulseArithmetic.is_manifest astate then `ReportNow
+      else `DelayReport (ReadUninitializedValue latent)

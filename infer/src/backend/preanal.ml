@@ -188,29 +188,23 @@ module InlineJavaSyntheticMethods = struct
     in
     let do_instr instr =
       match (instr, etl) with
-      | ( Sil.Load {e= Exp.Lfield (Exp.Var _, fn, ft); root_typ; typ}
-        , [(* getter for fields *) (e1, _)] ) ->
-          let instr' =
-            Sil.Load {id= ret_id; e= Exp.Lfield (e1, fn, ft); root_typ; typ; loc= loc_call}
-          in
+      | Sil.Load {e= Exp.Lfield (Exp.Var _, fn, ft); typ}, [(* getter for fields *) (e1, _)] ->
+          let instr' = Sil.Load {id= ret_id; e= Exp.Lfield (e1, fn, ft); typ; loc= loc_call} in
           found instr instr'
-      | Sil.Load {e= Exp.Lfield (Exp.Lvar pvar, fn, ft); root_typ; typ}, [] when Pvar.is_global pvar
-        ->
+      | Sil.Load {e= Exp.Lfield (Exp.Lvar pvar, fn, ft); typ}, [] when Pvar.is_global pvar ->
           (* getter for static fields *)
           let instr' =
-            Sil.Load
-              {id= ret_id; e= Exp.Lfield (Exp.Lvar pvar, fn, ft); root_typ; typ; loc= loc_call}
+            Sil.Load {id= ret_id; e= Exp.Lfield (Exp.Lvar pvar, fn, ft); typ; loc= loc_call}
           in
           found instr instr'
-      | ( Sil.Store {e1= Exp.Lfield (_, fn, ft); root_typ; typ}
-        , [(* setter for fields *) (e1, _); (e2, _)] ) ->
-          let instr' = Sil.Store {e1= Exp.Lfield (e1, fn, ft); root_typ; typ; e2; loc= loc_call} in
+      | Sil.Store {e1= Exp.Lfield (_, fn, ft); typ}, [(* setter for fields *) (e1, _); (e2, _)] ->
+          let instr' = Sil.Store {e1= Exp.Lfield (e1, fn, ft); typ; e2; loc= loc_call} in
           found instr instr'
-      | Sil.Store {e1= Exp.Lfield (Exp.Lvar pvar, fn, ft); root_typ; typ}, [(e1, _)]
-        when Pvar.is_global pvar ->
+      | Sil.Store {e1= Exp.Lfield (Exp.Lvar pvar, fn, ft); typ}, [(e1, _)] when Pvar.is_global pvar
+        ->
           (* setter for static fields *)
           let instr' =
-            Sil.Store {e1= Exp.Lfield (Exp.Lvar pvar, fn, ft); root_typ; typ; e2= e1; loc= loc_call}
+            Sil.Store {e1= Exp.Lfield (Exp.Lvar pvar, fn, ft); typ; e2= e1; loc= loc_call}
           in
           found instr instr'
       | Sil.Call (_, Exp.Const (Const.Cfun pn), etl', _, cf), _
@@ -237,7 +231,10 @@ module InlineJavaSyntheticMethods = struct
 
   let process pdesc =
     let is_generated_for_lambda proc_name =
-      String.is_substring ~substring:Config.java_lambda_marker_infix (Procname.get_method proc_name)
+      let method_name = Procname.get_method proc_name in
+      String.is_substring ~substring:Config.java_lambda_marker_infix_generated_by_javalib
+        method_name
+      || String.is_prefix ~prefix:Config.java_lambda_marker_prefix_generated_by_javac method_name
     in
     let should_inline proc_name =
       (not (is_generated_for_lambda proc_name))
@@ -344,7 +341,7 @@ module Liveness = struct
             (active_defs, to_nullify)
         | Store {e1= Exp.Lvar lhs_pvar} ->
             (VarDomain.add (Var.of_pvar lhs_pvar) active_defs, to_nullify)
-        | Metadata (VariableLifetimeBegins (pvar, _, _)) ->
+        | Metadata (VariableLifetimeBegins {pvar}) ->
             (VarDomain.add (Var.of_pvar pvar) active_defs, to_nullify)
         | Store _
         | Prune _
@@ -458,15 +455,11 @@ module NoReturn = struct
       proc_desc
 end
 
-let do_preanalysis exe_env pdesc =
-  let tenv = Exe_env.get_proc_tenv exe_env (Procdesc.get_proc_name pdesc) in
+let do_preanalysis tenv pdesc =
+  if not Config.preanalysis_html then NodePrinter.print_html := false ;
   let proc_name = Procdesc.get_proc_name pdesc in
   if Procname.is_java proc_name || Procname.is_csharp proc_name then
     InlineJavaSyntheticMethods.process pdesc ;
-  if
-    Config.function_pointer_specialization
-    && not (Procname.is_java proc_name || Procname.is_csharp proc_name)
-  then FunctionPointers.substitute pdesc ;
   (* NOTE: It is important that this preanalysis stays before Liveness *)
   if not (Procname.is_java proc_name || Procname.is_csharp proc_name) then (
     CCallSpecializedWithClosures.process pdesc ;
@@ -476,4 +469,5 @@ let do_preanalysis exe_env pdesc =
   AddAbstractionInstructions.process pdesc ;
   if Procname.is_java proc_name then Devirtualizer.process pdesc tenv ;
   NoReturn.process tenv pdesc ;
+  NodePrinter.print_html := true ;
   ()

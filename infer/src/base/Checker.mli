@@ -14,17 +14,16 @@ type t =
   | BufferOverrunChecker
   | ConfigImpactAnalysis
   | Cost
+  | Datalog
   | DisjunctiveDemo
   | Eradicate
   | FragmentRetainsView
   | ImmutableCast
   | Impurity
   | InefficientKeysetIterator
-  | Linters
   | LithoRequiredProps
   | Liveness
   | LoopHoisting
-  | NullsafeDeprecated
   | ParameterNotNullChecked
   | PrintfArgs
   | Pulse
@@ -33,9 +32,11 @@ type t =
   | Quandary
   | RacerD
   | ResourceLeakLabExercise
-  | DOTNETResourceLeaks
+  | ScopeLeakage
   | SIOF
-  | SimpleLineage
+  | SILValidation
+  | Lineage
+  | LineageShape
   | SelfInBlock
   | Starvation
   | Topl

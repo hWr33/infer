@@ -239,6 +239,11 @@ module TransferFunctions (LConfig : LivenessConfig) (CFG : ProcCfg.S) = struct
     Domain.(filter_exceptional astate |> exceptional_to_normal |> join astate_normal)
 
 
+  let join_all astates ~into =
+    List.fold astates ~init:into ~f:(fun acc astate ->
+        Some (Option.value_map acc ~default:astate ~f:(fun acc -> Domain.join acc astate)) )
+
+
   let filter_normal = Domain.filter_normal
 
   let filter_exceptional = Domain.filter_exceptional
@@ -389,28 +394,33 @@ let checker {IntraproceduralAnalysis.proc_desc; err_log} =
         false
   in
   let locals = Procdesc.get_locals proc_desc in
+  let formals = Procdesc.get_formals proc_desc in
   let is_constexpr_or_unused pvar =
     List.find locals ~f:(fun local_data ->
         Mangled.equal (Pvar.get_name pvar) local_data.ProcAttributes.name )
     |> Option.exists ~f:(fun local ->
            local.ProcAttributes.is_constexpr || local.ProcAttributes.is_declared_unused )
   in
+  let is_local_or_formal pvar =
+    let mangled = Pvar.get_name pvar in
+    List.exists locals ~f:(fun {ProcAttributes.name} -> Mangled.equal mangled name)
+    || List.exists formals ~f:(fun (formal, _, _) -> Mangled.equal mangled formal)
+  in
   let should_report pvar typ live_vars passed_by_ref_vars =
-    not
-      ( Pvar.is_frontend_tmp pvar || Pvar.is_return pvar || Pvar.is_global pvar
-      || is_constexpr_or_unused pvar
-      || VarSet.mem (Var.of_pvar pvar) passed_by_ref_vars
-      || ExtendedDomain.mem (Var.of_pvar pvar) live_vars
-      || Procdesc.is_captured_pvar proc_desc pvar
-      || is_scope_guard typ
-      || Procdesc.has_modify_in_block_attr proc_desc pvar )
+    is_local_or_formal pvar
+    && not
+         ( Pvar.is_frontend_tmp pvar || Pvar.is_return pvar || Pvar.is_global pvar
+         || is_constexpr_or_unused pvar
+         || VarSet.mem (Var.of_pvar pvar) passed_by_ref_vars
+         || ExtendedDomain.mem (Var.of_pvar pvar) live_vars
+         || is_scope_guard typ
+         || Procdesc.has_modify_in_block_attr proc_desc pvar
+         || Mangled.is_underscore (Pvar.get_name pvar) )
   in
   let log_report pvar typ loc =
-    let message =
-      F.asprintf "The value written to `%a` (type `%a`) is never used" (Pvar.pp Pp.text) pvar
-        (Typ.pp_full Pp.text) typ
-    in
-    let ltr = [Errlog.make_trace_element 0 loc "Write of unused value" []] in
+    let message = F.asprintf "The value written to `%a` is never used" (Pvar.pp Pp.text) pvar in
+    let trace_message = F.asprintf "Write of unused value (type `%a`)" (Typ.pp_full Pp.text) typ in
+    let ltr = [Errlog.make_trace_element 0 loc trace_message []] in
     Reporting.log_issue proc_desc err_log ~loc ~ltr Liveness IssueType.dead_store message
   in
   let report_dead_store live_vars passed_by_ref_vars = function

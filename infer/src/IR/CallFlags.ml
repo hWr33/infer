@@ -18,11 +18,11 @@ type t =
   ; cf_interface: bool
   ; cf_is_objc_block: bool
   ; cf_virtual: bool }
-[@@deriving compare]
+[@@deriving compare, equal]
 
 let pp f
     ({cf_assign_last_arg; cf_injected_destructor; cf_interface; cf_is_objc_block; cf_virtual}
-      [@warning "+9"] ) =
+      [@warning "+missing-record-field-pattern"] ) =
   if cf_assign_last_arg then F.pp_print_string f " assign_last" ;
   if cf_injected_destructor then F.pp_print_string f " injected" ;
   if cf_interface then F.pp_print_string f " interface" ;

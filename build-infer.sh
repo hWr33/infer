@@ -17,8 +17,8 @@ DEPENDENCIES_DIR="$INFER_ROOT/facebook/dependencies"
 PLATFORM="$(uname)"
 SANDCASTLE=${SANDCASTLE:-}
 NCPU="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
-INFER_OPAM_DEFAULT_SWITCH="4.13.1+flambda"
-INFER_OPAM_DEFAULT_SWITCH_OPTIONS="--package=ocaml-variants.4.13.1+options,ocaml-option-flambda"
+INFER_OPAM_DEFAULT_SWITCH="4.14.0+flambda"
+INFER_OPAM_DEFAULT_SWITCH_OPTIONS="--package=ocaml-variants.4.14.0+options,ocaml-option-flambda"
 INFER_OPAM_SWITCH=${INFER_OPAM_SWITCH:-$INFER_OPAM_DEFAULT_SWITCH}
 INFER_OPAM_SWITCH_OPTIONS=${INFER_OPAM_SWITCH_OPTIONS:-$INFER_OPAM_DEFAULT_SWITCH_OPTIONS}
 PLUGIN_DIR="$INFER_ROOT/facebook-clang-plugins"
@@ -26,13 +26,15 @@ PLUGIN_SETUP_SCRIPT=${PLUGIN_SETUP_SCRIPT:-setup.sh}
 PLUGIN_SETUP="${PLUGIN_DIR}/clang/${PLUGIN_SETUP_SCRIPT}"
 
 function usage() {
-  echo "Usage: $0 [-y] [targets]"
+  echo "Usage: $0 [options] [targets] [-- options for ./configure]"
   echo
   echo " targets:"
   echo "   all      build everything (default)"
   echo "   clang    build C and Objective-C analyzer"
   echo "   erlang   build Erlang analyzer"
+  echo "   hack     build Hack analyzer"
   echo "   java     build Java analyzer"
+  echo "   python   build Python analyzer"
   echo
   echo " options:"
   echo "   -h,--help             show this message"
@@ -40,18 +42,22 @@ function usage() {
   echo "   --only-setup-opam     initialize opam, install the opam dependencies of infer, and exit"
   echo "   --user-opam-switch    use the current opam switch to install infer (default: $INFER_OPAM_DEFAULT_SWITCH)"
   echo "   -y,--yes              automatically agree to everything"
+  echo "   --                    stop parsing options and pass the remaining ones to ./configure"
   echo
   echo " examples:"
-  echo "    $0                    # build Java, Erlang and C/Objective-C analyzers"
-  echo "    $0 java erlang clang  # equivalent way of doing the above"
-  echo "    $0 java               # build only the Java analyzer"
+  echo "    $0                                 # build infer with default options"
+  echo "    $0 -- --help                       # display the options from ./configure"
+  echo "    $0 java                            # build only the Java analyzer"
+  echo "    $0 -y -- --disable-clang-analyzers # build everything but clang support, agree to all questions"
 }
 
 # arguments
+CONFIGURE_OPTS=()
 BUILD_CLANG=${BUILD_CLANG:-no}
 BUILD_ERLANG=${BUILD_ERLANG:-no}
+BUILD_HACK=${BUILD_HACK:-no}
 BUILD_JAVA=${BUILD_JAVA:-no}
-INFER_CONFIGURE_OPTS=${INFER_CONFIGURE_OPTS:-""}
+BUILD_PYTHON=${BUILD_PYTHON:-no}
 INTERACTIVE=${INTERACTIVE:-yes}
 JOBS=${JOBS:-$NCPU}
 ONLY_SETUP_OPAM=${ONLY_SETUP_OPAM:-no}
@@ -63,7 +69,9 @@ ORIG_ARGS="$*"
 function build_all() {
   BUILD_CLANG=yes
   BUILD_ERLANG=yes
+  BUILD_HACK=yes
   BUILD_JAVA=yes
+  BUILD_PYTHON=yes
 }
 
 while [[ $# -gt 0 ]]; do
@@ -84,8 +92,18 @@ while [[ $# -gt 0 ]]; do
       shift
       continue
       ;;
+    hack)
+      BUILD_HACK=yes
+      shift
+      continue
+      ;;
     java)
       BUILD_JAVA=yes
+      shift
+      continue
+      ;;
+    python)
+      BUILD_PYTHON=yes
       shift
       continue
       ;;
@@ -113,6 +131,12 @@ while [[ $# -gt 0 ]]; do
       shift
       continue
      ;;
+    --)
+      shift
+      CONFIGURE_OPTS+=("$*")
+      shift $#
+      continue
+     ;;
      *)
       usage
       exit 1
@@ -120,7 +144,9 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if [ "$BUILD_CLANG" == "no" ] && [ "$BUILD_ERLANG" == "no" ] && [ "$BUILD_JAVA" == "no" ]; then
+if [ "$BUILD_CLANG" == "no" ] && [ "$BUILD_ERLANG" == "no" ] && \
+   [ "$BUILD_HACK" == "no" ] && [ "$BUILD_JAVA" == "no" ] && \
+   [ "$BUILD_PYTHON" == "no" ]; then
   build_all
 fi
 
@@ -145,10 +171,7 @@ install_opam_deps () {
     if [ "$USE_OPAM_LOCK" == yes ]; then
         locked=.locked
     fi
-    opam install --deps-only "$INFER_ROOT"/opam/infer.opam$locked &&
-    if [ -n "$SANDCASTLE" ]; then
-        opam pin list | grep yojson || opam pin add yojson "${DEPENDENCIES_DIR}/yojson-1.7.0fix"
-    fi
+    opam install --deps-only "$INFER_ROOT"/opam/infer.opam$locked
 }
 
 echo "initializing opam... " >&2
@@ -168,19 +191,34 @@ fi
 echo "preparing build... " >&2
 ./autogen.sh > /dev/null
 
+# we want to add these before the ones passed explicitly by the user, if only because they
+# correspond to options that appear earlier on the command line of this script so it's the more
+# natural behaviour
+CONFIGURE_PREPEND_OPTS=""
 if [ "$BUILD_CLANG" == "no" ]; then
-  INFER_CONFIGURE_OPTS+=" --disable-c-analyzers"
+  CONFIGURE_PREPEND_OPTS+=" --disable-c-analyzers"
 fi
 if [ "$BUILD_ERLANG" == "no" ]; then
-  INFER_CONFIGURE_OPTS+=" --disable-erlang-analyzers"
+  CONFIGURE_PREPEND_OPTS+=" --disable-erlang-analyzers"
+fi
+if [ "$BUILD_HACK" == "no" ]; then
+  CONFIGURE_PREPEND_OPTS+=" --disable-hack-analyzers"
 fi
 if [ "$BUILD_JAVA" == "no" ]; then
-  INFER_CONFIGURE_OPTS+=" --disable-java-analyzers"
+  CONFIGURE_PREPEND_OPTS+=" --disable-java-analyzers"
+fi
+if [ "$BUILD_PYTHON" == "no" ]; then
+  CONFIGURE_PREPEND_OPTS+=" --disable-python-analyzers"
 fi
 
-./configure $INFER_CONFIGURE_OPTS
+set -x
+# empty arrays trigger unbound variable errors, use horrible syntax to work around it
+./configure $CONFIGURE_PREPEND_OPTS ${CONFIGURE_OPTS[@]+"${CONFIGURE_OPTS[@]}"}
+set +x
 
-if [ "$BUILD_CLANG" == "yes" ]; then
+# test if clang is enabled and if so are we about to build it? we cannot rely on $BUILD_CLANG
+# because the user can also set --disable-clang-analyzers
+if [ $(grep BUILD_C_ANALYZERS Makefile.autoconf | cut -d ' ' -f 3) = "yes" ]; then
   if ! "$PLUGIN_SETUP" --only-check-install; then
     echo ""
     echo "  Warning: you are not using a release of Infer. The C and"

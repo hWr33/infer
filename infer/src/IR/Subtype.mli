@@ -11,7 +11,7 @@
 open! IStd
 module F = Format
 
-type t [@@deriving compare, equal]
+type t [@@deriving compare, equal, hash]
 
 val pp : F.formatter -> t -> unit
 
@@ -41,7 +41,7 @@ val is_known_subtype : Tenv.t -> Typ.Name.t -> Typ.Name.t -> bool
 
 val is_cast : t -> bool
 
-val is_instof : t -> bool [@@warning "-32"]
+val is_instof : t -> bool [@@warning "-unused-value-declaration"]
 
 val equal_modulo_flag : t -> t -> bool
 (** equality ignoring flags in the subtype *)
